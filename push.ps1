@@ -19,5 +19,5 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "`n=== PUSH ===" -ForegroundColor Cyan
-& git push -u origin master
+& git push -u origin main
 Write-Host "`nConcluido." -ForegroundColor Green

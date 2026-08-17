@@ -23,6 +23,6 @@ if errorlevel 1 (
 
 echo.
 echo === PUSH ===
-git push -u origin master
+git push -u origin main
 echo.
 echo Concluido.
