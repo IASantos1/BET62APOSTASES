@@ -34,64 +34,62 @@ function renderSportSubnav() {
 function selectSport(sportId) {
   selectedSport = sportId;
   renderSportSubnav();
+  renderSportsMenu();
   const active = pageHistory[pageHistory.length - 1];
   if (active === "aovivo") renderLiveEvents();
   if (active === "esportes") renderPrematchList();
 }
 
-// Odds pré-jogo estáticas de demonstração — o motor real de compilação de odds pré-jogo
-// (fora do escopo desta fase) ainda não existe; isto é só para a navegação/página de
-// mercados ser testável já.
-function marketsFor(sport, homeScore, awayScore) {
-  const h = homeScore >= awayScore ? 1.9 : 2.3;
-  const a = homeScore >= awayScore ? 2.3 : 1.9;
-  switch (sport) {
-    case "football":
-      return [
-        { market: "1X2", selections: { casa: h, empate: 3.4, fora: a } },
-        { market: "Total (mais/menos 2.5)", selections: { mais: 1.85, menos: 1.95 } },
-        { market: "Ambas Marcam", selections: { sim: 1.7, não: 2.1 } },
-      ];
-    case "basketball":
-      return [
-        { market: "Vencedor", selections: { casa: h - 0.2, fora: a - 0.2 } },
-        { market: "Hándicap (-5.5 / +5.5)", selections: { casa: 1.9, fora: 1.9 } },
-      ];
-    case "tennis":
-      return [{ market: "Vencedor do encontro", selections: { casa: h, fora: a } }];
-    case "ice_hockey":
-      return [{ market: "Moneyline", selections: { casa: h, empate: 4.2, fora: a } }];
-    case "baseball":
-      return [{ market: "Moneyline", selections: { casa: h, fora: a } }];
-    case "volleyball":
-      return [{ market: "Vencedor", selections: { casa: h - 0.1, fora: a - 0.1 } }];
-    case "mma":
-      return [
-        { market: "Vencedor do combate", selections: { casa: h, fora: a } },
-        { market: "Método de vitória", selections: { ko_tko: 2.1, submissão: 3.4, decisão: 2.8 } },
-      ];
-    case "formula1":
-      return [{ market: "Vencedor da corrida", selections: { Verstappen: 1.45, Norris: 3.6, Leclerc: 6.5 } }];
-    default:
-      return [];
+// ====================== MENU LATERAL ESQUERDO (Competições + Desportos) ======================
+async function renderCompetitions() {
+  const el = document.getElementById("competitions-list");
+  if (!el) return;
+  try {
+    const { competitions } = await Bet62Api.getCompetitions();
+    if (!competitions.length) {
+      el.innerHTML = '<div class="empty-note" style="padding:6px 2px">Sem ligas com jogos hoje</div>';
+      return;
+    }
+    const icon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
+    el.innerHTML = competitions
+      .map(
+        (c) => `
+      <div class="comp-item" onclick="selectSport('${c.sport}'); showPage('esportes'); closeDrawers();">
+        <span>${icon[c.sport] || ""} ${c.league}</span>
+        <span class="comp-count">${c.eventCount}</span>
+      </div>`
+      )
+      .join("");
+  } catch {
+    el.innerHTML = "";
   }
 }
-function inHours(h) {
-  const d = new Date();
-  d.setHours(d.getHours() + h, 0, 0, 0);
-  return d;
+
+function renderSportsMenu() {
+  const el = document.getElementById("sports-menu-list");
+  if (!el) return;
+  el.innerHTML = SPORTS_META.map(
+    (s) => `
+    <div class="sports-menu-item ${selectedSport === s.id ? "active" : ""}" onclick="selectSport('${s.id}'); if (!['esportes','aovivo'].includes(pageHistory[pageHistory.length - 1])) showPage('esportes'); closeDrawers();">
+      ${s.icon} ${s.label}
+    </div>`
+  ).join("");
 }
-const PREMATCH_EVENTS = [
-  { id: "pm:football-1", sport: "football", league: "Primeira Liga", home: "Sporting CP", away: "Braga", kickoff: inHours(3) },
-  { id: "pm:football-2", sport: "football", league: "Premier League", home: "Man City", away: "Liverpool", kickoff: inHours(26) },
-  { id: "pm:tennis-1", sport: "tennis", league: "Roland Garros", home: "N. Djokovic", away: "D. Medvedev", kickoff: inHours(5) },
-  { id: "pm:basketball-1", sport: "basketball", league: "NBA", home: "LA Lakers", away: "Boston Celtics", kickoff: inHours(8) },
-  { id: "pm:hockey-1", sport: "ice_hockey", league: "NHL", home: "Edmonton Oilers", away: "Colorado Avalanche", kickoff: inHours(30) },
-  { id: "pm:baseball-1", sport: "baseball", league: "MLB", home: "LA Dodgers", away: "Houston Astros", kickoff: inHours(20) },
-  { id: "pm:volleyball-1", sport: "volleyball", league: "Superliga", home: "Benfica", away: "Sporting CP", kickoff: inHours(48) },
-  { id: "pm:f1-1", sport: "formula1", league: "Fórmula 1", home: "GP de Mónaco", away: "Qualificação", kickoff: inHours(72) },
-  { id: "pm:mma-1", sport: "mma", league: "UFC 310", home: "C. McGregor", away: "N. Diaz", kickoff: inHours(96) },
-].map((e) => ({ ...e, homeScore: 0, awayScore: 0, odds: marketsFor(e.sport, 0, 0), status: "scheduled" }));
+
+// ====================== DRAWERS (mobile/PWA) ======================
+function toggleLeftDrawer() {
+  document.getElementById("sidebar-left").classList.toggle("open");
+  document.getElementById("drawer-overlay").classList.toggle("open");
+}
+function openRightDrawer() {
+  document.getElementById("sidebar-right").classList.add("open");
+  document.getElementById("drawer-overlay").classList.add("open");
+}
+function closeDrawers() {
+  document.getElementById("sidebar-left").classList.remove("open");
+  document.getElementById("sidebar-right").classList.remove("open");
+  document.getElementById("drawer-overlay").classList.remove("open");
+}
 
 const prematchEventsById = new Map();
 
@@ -109,11 +107,7 @@ async function renderPrematchList() {
     if (r.status === "fulfilled" && r.value.source === "pulsescore") realEvents.push(...r.value.events);
   });
 
-  // Para os desportos sem dados reais (Pulsescore não configurada ou sem jogos agendados),
-  // completa com os dados de demonstração estáticos para a navegação continuar testável.
-  const sportsWithRealData = new Set(realEvents.map((e) => e.sport));
-  const fallbackEvents = PREMATCH_EVENTS.filter((e) => (!selectedSport || e.sport === selectedSport) && !sportsWithRealData.has(e.sport));
-  const events = [...realEvents, ...fallbackEvents];
+  const events = realEvents;
 
   prematchEventsById.clear();
   events.forEach((e) => prematchEventsById.set(e.id, e));
@@ -128,7 +122,7 @@ async function renderPrematchList() {
       const odds = e.odds?.[0]?.selections;
       return `
       <div class="live-card" onclick="openMarket('${e.id}', false)">
-        <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime || e.kickoff)}</span></div>
+        <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime)}</span></div>
         <div class="lc-teams"><span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span></div>
         ${
           odds
@@ -161,6 +155,7 @@ const betslipSelections = new Map(); // key -> { eventId, market, selection, odd
 // ====================== NAVIGATION ======================
 function showPage(page) {
   if (pageHistory[pageHistory.length - 1] !== page) pageHistory.push(page);
+  closeDrawers();
 
   ["destaques", "profile", "esportes", "aovivo", "casino", "market"].forEach((p) => {
     const el = document.getElementById("page-" + p);
@@ -173,7 +168,6 @@ function showPage(page) {
 
   const showBack = page !== "destaques";
   document.getElementById("btn-back").classList.toggle("hidden", !showBack);
-  document.getElementById("btn-menu").classList.toggle("hidden", showBack && page === "profile");
 
   if (page === "profile") loadProfile();
   if (page === "aovivo") { renderSportSubnav(); ensureLiveSocket(); }
@@ -658,7 +652,7 @@ function renderMarketPage() {
   document.getElementById("market-title").textContent = `${e.home} vs ${e.away}`;
   renderMatchTracker(e);
   renderMarketGroups(e);
-  updateBetslipBar();
+  renderBetslipPanel();
 }
 
 function renderMatchTracker(e) {
@@ -669,7 +663,7 @@ function renderMatchTracker(e) {
     el.innerHTML = `
       <div class="mt-scheduled">
         <span class="status-badge status-pending">PRÉ-JOGO</span>
-        <div class="big" style="margin-top:10px">${formatKickoff(e.startTime || e.kickoff)}</div>
+        <div class="big" style="margin-top:10px">${formatKickoff(e.startTime)}</div>
         <div style="color:var(--muted);font-size:.82rem;margin-top:6px">${e.home} vs ${e.away}</div>
       </div>`;
     return;
@@ -708,7 +702,8 @@ function renderMarketGroups(e) {
         .map(([label, odd]) => {
           const key = `${e.id}|${group.market}|${label}`;
           const picked = betslipSelections.has(key);
-          return `<div class="selection-btn ${picked ? "picked" : ""}" onclick='toggleSelection(${JSON.stringify(key)}, ${JSON.stringify({ eventId: e.id, market: group.market, selection: label, odd })})'>
+          const selection = { eventId: e.id, market: group.market, selection: label, odd, home: e.home, away: e.away, league: e.league };
+          return `<div class="selection-btn ${picked ? "picked" : ""}" onclick='toggleSelection(${JSON.stringify(key)}, ${JSON.stringify(selection)})'>
             <span class="sel-label">${label}</span><span class="sel-odd">${Number(odd).toFixed(2)}</span>
           </div>`;
         })
@@ -719,22 +714,132 @@ function renderMarketGroups(e) {
 }
 
 function toggleSelection(key, selection) {
-  if (betslipSelections.has(key)) betslipSelections.delete(key);
-  else betslipSelections.set(key, selection);
-  renderMarketGroups(currentMarketEvent);
-  updateBetslipBar();
+  if (betslipSelections.has(key)) {
+    betslipSelections.delete(key);
+    betslipStakes.delete(key);
+  } else {
+    betslipSelections.set(key, selection);
+  }
+  if (currentMarketEvent) renderMarketGroups(currentMarketEvent);
+  renderBetslipPanel();
 }
 
-function updateBetslipBar() {
-  const n = betslipSelections.size;
-  document.getElementById("betslip-count").textContent = n ? `${n} seleção(ões)` : "Nenhuma seleção";
+// ====================== BOLETIM DE APOSTA (Simples / Múltipla) ======================
+// Regras: Simples = cada seleção é uma aposta independente, com valor próprio; o total
+// investido é a soma de todos os valores. Múltipla = todas as seleções combinadas num único
+// bilhete, odd total = produto de todas as odds, um único valor de aposta — mas só é permitida
+// com 2+ seleções e NUNCA com duas seleções do mesmo evento (resultados correlacionados não
+// são aceites em apostas múltiplas, é a regra padrão do mercado).
+let betslipMode = "simples"; // "simples" | "multipla"
+const betslipStakes = new Map(); // key -> valor apostado (modo Simples)
+let multiplaStake = 0;
+
+function setStake(key, value) {
+  betslipStakes.set(key, value);
+  renderBetslipPanel();
+}
+function setBetslipMode(mode) {
+  betslipMode = mode;
+  renderBetslipPanel();
+}
+function setMultiplaStake(value) {
+  multiplaStake = Number(value) || 0;
+  renderBetslipPanel();
+}
+function clearBetslip() {
+  betslipSelections.clear();
+  betslipStakes.clear();
+  multiplaStake = 0;
+  renderBetslipPanel();
+  if (currentMarketEvent) renderMarketGroups(currentMarketEvent);
+}
+
+function renderBetslipPanel() {
+  const panels = [document.getElementById("betslip-panel")].filter(Boolean);
+  const selections = [...betslipSelections.entries()];
+
+  const fab = document.getElementById("betslip-fab");
+  const fabCount = document.getElementById("betslip-fab-count");
+  if (fab && fabCount) {
+    fabCount.textContent = selections.length;
+    fab.classList.toggle("hidden", selections.length === 0);
+  }
+  const inlineCount = document.getElementById("betslip-count");
+  if (inlineCount) inlineCount.textContent = selections.length ? `${selections.length} seleção(ões)` : "Nenhuma seleção";
+
+  const eventIds = selections.map(([, s]) => s.eventId);
+  const hasDuplicateEvent = new Set(eventIds).size < eventIds.length;
+  const canMultipla = selections.length >= 2 && !hasDuplicateEvent;
+  if (!canMultipla && betslipMode === "multipla") betslipMode = "simples";
+
+  panels.forEach((el) => {
+    if (!selections.length) {
+      el.innerHTML = '<div class="empty-note">Selecione odds nos mercados para adicionar ao boletim</div>';
+      return;
+    }
+
+    const rowsHtml = selections
+      .map(
+        ([key, s]) => `
+      <div class="bs-row">
+        <div class="bs-row-info">
+          <div class="bs-row-teams">${s.home || ""}${s.away ? " vs " + s.away : ""}</div>
+          <div class="bs-row-sel">${s.market}: <b>${s.selection}</b> @ ${Number(s.odd).toFixed(2)}</div>
+        </div>
+        <div class="bs-row-actions">
+          ${
+            betslipMode === "simples"
+              ? `<input type="number" min="0.5" step="0.5" class="bs-stake-input" value="${betslipStakes.get(key) || ""}" placeholder="€" oninput='setStake(${JSON.stringify(key)}, this.value)'>`
+              : ""
+          }
+          <button class="bs-remove" onclick='toggleSelection(${JSON.stringify(key)})' aria-label="Remover">✕</button>
+        </div>
+      </div>`
+      )
+      .join("");
+
+    let summaryHtml;
+    if (betslipMode === "simples") {
+      const totalStake = selections.reduce((sum, [key]) => sum + (Number(betslipStakes.get(key)) || 0), 0);
+      const totalReturn = selections.reduce((sum, [key, s]) => sum + (Number(betslipStakes.get(key)) || 0) * s.odd, 0);
+      summaryHtml = `
+        <div class="bs-summary"><span>Total investido</span><span>€ ${totalStake.toFixed(2)}</span></div>
+        <div class="bs-summary"><span>Retorno potencial</span><span class="bs-return">€ ${totalReturn.toFixed(2)}</span></div>`;
+    } else {
+      const totalOdd = selections.reduce((prod, [, s]) => prod * s.odd, 1);
+      summaryHtml = `
+        <div class="field" style="margin:10px 0"><label>Valor da aposta (€)</label>
+          <input type="number" min="0.5" step="0.5" value="${multiplaStake || ""}" placeholder="€" oninput="setMultiplaStake(this.value)"></div>
+        <div class="bs-summary"><span>Odd total</span><span>${totalOdd.toFixed(2)}</span></div>
+        <div class="bs-summary"><span>Retorno potencial</span><span class="bs-return">€ ${(multiplaStake * totalOdd).toFixed(2)}</span></div>`;
+    }
+
+    el.innerHTML = `
+      <div class="bs-tabs">
+        <div class="bs-tab ${betslipMode === "simples" ? "active" : ""}" onclick="setBetslipMode('simples')">Simples</div>
+        <div class="bs-tab ${betslipMode === "multipla" ? "active" : ""} ${canMultipla ? "" : "disabled"}" onclick="${canMultipla ? "setBetslipMode('multipla')" : ""}">Múltipla</div>
+      </div>
+      ${!canMultipla && selections.length >= 2 ? '<div class="field-hint" style="margin:8px 2px">Múltipla indisponível: há mais do que uma seleção do mesmo evento.</div>' : ""}
+      <div class="bs-rows">${rowsHtml}</div>
+      ${summaryHtml}
+      <button class="btn-save" onclick="placeBetDemo()">Confirmar Aposta</button>
+      <button class="btn-outline" onclick="clearBetslip()">Limpar Boletim</button>`;
+  });
 }
 
 function placeBetDemo() {
   if (!Bet62Api.isAuthenticated()) return openAuth("login");
-  if (!betslipSelections.size) return alert("Escolha pelo menos uma seleção nos mercados acima.");
+  if (!betslipSelections.size) return alert("Escolha pelo menos uma seleção nos mercados para adicionar ao boletim.");
+
+  if (betslipMode === "simples") {
+    const missing = [...betslipSelections.keys()].filter((key) => !(Number(betslipStakes.get(key)) > 0));
+    if (missing.length) return alert("Indique o valor da aposta em todas as seleções do boletim.");
+  } else if (!(multiplaStake > 0)) {
+    return alert("Indique o valor da aposta múltipla.");
+  }
+
   alert(
-    `🧾 Boletim com ${betslipSelections.size} seleção(ões).\n\nO motor de apostas (criação de bilhete, cálculo de retorno e liquidação) ainda não foi implementado nesta fase — esta é só a navegação de mercados. As seleções foram mantidas.`
+    `🧾 Boletim ${betslipMode === "simples" ? "Simples" : "Múltipla"} com ${betslipSelections.size} seleção(ões).\n\nO motor de apostas (criação de bilhete, cálculo de retorno e liquidação) ainda não foi implementado nesta fase — esta é só a navegação de mercados e o boletim. As seleções foram mantidas.`
   );
 }
 
@@ -743,6 +848,9 @@ function placeBetDemo() {
   applyAutoTheme();
   updateHeader();
   showPage("destaques");
+  renderSportsMenu();
+  renderCompetitions();
+  renderBetslipPanel();
   if (Bet62Api.isAuthenticated()) {
     await loadProfile();
   }

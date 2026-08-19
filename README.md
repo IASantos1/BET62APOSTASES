@@ -23,7 +23,7 @@ levantamento foram validados de ponta a ponta com uma base de dados PostgreSQL r
 - ✅ Perfil, KYC (submissão), limites de jogo responsável, autoexclusão
 - ✅ Depósitos via Stripe (Payment Intents: cartão / MB WAY / Multibanco) — sandbox, sem chave configurada nesta sessão
 - ✅ Levantamentos via Revolut Business, com aprovação manual de compliance obrigatória
-- ✅ Feed híbrido de desporto ao vivo (Pulsescore + API-Football) com fallback simulado — testado com dados simulados
+- ✅ Feed híbrido de desporto ao vivo e pré-jogo (Pulsescore + API-Football), com odds reais confirmadas em produção — sem dados simulados
 - ✅ Frontend ligado à API real (sem localStorage a simular utilizador)
 
 **Não construído nesta fase** (fora do escopo definido para esta sessão — ver

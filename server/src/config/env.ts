@@ -37,12 +37,6 @@ const envSchema = z.object({
   // --- API-Football (statistics) ---
   API_FOOTBALL_KEY: z.string().default(""),
   API_FOOTBALL_BASE_URL: z.string().default("https://v3.football.api-sports.io"),
-
-  // Fall back to simulated sports data when provider keys are absent (dev/demo mode)
-  SPORTS_DATA_MOCK_FALLBACK: z
-    .enum(["true", "false"])
-    .default("true")
-    .transform((v) => v === "true"),
 });
 
 export type Env = z.infer<typeof envSchema>;

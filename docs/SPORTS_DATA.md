@@ -10,10 +10,11 @@ confirmar com a Pulsescore, e ver também a nota sobre slugs por confirmar mais 
 
 A Fórmula 1 não tem o formato "casa vs fora" dos outros desportos (é uma corrida com vários
 pilotos, não um confronto direto). Para não criar uma segunda estrutura de dados só para ela,
-o tipo `LiveEvent` é reaproveitado: `home`/`away` guardam o nome do Grande Prémio e o tipo de
-sessão, e a grelha de pilotos vai nas seleções do mercado "Vencedor da corrida" — ver
-`server/src/modules/sports/mockFeed.ts`. O MMA já está confirmado a existir neste formato
-"liga → eventos" (ver abaixo, liga real "UFC"), a Fórmula 1 continua por confirmar.
+o tipo `LiveEvent` é reaproveitado: `home`/`away` guardariam o nome do Grande Prémio e o tipo
+de sessão, e a grelha de pilotos iria nas seleções do mercado "Vencedor da corrida" — mas isto
+ainda não foi testado com dados reais (ver "Ainda por confirmar" abaixo). O MMA já está
+confirmado a existir no formato normal "liga → eventos" (ver abaixo, liga real "UFC"), a
+Fórmula 1 continua por confirmar.
 
 ## ✅ Contrato Pulsescore confirmado (via exemplo real fornecido)
 
@@ -134,9 +135,7 @@ e basquete) tem qualquer campo de placar ou minuto/tempo de jogo — só `eventI
 não um provedor de placar ao vivo. `normalizeEvent()` em `pulsescore/client.ts` deixou de
 inventar `homeScore: 0, awayScore: 0` (era enganoso, um placar fixo em "0-0" nunca refletia o
 jogo real) — `LiveEvent.homeScore`/`awayScore` ficam `undefined` para eventos reais, e o
-frontend (`web/app.js`) esconde a linha de placar quando ausente, mostrando só "AO VIVO". Só o
-feed simulado (`mockFeed.ts`) continua a preencher placar, para a interface continuar
-demonstrável.
+frontend (`web/app.js`) esconde a linha de placar quando ausente, mostrando só "AO VIVO".
 
 Também confirmado (mesma amostra): `startTime` **não aparece em eventos `live:true`** — só em
 `live:false` (pré-jogo). Ajustado em `PulsescoreEvent.startTime` (agora opcional).
@@ -200,12 +199,13 @@ Ficheiros:
 - `server/src/modules/sports/apifootball/client.ts` — cliente REST da API-Football, usado só
   para enriquecer eventos de futebol com estatísticas detalhadas.
 - `server/src/modules/sports/hybridService.ts` — faz o polling, filtra os eventos `live:true`,
-  mantém o snapshot em memória e reemite atualizações (`LiveEvent`, ver `types.ts`). Cai para o
-  feed simulado automaticamente se nenhum desporto devolver eventos ao vivo reais num ciclo
-  (chave não configurada, provedor em baixo, ou simplesmente sem jogos ao vivo agora).
-- `server/src/modules/sports/mockFeed.ts` — gerador de eventos simulados, controlado por
-  `SPORTS_DATA_MOCK_FALLBACK=true`. **Isto é o que permite testar e demonstrar a plataforma de
-  ponta a ponta sem pagar a Pulsescore já.**
+  mantém o snapshot em memória e reemite atualizações (`LiveEvent`, ver `types.ts`). Sem
+  `PULSESCORE_API_KEY`, ou se um ciclo não devolver nada ao vivo, a lista fica simplesmente
+  vazia — nunca se inventam eventos/odds fictícios (removido de propósito: um sistema de
+  apostas real não pode mostrar dados simulados a utilizadores reais).
+- `server/src/modules/sports/competitions/service.ts` — top-5 ligas com jogos hoje para o menu
+  lateral "Competições", com preferência para ligas grandes (lista `BIG_LEAGUES`) e desempate
+  por número de jogos; reutiliza a mesma cache do `prematch/service.ts`.
 - `server/src/modules/sports/websocket/gateway.ts` — expõe `/ws/live?sports=football,tennis`
   para o frontend consumir; envia um snapshot inicial e depois um stream de atualizações. Isto
   é interno ao Bet62 (browser ↔ nosso servidor) — não confundir com a ligação real à
@@ -240,14 +240,8 @@ Ficheiros:
 
 ## Antes de produção
 
-1. Testar a ligação real à Pulsescore fora deste ambiente (o proxy daqui bloqueia o domínio) e
-   confirmar os pontos da secção "Ainda por confirmar" acima — sobretudo os slugs dos outros 7
-   desportos e a forma de um evento `live: true`.
-2. Subscrever a API-Football e mapear os fixtures aos eventos Pulsescore.
-3. Definir `PULSESCORE_API_KEY` (o valor vai no header `x-secret`) e `API_FOOTBALL_KEY` nas
-   variáveis de ambiente do servidor. **Nunca commitar o valor do segredo no repositório** — só
-   como variável de ambiente (no Railway: `Variables` do serviço `server`).
-4. Ajustar `POLL_INTERVAL_MS` / `maxPages` em `hybridService.ts` conforme os limites de taxa
-   reais do plano.
-5. Considerar desativar `SPORTS_DATA_MOCK_FALLBACK` em produção depois de confirmada a
-   ligação real, para nunca mostrar dados simulados a utilizadores reais.
+1. Confirmar o slug/bookmaker da Fórmula 1 (ver "Ainda por confirmar" acima).
+2. Subscrever a API-Football e mapear os fixtures aos eventos Pulsescore, para poder mostrar
+   estatísticas detalhadas (e eventualmente placar ao vivo real de futebol).
+3. Ajustar `POLL_INTERVAL_MS` / `maxPages` em `hybridService.ts` conforme os limites de taxa
+   reais do plano, à medida que o tráfego real crescer.
