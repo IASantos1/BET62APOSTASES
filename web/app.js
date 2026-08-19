@@ -341,7 +341,6 @@ function oddsArrowHtml(key, value) {
 function showPage(page) {
   if (pageHistory[pageHistory.length - 1] !== page) pageHistory.push(page);
   closeDrawers();
-  document.body.classList.toggle("on-market-page", page === "market");
 
   ["destaques", "profile", "esportes", "aovivo", "casino", "promocao", "market"].forEach((p) => {
     const el = document.getElementById("page-" + p);
@@ -1087,9 +1086,6 @@ function renderBetslipPanel() {
     fabCount.textContent = selections.length;
     fab.classList.toggle("hidden", selections.length === 0);
   }
-  const inlineCount = document.getElementById("betslip-count");
-  if (inlineCount) inlineCount.textContent = selections.length ? `${selections.length} seleção(ões)` : "Nenhuma seleção";
-
   const eventIds = selections.map(([, s]) => s.eventId);
   const hasDuplicateEvent = new Set(eventIds).size < eventIds.length;
   const canMultipla = selections.length >= 2 && !hasDuplicateEvent;
