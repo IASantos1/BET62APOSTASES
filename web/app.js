@@ -832,14 +832,25 @@ function renderSetsCard(e, clockClass, oddsHtml, icon) {
 // outro, com o placar ANTES do nome da equipa (à esquerda, não à direita — pedido explícito do
 // utilizador; o ténis/voleibol em renderSetsCard() mantém o placar do lado direito). Alinhado na
 // mesma coluna em todos os cartões, nunca "empurrado" consoante o tamanho dos nomes.
+// Cartõezinhos vermelhos junto ao nome da equipa (ex: "🟥" x1 por expulsão) — pedido explícito
+// do utilizador para o cartão principal de Ao Vivo, não só no Match Tracker (que já tinha isto
+// na linha de estatísticas). Repete o emoji por cada expulsão, não só uma vez, já que mais de um
+// jogador expulso no mesmo jogo acontece e cada um conta.
+function redCardsHtml(redCards) {
+  const n = Number(redCards) || 0;
+  return n > 0 ? ` ${"🟥".repeat(n)}` : "";
+}
+
 function renderGenericCard(e, clockClass, oddsHtml, icon) {
   const hasScore = typeof e.homeScore === "number" && typeof e.awayScore === "number";
+  const homeRed = redCardsHtml(e.statistics?.home?.redCards);
+  const awayRed = redCardsHtml(e.statistics?.away?.redCards);
   return `
     <div class="live-card" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
       <div class="lc-top"><span>${icon} ${e.league}</span><span class="${clockClass}">${e.minuteOrPeriod}</span></div>
       <div class="event-rows">
-        <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.homeScore}</span>` : ""}<span class="event-team">${e.home}</span></div>
-        <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.awayScore}</span>` : ""}<span class="event-team">${e.away}</span></div>
+        <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.homeScore}</span>` : ""}<span class="event-team">${e.home}${homeRed}</span></div>
+        <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.awayScore}</span>` : ""}<span class="event-team">${e.away}${awayRed}</span></div>
       </div>
       ${oddsHtml}
     </div>`;
