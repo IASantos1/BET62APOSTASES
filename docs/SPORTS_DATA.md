@@ -556,6 +556,28 @@ esses sim beneficiam de vir sempre atualizados. Continua por confirmar com um pe
 `GET /events/{id}` o que este endpoint devolve de facto; esta correção protege a UI
 independentemente da resposta, sem inventar dados.
 
+### Corrigida a causa real: pré-jogo trocado de `/leagues` para `/events`
+
+Depois da correção acima, o utilizador confirmou que os mercados continuavam a não aparecer no
+pré-jogo — e explicou que ainda não tinha colado nenhuma amostra real de pré-jogo nesta
+conversa. Entretanto colou sete amostras reais de `/events?page=1&limit=5`, uma por desporto
+(beisebol, voleibol, MMA, hóquei de gelo, ténis, basquete e futebol), todas consistentemente
+ricas em mercados (até ~30 por jogo).
+
+Isto expôs a causa raiz: `getPrematchEvents()` (`server/src/modules/sports/prematch/service.ts`)
+usava `fetchEvents()`, que chama `/{bookmaker}/{sport}/leagues` — **não** o endpoint `/events`
+de onde vêm todas estas amostras reais. O `/leagues` tem a mesma forma de dados e foi o primeiro
+endpoint alguma vez confirmado neste projeto (a amostra original de futebol, no início desta
+build), mas a sua riqueza de mercados nunca foi reconfirmada desde então — todas as amostras
+reais mais recentes, de qualquer desporto, vieram sempre de `/events`.
+
+**Correção**: `getPrematchEvents()` passou a usar `fetchEventsFlat()` (`/events`, já
+implementado e usado por outro lado nenhum) em vez de `fetchEvents()` (`/leagues`). Mesma
+assinatura, mesmo tipo de retorno (`LiveEvent[]`), mesmo `normalizeEvent()` por baixo — troca
+mínima, sem tocar em mais nada. `fetchEvents()`/`/leagues` fica por usar por agora mas continua
+implementado, caso volte a ser útil (ex: pedir os jogos de uma liga específica de forma mais
+barata).
+
 ## Testado nesta build
 
 - ✅ Feed simulado a gerar eventos dos 8 desportos em tempo real.

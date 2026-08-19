@@ -1,6 +1,6 @@
 import { env } from "../../../config/env";
 import { logger } from "../../../lib/logger";
-import { fetchEvents } from "../pulsescore/client";
+import { fetchEventsFlat } from "../pulsescore/client";
 import type { LiveEvent, Sport } from "../types";
 
 const CACHE_TTL_MS = 45_000;
@@ -30,7 +30,11 @@ export async function getPrematchEvents(sport: Sport): Promise<PrematchResult> {
   }
 
   try {
-    const all = await fetchEvents(sport, { maxPages: 2 });
+    // Usa /events (fetchEventsFlat), não /leagues (fetchEvents): todas as amostras reais que o
+    // utilizador foi enviando (futebol, beisebol, voleibol, MMA, hóquei de gelo, ténis,
+    // basquete) vieram de /events e são consistentemente ricas em mercados (até ~30 por jogo);
+    // /leagues nunca foi confirmado com a mesma riqueza, apesar de ter a mesma forma de dados.
+    const all = await fetchEventsFlat(sport, { maxPages: 2 });
     const scheduled = all.filter((e) => e.status === "scheduled");
     cache.set(cacheKey, { events: scheduled, fetchedAt: Date.now() });
     return { events: scheduled, source: "pulsescore" };
