@@ -45,7 +45,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 .top-nav-item{padding:8px 14px;border-radius:20px;font-size:.78rem;font-weight:600;color:var(--muted);white-space:nowrap;cursor:pointer;display:flex;align-items:center;gap:5px}
 .top-nav-item.active{background:var(--surface2);color:var(--text)}
 .live-dot{width:6px;height:6px;background:var(--red);border-radius:50%}
-.sport-subnav{display:flex;gap:6px;padding:8px 12px;overflow-x:auto;background:var(--bg);border-bottom:1px solid var(--border);scrollbar-width:none}
+.sport-subnav{display:flex;gap:6px;padding:8px 12px;overflow-x:auto;justify-content:center;background:var(--bg);border-bottom:1px solid var(--border);scrollbar-width:none}
 .sport-subnav::-webkit-scrollbar{display:none}
 .sport-chip{padding:7px 12px;border-radius:16px;font-size:.74rem;font-weight:600;color:var(--muted);white-space:nowrap;cursor:pointer;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;gap:5px}
 .sport-chip.active{border-color:var(--red);color:var(--text);background:rgba(230,48,39,.08)}
@@ -163,13 +163,23 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 /* ===== Layout: Menu lateral esquerdo (Competições + Desportos) e direito (Boletim) ===== */
 .app-shell{display:flex;align-items:flex-start}
 .main-col{flex:1;min-width:0}
-.sidebar-left,.sidebar-right{width:270px;flex-shrink:0;padding:18px 14px;position:sticky;top:61px;max-height:calc(100vh - 61px);overflow-y:auto;scrollbar-width:thin}
+.sidebar-left,.sidebar-right{width:270px;flex-shrink:0;padding:18px 14px;position:sticky;top:61px;height:calc(100vh - 61px);overflow-y:auto;scrollbar-width:thin;border:1px solid var(--border)}
 .sidebar-title{font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:.6px;color:var(--muted);margin:16px 4px 8px}
 .sidebar-title:first-child{margin-top:2px}
 .comp-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-radius:10px;cursor:pointer;font-size:.8rem;margin-bottom:3px}
 .comp-item:hover{background:var(--surface2)}
 .comp-item .comp-count{background:var(--surface2);color:var(--muted);font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:10px}
-.sports-menu-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;cursor:pointer;font-size:.85rem;font-weight:600;margin-bottom:2px;color:var(--text)}
+.sports-menu-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:10px;cursor:pointer;font-size:.85rem;font-weight:600;margin-bottom:2px;color:var(--text)}
+.sports-menu-chevron{color:var(--muted);font-size:.7rem;transition:transform .2s;padding:4px;flex-shrink:0}
+.sports-menu-chevron.open{transform:rotate(180deg)}
+.country-list{margin:0 0 4px 14px;border-left:1px solid var(--border);padding-left:8px}
+.country-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:.8rem;font-weight:600;color:var(--text)}
+.country-item:hover{background:var(--surface2)}
+.league-item{padding:7px 10px 7px 30px;border-radius:8px;cursor:pointer;font-size:.76rem;color:var(--muted)}
+.league-item:hover{background:var(--surface2);color:var(--text)}
+.league-item.active{color:var(--red);font-weight:700;background:rgba(230,48,39,.08)}
+.league-filter-badge{display:inline-flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:6px 14px;font-size:.8rem;color:var(--muted);margin-bottom:14px}
+.league-filter-badge span{cursor:pointer;color:var(--red);font-weight:700}
 .sports-menu-item:hover{background:var(--surface2)}
 .sports-menu-item.active{background:rgba(230,48,39,.08);color:var(--red)}
 .drawer-overlay{display:none}
@@ -516,6 +526,7 @@ body.on-market-page .betslip-fab{bottom:calc(78px + env(safe-area-inset-bottom))
 <!-- ========== ESPORTES (pré-jogo) ========== -->
 <div id="page-esportes" class="page hidden">
     <div class="section-title">PRÉ-JOGO</div>
+    <div id="league-filter-badge"></div>
     <div class="event-list" id="prematch-list"></div>
 </div>
 
