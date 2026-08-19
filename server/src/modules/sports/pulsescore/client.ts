@@ -45,16 +45,20 @@ import type { LiveEvent, LiveOdds, Sport } from "../types";
  * `fetchEventsFlat()` and `fetchEventById()` below, both parsed defensively for the same
  * reason as fetchLeagueEvents() — no response body was provided for either yet.
  *
- * The same three endpoints (leagues, leagues/{name}/events, events, events/{id}) were then
- * confirmed again under /10bet/tennis/... — same shape, just a different sport slug, which
- * confirms the path is uniformly /{bookmaker}/{sport}/... for any sport rather than something
- * sport-specific. No new response bodies came with it either.
+ * The same endpoints were then confirmed again under /10bet/tennis/... and /10bet/volleyball/...
+ * — same shape both times, just a different sport slug, which confirms the path is uniformly
+ * /{bookmaker}/{sport}/... for any sport rather than something sport-specific. Still no
+ * response bodies came with any of these. Worth noting: the volleyball leagues/{name}/events
+ * sample used the literal placeholder text "league name" (URL-encoded) as the league — that
+ * looks like a Swagger/OpenAPI "Try it out" default value, not a real league. If these curl
+ * commands are being copied from a Swagger UI, hitting "Execute" there would capture the real
+ * response body, which is the one thing still missing to fully confirm this integration.
  *
  * NEEDS VALIDATION — not covered by any sample yet, still assumptions:
- *   - The sport slug is confirmed for football ("soccer") and tennis ("tennis"). Slugs below
- *     for the other 6 sports are best-effort guesses; if wrong, that sport's fetch just comes
- *     back empty/404, which fetchEvents() below swallows per-sport rather than failing the
- *     whole poll cycle.
+ *   - The sport slug is confirmed for football ("soccer"), tennis ("tennis") and volleyball
+ *     ("volleyball"). Slugs below for the other 5 sports are best-effort guesses; if wrong,
+ *     that sport's fetch just comes back empty/404, which fetchEvents() below swallows
+ *     per-sport rather than failing the whole poll cycle.
  *   - Whether Fórmula 1 / MMA exist at all under this bookmaker in this leagues/home-away shape
  *     — motorsport in particular may not fit a two-team model the way this API is structured.
  *   - What a `live:true` event's payload adds for score/clock — the sample only shows
@@ -70,7 +74,7 @@ const SPORT_SLUGS: Record<Sport, string> = {
   basketball: "basketball",
   ice_hockey: "ice-hockey",
   baseball: "baseball",
-  volleyball: "volleyball",
+  volleyball: "volleyball", // CONFIRMED
   formula1: "formula-1",
   mma: "mma",
 };
