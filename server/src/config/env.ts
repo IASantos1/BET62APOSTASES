@@ -39,6 +39,18 @@ const envSchema = z.object({
   // --- API-Football (statistics) ---
   API_FOOTBALL_KEY: z.string().default(""),
   API_FOOTBALL_BASE_URL: z.string().default("https://v3.football.api-sports.io"),
+
+  // --- Cassino Gold Palace (slots, seamless wallet) ---
+  // Confirmado pelo utilizador: callbacks Win/Cancel/Status que o provedor chama para debitar/
+  // creditar a carteira do jogador — o header "Callback-Token" desses pedidos tem de bater
+  // com este valor. Fuso horário da API do provedor é UTC.
+  CASINO_CALLBACK_TOKEN: z.string().default(""),
+  // NÃO confirmado ainda: a doc fornecida só documenta os callbacks (Win/Cancel/Status) que O
+  // PROVEDOR chama para nós — falta o endpoint real para NÓS pedirmos uma sessão/URL de
+  // lançamento de jogo (base URL + credenciais de agente). Mantidos como placeholders até
+  // chegar essa parte do contrato; /api/casino/launch devolve um erro claro enquanto vazios.
+  CASINO_PROVIDER_BASE_URL: z.string().default(""),
+  CASINO_AGENT_KEY: z.string().default(""),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -357,6 +357,8 @@ function showPage(page) {
   if (page === "profile") loadProfile();
   if (page === "aovivo") { renderSportSubnav(); ensureLiveSocket(); }
   if (page === "esportes") { renderSportSubnav(); renderPrematchList(); }
+  if (page === "casino") renderCasinoPage();
+  if (page === "destaques") renderDestaquesCasinoRow();
 }
 
 function goBack() {
@@ -774,9 +776,66 @@ async function submitDeposit() {
   }
 }
 
-function playGame(name) {
+// ====================== CASINO ======================
+async function renderDestaquesCasinoRow() {
+  const el = document.getElementById("destaques-casino-row");
+  if (!el) return;
+  try {
+    const { games } = await Bet62Api.getCasinoHighlights();
+    el.innerHTML = games
+      .map(
+        (g) => `
+      <div class="casino-game" onclick='playGame(${JSON.stringify(g.game_code)}, ${JSON.stringify(g.game_name)})'>
+        <div class="thumb"><img src="${g.game_image}" alt="${g.game_name}" loading="lazy" onerror="this.style.display='none'"></div>
+        <div class="name">${g.game_name}</div>
+      </div>`
+      )
+      .join("");
+  } catch {
+    // Sem catálogo disponível (backend em baixo, etc.) — a fila fica vazia em vez de quebrar a página.
+  }
+}
+
+let casinoSearchTimer = null;
+function onCasinoSearch(value) {
+  clearTimeout(casinoSearchTimer);
+  casinoSearchTimer = setTimeout(() => renderCasinoPage(value.trim()), 250);
+}
+
+async function renderCasinoPage(search = "") {
+  const grid = document.getElementById("casino-grid");
+  const status = document.getElementById("casino-grid-status");
+  const requestToken = ++renderCasinoPage._token;
+  if (!grid) return;
+  status.textContent = "A carregar…";
+  try {
+    const { games, total } = await Bet62Api.getCasinoGames({ search, limit: 120 });
+    if (requestToken !== renderCasinoPage._token) return; // pesquisa mais recente já em curso
+    grid.innerHTML = games
+      .map(
+        (g) => `
+      <div class="casino-grid-item" onclick='playGame(${JSON.stringify(g.game_code)}, ${JSON.stringify(g.game_name)})'>
+        <div class="thumb"><img src="${g.game_image}" alt="${g.game_name}" loading="lazy" onerror="this.style.display='none'"></div>
+        <div class="name">${g.game_name}</div>
+      </div>`
+      )
+      .join("");
+    status.textContent = total > games.length ? `A mostrar ${games.length} de ${total} jogos — refine a pesquisa` : `${total} jogos`;
+  } catch (err) {
+    if (requestToken !== renderCasinoPage._token) return;
+    grid.innerHTML = "";
+    status.textContent = err.message || "Não foi possível carregar o catálogo de jogos.";
+  }
+}
+renderCasinoPage._token = 0;
+
+async function playGame(gameCode, gameName) {
   if (!Bet62Api.isAuthenticated()) return openAuth("login");
-  alert("🎮 Abrindo " + name + " (integração de casino ainda não implementada nesta fase)");
+  try {
+    await Bet62Api.launchCasinoGame(gameCode);
+  } catch (err) {
+    alert("🎰 " + (gameName || gameCode) + "\n\n" + (err.message || "Não foi possível abrir o jogo."));
+  }
 }
 
 // ====================== LIVE SPORTS (Pulsescore + API-Football híbrido) ======================
