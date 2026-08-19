@@ -368,6 +368,44 @@ function goBack() {
   }
 }
 
+// Gesto "arrastar da borda esquerda para voltar" (como no iOS), pedido pelo utilizador além do
+// botão de seta. Só ativa quando o toque começa perto da borda esquerda do ecrã — não em
+// qualquer ponto do ecrã — para não entrar em conflito com listas com scroll horizontal que já
+// existem (chips de desporto, carrossel do casino, linhas de odds, etc.).
+(function setupSwipeBack() {
+  const EDGE_PX = 24;
+  const MIN_DX = 70;
+  let startX = null;
+  let startY = null;
+  let tracking = false;
+
+  document.addEventListener(
+    "touchstart",
+    (ev) => {
+      const t = ev.touches[0];
+      tracking = t.clientX <= EDGE_PX;
+      startX = tracking ? t.clientX : null;
+      startY = tracking ? t.clientY : null;
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    "touchend",
+    (ev) => {
+      if (!tracking || startX === null) return;
+      tracking = false;
+      const t = ev.changedTouches[0];
+      const dx = t.clientX - startX;
+      const dy = Math.abs(t.clientY - startY);
+      if (dx > MIN_DX && dx > dy * 1.5) goBack();
+      startX = null;
+      startY = null;
+    },
+    { passive: true }
+  );
+})();
+
 function toggleAccordion(header) {
   header.closest(".menu-item").classList.toggle("open");
 }
