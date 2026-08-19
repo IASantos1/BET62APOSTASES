@@ -69,18 +69,18 @@ Factos confirmados por este exemplo (não suposição):
 ## ⚠️ Ainda por confirmar
 
 1. **Slugs de desporto** — confirmados: futebol (`soccer`), ténis (`tennis`), voleibol
-   (`volleyball`), MMA (`mma`) e hóquei de gelo (`ice-hockey`) — mesmos endpoints repetidos com
-   estes slugs, sempre a mesma forma. Os restantes 3 (`basketball`, `baseball`, `formula-1` em
-   `pulsescore/client.ts`, constante `SPORT_SLUGS`) continuam a ser estimativas razoáveis, não
-   confirmadas. Se o slug estiver errado, esse desporto simplesmente devolve vazio/404 — o
-   código já trata isso por desporto (não derruba o ciclo inteiro), mas os dados não aparecem
-   até o slug certo ser confirmado.
-   > 💡 A amostra do MMA para `leagues/{name}/events` usou uma liga real, "UFC" — ao contrário
-   > das amostras do voleibol e do hóquei de gelo, que usaram o texto literal "league name" (o
-   > valor por defeito de um "Try it out" do Swagger/OpenAPI). Se for daí que estes `curl` vêm,
-   > clicar em "Execute" ali captura a resposta real, que é a única coisa que falta para
-   > confirmar isto por completo (odds ao vivo, campos extra, etc.) — nenhum endpoint além do
-   > primeiro exemplo de `leagues` teve a resposta confirmada até agora.
+   (`volleyball`), MMA (`mma`), hóquei de gelo (`ice-hockey`) e basquete (`basketball`) —
+   mesmos endpoints repetidos com estes slugs, sempre a mesma forma. Os restantes 2
+   (`baseball`, `formula-1` em `pulsescore/client.ts`, constante `SPORT_SLUGS`) continuam a ser
+   estimativas razoáveis, não confirmadas. Se o slug estiver errado, esse desporto simplesmente
+   devolve vazio/404 — o código já trata isso por desporto (não derruba o ciclo inteiro), mas os
+   dados não aparecem até o slug certo ser confirmado.
+   > 💡 As amostras do MMA e do basquete para `leagues/{name}/events` usaram ligas reais ("UFC",
+   > "NBA") — ao contrário das do voleibol e do hóquei de gelo, que usaram o texto literal
+   > "league name" (o valor por defeito de um "Try it out" do Swagger/OpenAPI). Se for daí que
+   > estes `curl` vêm, clicar em "Execute" ali captura a resposta real, que é a única coisa que
+   > falta para confirmar isto por completo (odds ao vivo, campos extra, etc.) — nenhum endpoint
+   > além do primeiro exemplo de `leagues` teve a resposta confirmada até agora.
 2. **Fórmula 1 pode nem existir** nesta forma "liga → eventos casa/fora" — motorsport não
    encaixa num modelo de dois competidores da mesma maneira que o MMA (que já está confirmado
    a existir neste formato, com a liga "UFC"). Confirmar no catálogo da Pulsescore se a

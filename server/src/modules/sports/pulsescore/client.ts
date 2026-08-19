@@ -46,21 +46,22 @@ import type { LiveEvent, LiveOdds, Sport } from "../types";
  * reason as fetchLeagueEvents() — no response body was provided for either yet.
  *
  * The same endpoints were then confirmed again under /10bet/tennis/..., /10bet/volleyball/...,
- * /10bet/mma/... and /10bet/ice-hockey/... — same shape every time, just a different sport
- * slug, which confirms the path is uniformly /{bookmaker}/{sport}/... for any sport rather
- * than something sport-specific. The MMA sample used a real league name, "UFC"
- * (leagues/UFC/events); the volleyball and ice-hockey ones used the literal placeholder text
- * "league name" (URL-encoded), clearly a Swagger/OpenAPI "Try it out" default rather than a
- * real league. If these curl commands are being copied from a Swagger UI, hitting "Execute"
+ * /10bet/mma/..., /10bet/ice-hockey/... and /10bet/basketball/... — same shape every time,
+ * just a different sport slug, which confirms the path is uniformly /{bookmaker}/{sport}/...
+ * for any sport rather than something sport-specific. The MMA and basketball samples used real
+ * league names ("UFC", "NBA"); the volleyball and ice-hockey ones used the literal placeholder
+ * text "league name" (URL-encoded), clearly a Swagger/OpenAPI "Try it out" default rather than
+ * a real league. If these curl commands are being copied from a Swagger UI, hitting "Execute"
  * there would capture the real response body, which is the one thing still missing to fully
  * confirm this integration — no response body has been provided for any endpoint except the
  * very first leagues sample.
  *
  * NEEDS VALIDATION — not covered by any sample yet, still assumptions:
  *   - The sport slug is confirmed for football ("soccer"), tennis ("tennis"), volleyball
- *     ("volleyball"), MMA ("mma") and ice hockey ("ice-hockey"). Slugs below for the other 3
- *     sports are best-effort guesses; if wrong, that sport's fetch just comes back empty/404,
- *     which fetchEvents() below swallows per-sport rather than failing the whole poll cycle.
+ *     ("volleyball"), MMA ("mma"), ice hockey ("ice-hockey") and basketball ("basketball").
+ *     Slugs below for the other 2 sports are best-effort guesses; if wrong, that sport's fetch
+ *     just comes back empty/404, which fetchEvents() below swallows per-sport rather than
+ *     failing the whole poll cycle.
  *   - Whether Fórmula 1 exists under this bookmaker in this leagues/home-away shape — MMA
  *     turned out to fit fine (fighter vs fighter), but motorsport still doesn't map cleanly to
  *     a two-competitor model, so this one specifically stays an open question.
@@ -74,7 +75,7 @@ import type { LiveEvent, LiveOdds, Sport } from "../types";
 const SPORT_SLUGS: Record<Sport, string> = {
   football: "soccer", // CONFIRMED
   tennis: "tennis", // CONFIRMED
-  basketball: "basketball",
+  basketball: "basketball", // CONFIRMED
   ice_hockey: "ice-hockey", // CONFIRMED
   baseball: "baseball",
   volleyball: "volleyball", // CONFIRMED
