@@ -244,6 +244,20 @@ Alterações de código:
 - O frontend (`web/app.js`) já verificava `typeof e.homeScore === "number"` de forma defensiva —
   não precisou de nenhuma alteração, o placar real passa a aparecer automaticamente.
 
+### Frontend ligado aos novos campos (`country` e `statistics`)
+
+- **Menu lateral "Futebol" → países/ligas**: deixou de depender só da lista estática
+  `FOOTBALL_LEAGUES_BY_COUNTRY` (`web/app.js`). Ao expandir Futebol, `loadFootballCountriesTree()`
+  pede pré-jogo + ao vivo reais, agrupa por `e.country` (usando `Intl.DisplayNames(['pt'])` para
+  traduzir o código ISO para um nome legível, ex: "GB" → "Reino Unido"; `""` vira "Internacional")
+  e por `e.league`, e troca o menu para essa árvore real assim que chega. A lista estática
+  continua a existir só como fallback instantâneo (antes dos dados reais chegarem, ou se a API
+  não devolver nada).
+- **Match Tracker → linha de estatísticas**: quando `e.statistics` vem preenchido (cartões
+  amarelos/vermelhos, cantos, por equipa), `renderMatchTracker()`/`renderStatsRow()` desenham uma
+  linha sob o cronómetro com os três valores por equipa; some por completo se `statistics` estiver
+  ausente (nunca inventa zeros para um jogo sem estes dados).
+
 ⚠️ **Por confirmar**: a paddypower cobre basquete/hóquei de gelo/voleibol/MMA da mesma forma?
 `/paddypower/live-events/sports` só mostrou eventos ao vivo reais para futebol, ténis, basebol,
 esports e ténis de mesa no momento da amostra — os outros desportos podem simplesmente não ter
