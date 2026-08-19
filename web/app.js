@@ -14,10 +14,10 @@ const SPORTS_META = [
   { id: "tennis", label: "Ténis", icon: "🎾" },
   { id: "basketball", label: "Basquete", icon: "🏀" },
   { id: "ice_hockey", label: "Hóquei", icon: "🏒" },
+  { id: "mma", label: "MMA", icon: "🥋" },
   { id: "baseball", label: "Beisebol", icon: "⚾" },
   { id: "volleyball", label: "Voleibol", icon: "🏐" },
   { id: "formula1", label: "Fórmula 1", icon: "🏎️" },
-  { id: "mma", label: "MMA", icon: "🥋" },
 ];
 let selectedSport = null; // null = todos
 

@@ -152,48 +152,72 @@ reordena os mercados ativos para pôr `MATCH_RESULT` primeiro quando presente
 (`orderMarketsWithPrimaryFirst()`), mantendo os restantes; sem isso, o cartão (que só lê
 `odds[0]`) podia mostrar um mercado sem relação com o resultado do jogo.
 
+## ✅ Documentação oficial da Pulsescore obtida — WebSocket confirmado
+
+O utilizador colou a documentação oficial completa (endpoints, autenticação, WebSocket, planos,
+matriz de desportos por casa de apostas). Isto confirma/corrige vários pontos:
+
+- **Existe mesmo um produto WebSocket** — resolve a dúvida em aberto desde o início deste
+  build ("Pulsescore.com plano 149€ que sai 3 websockets"). Padrão:
+  `wss://api.pulsescore.net/api/{bookmaker}/ws/live?key=&sport=` — autenticação por query
+  param (`key=`), não pelo header `x-secret` usado no REST. Um frame por ~1 segundo com todos
+  os eventos ao vivo do desporto subscrito. Só disponível nos planos **PRO/MAX/ULTRA** (não no
+  BASIC/STARTER); o plano MAX (149€/mês, 3 ligações simultâneas) é o mencionado originalmente.
+  Implementado em `server/src/modules/sports/pulsescore/wsClient.ts`.
+- **O frame do WebSocket inclui um campo `score`** (ex: `"1-0"`) que os endpoints REST
+  `/live-events` **não têm** (confirmado por duas amostras reais). Ou seja, o placar ao vivo
+  real existe — só vem pelo WebSocket, nunca pelo REST. `wsClient.ts` faz o parse de
+  `score: "H-A"` para `homeScore`/`awayScore`; o REST continua sem placar (`hybridService.ts`
+  usa WebSocket para até 3 desportos em simultâneo — os mais movimentados agora — e REST para
+  cobrir os restantes, sem placar nesses).
+- **CONFIRMADO: a 10Bet não oferece Fórmula 1.** A tabela oficial "Esportes válidos por casa de
+  apostas" lista os desportos de cada bookmaker — a 10Bet(CO.UK) não inclui Fórmula 1 na lista,
+  mas a Unibet AU inclui. `SPORT_BOOKMAKER_OVERRIDE` em `pulsescore/client.ts` já troca só a
+  Fórmula 1 para `unibetau`, mantendo os outros 7 desportos em `10bet`. O slug exato da F1
+  dentro da Unibet AU continua uma estimativa (`formula-1`) — a doc só usa o nome de exibição
+  "Fórmula 1", não o slug de API.
+- **Bet365 usa caminho versionado** (`/api/v3/bet365/...`); todos os outros bookmakers
+  (incluindo `10bet` e `unibetau`) não são versionados. Já tratado em `wsUrlFor()`.
+- ⚠️ **A doc mostra uma forma de mercados/seleções diferente da que já vimos numa resposta REST
+  real.** O exemplo da doc usa `canonicalMarket: "match_winner"` (minúsculas) e
+  `selections: [{name, decimal}]`; a amostra REST real (soccer, `/leagues`) tinha
+  `"MATCH_RESULT"` (maiúsculas) e `{canonicalOutcome, rawName, odds, isActive, selectionId}`.
+  Como discordam e só uma foi mesmo capturada de um pedido real, nenhuma das duas é tratada
+  como definitiva — `orderMarketsWithPrimaryFirst()` verifica os dois nomes possíveis do
+  mercado principal, e o parser do WebSocket aceita `rawName`/`name` e `odds`/`decimal`.
+
 ## ⚠️ Ainda por confirmar
 
-1. **Slug da Fórmula 1** — os outros 7 desportos já têm o slug confirmado: futebol (`soccer`),
-   ténis (`tennis`), voleibol (`volleyball`), MMA (`mma`), hóquei de gelo (`ice_hockey`),
-   basquete (`basketball`) e beisebol (`baseball`). Só falta a Fórmula 1 (`formula-1` em
-   `pulsescore/client.ts`, constante `SPORT_SLUGS`), que continua a ser estimativa. Se o slug
-   estiver errado, esse desporto simplesmente devolve vazio/404 — o código já trata isso por
-   desporto (não derruba o ciclo inteiro), mas os dados não aparecem até confirmar.
-2. **Fórmula 1 pode nem existir** nesta forma "liga → eventos casa/fora" — motorsport é o único
-   dos 8 desportos que não encaixa claramente num modelo de dois competidores (todos os outros
-   7, incluindo o MMA que também parecia arriscado, já foram confirmados). Confirmar no
-   catálogo da Pulsescore se a Fórmula 1 está disponível e em que forma. Um exemplo à parte
-   testou `unibetau/formula-1/leagues` (casa de apostas diferente de `10bet`, usada em todos os
-   outros 7 desportos) — ainda por validar se é mesmo preciso trocar de bookmaker só para F1,
-   ou se `10bet/formula-1/...` também funciona.
-3. **Resposta de `/live-events/events/{id}`** — só o pedido foi confirmado; a forma exata da
-   resposta continua por confirmar (`fetchLiveEventById()` usa o mesmo parsing defensivo dos
-   outros endpoints não confirmados).
-4. **Casa de apostas (`bookmaker`)** — `10bet` foi a usada no exemplo (`PULSESCORE_BOOKMAKER`,
-   por defeito `10bet`); pode haver outras disponíveis por desporto que dêem melhor cobertura.
-5. **Limites de taxa / custo por pedido** — mesmo com o `/live-events/sports` a poupar pedidos
+1. **Slug exato da Fórmula 1** dentro de `unibetau` — continua uma estimativa (`formula-1`).
+2. **Resposta real de `/live-events/events/{id}`** e do frame do WebSocket em produção — a
+   ligação WebSocket não pôde ser testada neste ambiente (o proxy do sandbox bloqueia
+   `api.pulsescore.net` por completo, para REST e WebSocket); testado apenas o comportamento de
+   fallback (ambos falham de forma controlada, sem crash). Falta confirmar num ambiente com
+   rede real (Railway) que a ligação WebSocket liga, recebe frames, e que o campo `score` vem
+   mesmo no formato `"H-A"` assumido.
+3. **Limites de taxa / custo por pedido** — mesmo com o `/live-events/sports` a poupar pedidos
    desnecessários, convém validar o volume total contra os limites do plano antes de produção
-   (ajustar `POLL_INTERVAL_MS` e `maxPages` em `hybridService.ts` se necessário).
-6. **Fonte alternativa para placar/cronómetro ao vivo** — já que a Pulsescore não os fornece
-   (ver acima), a única forma de mostrar placar real ao vivo seria via API-Football (só
-   futebol, e só depois de mapear `apiFootballFixtureId` a cada evento Pulsescore — ainda por
-   fazer) ou aceitar mostrar só "AO VIVO" sem placar para todos os desportos, como está agora.
+   (ajustar `POLL_INTERVAL_MS` e `maxPages` em `hybridService.ts`, e `maxConnections` em
+   `wsClient.ts`, se necessário).
 
 ## Arquitetura
 
 ```
-Pulsescore (REST, polling 25s) ──┐
-                                   ├──▶ HybridSportsService ──▶ WebSocket Gateway (/ws/live) ──▶ Frontend (Ao Vivo)
-Mock feed (fallback automático)  ──┘         │
-                                              └──▶ API-Football (REST, sob pedido) ── estatísticas de futebol
+Pulsescore WebSocket (até 3 desportos, tempo real + placar) ──┐
+                                                                ├──▶ HybridSportsService ──▶ WebSocket Gateway (/ws/live) ──▶ Frontend (Ao Vivo)
+Pulsescore REST (polling 25s, os restantes desportos)        ──┘         │
+                                                                           └──▶ API-Football (REST, sob pedido) ── estatísticas de futebol
 
 Pulsescore (REST, sob pedido + cache 45s) ──▶ GET /api/sports/prematch?sport= ──▶ Frontend (Esportes/pré-jogo)
+GET /api/sports/competitions ──▶ top-5 ligas do dia (cache 60s) ──▶ Frontend (menu lateral esquerdo)
 ```
 
 Ficheiros:
 - `server/src/modules/sports/pulsescore/client.ts` — cliente REST da Pulsescore (`fetchEvents`),
   com o contrato confirmado acima.
+- `server/src/modules/sports/pulsescore/wsClient.ts` — cliente WebSocket (odds quase em tempo
+  real + placar ao vivo), até `maxConnections` desportos em simultâneo, com reconexão automática
+  e desativação limpa se o plano da conta não incluir WebSocket (código de fecho 4003).
 - `server/src/modules/sports/prematch/service.ts` — expõe os eventos `live:false` (pré-jogo)
   com uma cache de 45s por desporto, para a página Esportes.
 - `server/src/modules/sports/apifootball/client.ts` — cliente REST da API-Football, usado só

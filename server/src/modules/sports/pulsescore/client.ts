@@ -79,26 +79,37 @@ import type { LiveEvent, LiveOdds, Sport } from "../types";
  * unlike the sport-scoped single-event endpoint takes no sport in the path) is not confirmed
  * yet, so both are parsed defensively the same way as fetchEventsFlat()/fetchEventById().
  *
- * NEEDS VALIDATION — not covered by any sample yet, still assumptions:
- *   - The sport slug is confirmed for every sport except Fórmula 1 — football ("soccer"),
- *     tennis ("tennis"), volleyball ("volleyball"), MMA ("mma"), ice hockey ("ice_hockey"),
- *     basketball ("basketball") and baseball ("baseball") have all been seen in real requests
- *     or in the /live-events/sports response. `formula1: "formula-1"` below is still a guess;
- *     if wrong, that sport's fetch just comes back empty/404, which fetchEvents() below
- *     swallows per-sport rather than failing the whole poll cycle. Fórmula 1 is also simply
- *     absent from the live-events/sports sample, which — given it only lists sports with a
- *     live event *right now* — doesn't confirm or rule it out either way.
- *   - Whether Fórmula 1 exists under this bookmaker in this leagues/home-away shape at all — 7
- *     out of 8 sports turned out to fit fine (even MMA, fighter vs fighter), but motorsport
- *     still doesn't map cleanly to a two-competitor model, so this one specifically stays open.
- *   - What a `live:true` event's payload adds for score/clock — the sample only shows
- *     `live:false` (pré-jogo) events, so homeScore/awayScore/minuteOrPeriod are best-effort
- *     defaults for live events until a live sample is seen.
- *   - Whether a websocket product exists at all for this account/plan — this client only
- *     implements what was demonstrated (REST + polling).
+ * UPDATE — official Pulsescore documentation obtained (docs.pulsescore.net-equivalent content
+ * pasted by the user), confirming/correcting several of the points above:
+ *
+ *   - Multiple bookmakers exist behind the same normalized schema (10bet, bet365, fanduel,
+ *     bwin, unibetau, ps3838 (Pinnacle), etc.) — same paths, same response shape, just a
+ *     different {bookmaker} prefix. Bet365 is the one exception: its REST/WS paths are
+ *     versioned (`/api/v3/bet365/...`); every other bookmaker (including "10bet", the one this
+ *     client uses) is unversioned (`/api/{bookmaker}/...`).
+ *   - CONFIRMED (per-bookmaker sport list in the docs): "10bet" does NOT offer Fórmula 1 at
+ *     all, but "unibetau" does. SPORT_BOOKMAKER_OVERRIDE below routes formula1 to "unibetau"
+ *     while every other sport stays on the default PULSESCORE_BOOKMAKER ("10bet"). The exact
+ *     slug Fórmula 1 uses under unibetau is still a guess (`formula-1`) — not in the docs' sport
+ *     list wording, which spells it "Fórmula 1" (display name, not an API slug).
+ *   - A WebSocket product DOES exist (this resolves the open question below): one connection
+ *     per {bookmaker, sport} pair, auth via `?key=&sport=` query params (not the x-secret
+ *     header used by REST), one frame per ~second with ALL live events for that sport. See
+ *     wsClient.ts. Only available on PRO/MAX/ULTRA plans (not BASIC/STARTER) — MAX (€149/mo,
+ *     3 simultaneous connections) matches what was mentioned when this integration started.
+ *   - The WS frame's event objects include a `score` field (e.g. `"1-0"`) that the REST
+ *     `/live-events` endpoints this client already uses do NOT have (confirmed absent via two
+ *     real REST samples). So real live score, when available, only comes from the WS channel —
+ *     REST stays odds-only. See normalizeWsEvent() in wsClient.ts.
+ *   - The docs' illustrative JSON uses a different market/selection shape than the REST
+ *     responses actually seen (`canonicalMarket: "match_winner"` lowercase vs. the REST
+ *     sample's `"MATCH_RESULT"` uppercase; `selections: [{name, decimal}]` vs. the REST
+ *     sample's `{canonicalOutcome, rawName, odds, isActive, selectionId}`). Since docs and a
+ *     real captured response disagree, both response-shape assumptions are treated as
+ *     unconfirmed and parsed defensively rather than picking one as authoritative.
  */
 
-const SPORT_SLUGS: Record<Sport, string> = {
+export const SPORT_SLUGS: Record<Sport, string> = {
   football: "soccer", // CONFIRMED
   tennis: "tennis", // CONFIRMED
   basketball: "basketball", // CONFIRMED
@@ -113,9 +124,20 @@ const SPORT_SLUGS: Record<Sport, string> = {
   mma: "mma", // CONFIRMED (also confirms MMA exists in this leagues/events shape, e.g. league "UFC")
 };
 
-const SLUG_TO_SPORT: Partial<Record<string, Sport>> = Object.fromEntries(
+export const SLUG_TO_SPORT: Partial<Record<string, Sport>> = Object.fromEntries(
   (Object.entries(SPORT_SLUGS) as [Sport, string][]).map(([sport, slug]) => [slug, sport])
 );
+
+// CONFIRMED via a documentação oficial da Pulsescore ("Esportes válidos por casa de apostas"):
+// a 10Bet(CO.UK) não lista Fórmula 1 entre os desportos suportados, mas a Unibet AU lista — daí
+// a Fórmula 1 usar um bookmaker diferente de todos os outros 7 desportos (que ficam em 10bet).
+const SPORT_BOOKMAKER_OVERRIDE: Partial<Record<Sport, string>> = {
+  formula1: "unibetau",
+};
+
+export function bookmakerFor(sport: Sport): string {
+  return SPORT_BOOKMAKER_OVERRIDE[sport] ?? env.PULSESCORE_BOOKMAKER;
+}
 
 interface PulsescoreSelection {
   canonicalOutcome: string;
@@ -171,7 +193,7 @@ function assertConfigured() {
 async function fetchLeaguesPage(sport: Sport, page: number, limit: number): Promise<PulsescoreLeaguesResponse> {
   assertConfigured();
   const slug = SPORT_SLUGS[sport];
-  const url = `${env.PULSESCORE_REST_URL}/${env.PULSESCORE_BOOKMAKER}/${slug}/leagues?page=${page}&limit=${limit}`;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerFor(sport)}/${slug}/leagues?page=${page}&limit=${limit}`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -184,7 +206,7 @@ async function fetchLeaguesPage(sport: Sport, page: number, limit: number): Prom
 async function fetchLeagueEventsRaw(sport: Sport, leagueName: string): Promise<unknown> {
   assertConfigured();
   const slug = SPORT_SLUGS[sport];
-  const url = `${env.PULSESCORE_REST_URL}/${env.PULSESCORE_BOOKMAKER}/${slug}/leagues/${encodeURIComponent(leagueName)}/events`;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerFor(sport)}/${slug}/leagues/${encodeURIComponent(leagueName)}/events`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -230,7 +252,7 @@ interface PulsescoreFlatEventsResponse {
 async function fetchEventsFlatPage(sport: Sport, page: number, limit: number): Promise<PulsescoreFlatEventsResponse> {
   assertConfigured();
   const slug = SPORT_SLUGS[sport];
-  const url = `${env.PULSESCORE_REST_URL}/${env.PULSESCORE_BOOKMAKER}/${slug}/events?page=${page}&limit=${limit}`;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerFor(sport)}/${slug}/events?page=${page}&limit=${limit}`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -281,7 +303,7 @@ function extractSingleEvent(data: unknown): PulsescoreEvent | null {
 export async function fetchEventById(sport: Sport, eventId: string): Promise<LiveEvent | null> {
   assertConfigured();
   const slug = SPORT_SLUGS[sport];
-  const url = `${env.PULSESCORE_REST_URL}/${env.PULSESCORE_BOOKMAKER}/${slug}/events/${encodeURIComponent(eventId)}`;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerFor(sport)}/${slug}/events/${encodeURIComponent(eventId)}`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
   if (res.status === 404) return null;
   if (!res.ok) {
@@ -320,7 +342,7 @@ export async function fetchLiveSportsWithEvents(): Promise<Sport[]> {
 async function fetchLiveEventsPage(sport: Sport, page: number, limit: number): Promise<unknown> {
   assertConfigured();
   const slug = SPORT_SLUGS[sport];
-  const url = `${env.PULSESCORE_REST_URL}/${env.PULSESCORE_BOOKMAKER}/live-events?page=${page}&limit=${limit}&sport=${slug}`;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerFor(sport)}/live-events?page=${page}&limit=${limit}&sport=${slug}`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -388,12 +410,17 @@ function normalizeMarket(m: PulsescoreMarket): LiveOdds {
 }
 
 // "MATCH_RESULT" is the canonicalMarket value for the main 1X2/moneyline market — confirmed
-// from a real /leagues sample (soccer). Bookmaker market ordering is arbitrary otherwise (a
-// real sample had "Total Points Group 10 Points" as the very first market for an NBA game),
-// so without this the card's quick-odds preview (which just reads odds[0]) could show an
-// unrelated market. Moves MATCH_RESULT to the front when present; otherwise leaves order as-is.
-function orderMarketsWithPrimaryFirst(markets: PulsescoreMarket[]): PulsescoreMarket[] {
-  const primaryIdx = markets.findIndex((m) => m.canonicalMarket === "MATCH_RESULT");
+// from a real /leagues sample (soccer, REST). The official Pulsescore docs' illustrative
+// example instead shows "match_winner" (lowercase, different naming altogether) — since the
+// two disagree and we only have real evidence for the REST one, this checks both, case
+// insensitively, rather than trusting either single spelling. Bookmaker market ordering is
+// arbitrary otherwise (a real sample had "Total Points Group 10 Points" as the very first
+// market for an NBA game), so without this the card's quick-odds preview (which just reads
+// odds[0]) could show an unrelated market. Moves the primary market to the front when present.
+const PRIMARY_MARKET_NAMES = new Set(["match_result", "match_winner", "1x2"]);
+
+export function orderMarketsWithPrimaryFirst<T extends { canonicalMarket?: string }>(markets: T[]): T[] {
+  const primaryIdx = markets.findIndex((m) => m.canonicalMarket && PRIMARY_MARKET_NAMES.has(m.canonicalMarket.toLowerCase()));
   if (primaryIdx <= 0) return markets;
   const ordered = [...markets];
   const [primary] = ordered.splice(primaryIdx, 1);

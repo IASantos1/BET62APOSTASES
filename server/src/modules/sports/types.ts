@@ -13,10 +13,10 @@ export const ALL_SPORTS: Sport[] = [
   "tennis",
   "basketball",
   "ice_hockey",
+  "mma",
   "baseball",
   "volleyball",
   "formula1",
-  "mma",
 ];
 
 export interface LiveOdds {
