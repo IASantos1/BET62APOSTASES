@@ -943,10 +943,21 @@ function openMarket(eventId, isLive) {
   // Eventos reais da Pulsescore: pede dados frescos em vez de confiar só na última leitura
   // em cache (snapshot ao vivo ou lista de pré-jogo).
   if (event.source === "pulsescore") {
+    const marketsBeforeRefresh = event.odds || [];
     Bet62Api.refreshEvent(eventId, event.sport)
       .then((res) => {
         if (pageHistory[pageHistory.length - 1] !== "market" || !currentMarketEvent || currentMarketEvent.id !== eventId) return;
-        currentMarketEvent = res.event;
+        const refreshed = res.event;
+        // /events/{id} (usado aqui) nunca teve a forma da resposta confirmada com um pedido
+        // real, ao contrário da lista de pré-jogo/ao vivo (essa sim, confirmada rica — até 34
+        // mercados numa amostra real de beisebol). Para não arriscar substituir mercados já
+        // mostrados por uma resposta mais pobre deste endpoint, só troca a lista de mercados se
+        // vier com pelo menos tantos quanto já tínhamos; os restantes campos (placar, relógio,
+        // estatísticas) atualizam sempre, porque esses sim ganham em ser frescos.
+        if (!refreshed.odds || refreshed.odds.length < marketsBeforeRefresh.length) {
+          refreshed.odds = marketsBeforeRefresh;
+        }
+        currentMarketEvent = refreshed;
         currentMarketEvent._isLive = isLive;
         renderMarketPage();
       })

@@ -504,6 +504,33 @@ Ficheiros:
   por nomes de equipa + hora de início, ou uma tabela de correspondência mantida
   manualmente).
 
+### Corrigido: Match Tracker podia perder mercados ao "atualizar" um evento (todos os desportos)
+
+O utilizador reportou que, no pré-jogo, só apareciam as odds principais — nenhum mercado extra —
+independentemente do desporto. Investigado o caminho `openMarket()` → `renderMarketGroups()` em
+`web/app.js`: a lista de pré-jogo/ao vivo já chega rica em mercados (confirmado com uma amostra
+real de beisebol enviada pelo utilizador: 23–34 mercados por jogo via `GET /events?page=&limit=`),
+e `renderMarketGroups()` desenha `e.odds` inteiro sem cortar nada — por isso o problema não estava
+nesses dois pontos.
+
+O suspeito é `openMarket()`: assim que a página do Match Tracker abre, chama sempre
+`Bet62Api.refreshEvent()` → `GET /events/{id}?sport=` no backend (`fetchEventById()` em
+`pulsescore/client.ts`) para trazer dados frescos, e **substituía incondicionalmente** os mercados
+já mostrados pelo que esse pedido devolvesse. Esse endpoint em particular nunca teve a forma da
+resposta confirmada com um pedido real (está assinalado como tal no código desde o início desta
+integração) — ao contrário do endpoint de lista, que já foi confirmado por duas vezes. Se ele
+devolver menos mercados (ou vier numa forma que o parser interprete de forma mais pobre), a troca
+incondicional apagava os mercados ricos que já estavam no ecrã, sobrando só o principal — em
+qualquer desporto, porque é o mesmo código partilhado por todos.
+
+**Correção** (`web/app.js`, `openMarket()`): antes de trocar `currentMarketEvent` pelo resultado
+do refresh, compara o número de mercados. Só troca a lista de mercados se a resposta fresca vier
+com pelo menos tantos quanto já tínhamos; caso contrário mantém os mercados antigos (mais ricos) e
+só deixa os outros campos (placar, relógio, estatísticas) atualizarem-se com os dados frescos —
+esses sim beneficiam de vir sempre atualizados. Continua por confirmar com um pedido real a
+`GET /events/{id}` o que este endpoint devolve de facto; esta correção protege a UI
+independentemente da resposta, sem inventar dados.
+
 ## Testado nesta build
 
 - ✅ Feed simulado a gerar eventos dos 8 desportos em tempo real.
