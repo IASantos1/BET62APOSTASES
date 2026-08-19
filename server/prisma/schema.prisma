@@ -1,0 +1,287 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ USERS & IDENTITY ============
+
+enum UserRole {
+  USER
+  SUPPORT
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  SELF_EXCLUDED
+  CLOSED
+}
+
+model User {
+  id           String     @id @default(uuid())
+  publicId     String     @unique @default(cuid()) // e.g. BET62-XXXXXX shown to the user
+  email        String     @unique
+  username     String     @unique
+  passwordHash String
+  name         String?
+  phone        String?
+  birthDate    DateTime?
+  addressLine  String?
+  country      String?    @default("PT")
+  currency     String     @default("EUR")
+  locale       String     @default("pt")
+  oddsFormat   String     @default("decimal")
+  role         UserRole   @default(USER)
+  status       UserStatus @default(ACTIVE)
+  emailVerifiedAt DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  wallet             Wallet?
+  kycSubmissions     KycSubmission[]
+  refreshTokens      RefreshToken[]
+  bankAccounts       BankAccount[]
+  withdrawals        Withdrawal[]
+  deposits           Deposit[]
+  limits             ResponsibleGamblingLimits?
+  selfExclusions     SelfExclusion[]
+  auditLogs          AuditLog[]
+
+  @@index([status])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  userAgent String?
+  ip        String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// ============ KYC / AML ============
+
+enum KycStatus {
+  NOT_STARTED
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum KycDocType {
+  CITIZEN_CARD
+  PASSPORT
+  DRIVING_LICENSE
+}
+
+model KycSubmission {
+  id               String     @id @default(uuid())
+  userId           String
+  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  docType          KycDocType
+  docNumber        String
+  status           KycStatus  @default(PENDING)
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  rejectionReason  String?
+  createdAt        DateTime   @default(now())
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ============ RESPONSIBLE GAMBLING ============
+
+model ResponsibleGamblingLimits {
+  id                     String   @id @default(uuid())
+  userId                 String   @unique
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dailyDepositLimit      Decimal  @default(500) @db.Decimal(14, 2)
+  weeklyLossLimit        Decimal  @default(1000) @db.Decimal(14, 2)
+  sessionTimeLimitMinutes Int     @default(120)
+  realityCheckEnabled    Boolean  @default(true)
+  updatedAt              DateTime @updatedAt
+}
+
+model SelfExclusion {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startAt   DateTime  @default(now())
+  endAt     DateTime? // null = permanent
+  reason    String?
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+
+  @@index([userId, active])
+}
+
+// ============ WALLET / LEDGER ============
+
+enum LedgerEntryType {
+  DEPOSIT
+  WITHDRAWAL
+  WITHDRAWAL_REVERSAL
+  BET_PLACED
+  BET_WON
+  BET_REFUND
+  BONUS
+  ADJUSTMENT
+}
+
+enum LedgerEntryStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+model Wallet {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currency     String   @default("EUR")
+  balance      Decimal  @default(0) @db.Decimal(14, 2)
+  lockedBalance Decimal @default(0) @db.Decimal(14, 2) // reserved for pending withdrawals
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  entries     LedgerEntry[]
+  deposits    Deposit[]
+  withdrawals Withdrawal[]
+}
+
+model LedgerEntry {
+  id            String            @id @default(uuid())
+  walletId      String
+  wallet        Wallet            @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  type          LedgerEntryType
+  status        LedgerEntryStatus @default(COMPLETED)
+  amount        Decimal           @db.Decimal(14, 2) // positive = credit, negative = debit
+  balanceAfter  Decimal           @db.Decimal(14, 2)
+  referenceType String? // "deposit" | "withdrawal" | "bet" ...
+  referenceId   String?
+  metadata      Json?
+  createdAt     DateTime          @default(now())
+
+  @@index([walletId, createdAt])
+  @@index([referenceType, referenceId])
+}
+
+// ============ DEPOSITS (Stripe: card / MB WAY / Multibanco) ============
+
+enum DepositProvider {
+  STRIPE_CARD
+  STRIPE_MBWAY
+  STRIPE_MULTIBANCO
+}
+
+enum DepositStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+model Deposit {
+  id            String          @id @default(uuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  walletId      String
+  wallet        Wallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  provider      DepositProvider
+  amount        Decimal         @db.Decimal(14, 2)
+  currency      String          @default("EUR")
+  status        DepositStatus   @default(PENDING)
+  stripePaymentIntentId String? @unique
+  multibancoEntity     String?
+  multibancoReference  String?
+  metadata      Json?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([userId, status])
+  @@index([stripePaymentIntentId])
+}
+
+// ============ WITHDRAWALS (Revolut Business payout) ============
+
+enum WithdrawalMethod {
+  REVOLUT_PAYOUT
+  BANK_TRANSFER
+}
+
+enum WithdrawalStatus {
+  REQUESTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  PROCESSING
+  PAID
+  FAILED
+}
+
+model BankAccount {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountHolder String
+  iban          String
+  bic           String?
+  verified      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  withdrawals Withdrawal[]
+
+  @@index([userId])
+}
+
+model Withdrawal {
+  id               String            @id @default(uuid())
+  userId           String
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  walletId         String
+  wallet           Wallet            @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  bankAccountId    String?
+  bankAccount      BankAccount?      @relation(fields: [bankAccountId], references: [id])
+  method           WithdrawalMethod  @default(REVOLUT_PAYOUT)
+  amount           Decimal           @db.Decimal(14, 2)
+  currency         String            @default("EUR")
+  status           WithdrawalStatus  @default(REQUESTED)
+  revolutPaymentId String?           @unique
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  rejectionReason  String?
+  metadata         Json?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([userId, status])
+}
+
+// ============ AUDIT (compliance) ============
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  metadata  Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([action])
+}

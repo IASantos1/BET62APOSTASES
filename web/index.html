@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Bet62 - Plataforma</title>
+<meta name="theme-color" content="#0c0c0e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+<style>
+:root {
+    --red:#e63027; --bg:#0c0c0e; --surface:#161618; --surface2:#1e1e22;
+    --border:#2a2a2e; --text:#f0f0f2; --muted:#8a8a96; --gold:#f5c842; --green:#22c55e;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding-bottom:env(safe-area-inset-bottom)}
+.header{position:sticky;top:0;z-index:100;background:rgba(12,12,14,.97);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;justify-content:space-between}
+.header-left{display:flex;align-items:center;gap:12px}
+.back-btn,.menu-btn{background:none;border:none;color:var(--text);font-size:1.25rem;cursor:pointer;padding:4px}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:1.7rem;letter-spacing:1px}
+.logo span{color:var(--red)}
+.header-right{display:flex;align-items:center;gap:10px}
+.balance-pill{background:var(--surface2);border:1px solid var(--border);padding:6px 12px;border-radius:20px;font-size:.85rem;font-weight:700;color:var(--gold)}
+.add-btn{width:34px;height:34px;border-radius:50%;background:var(--green);border:none;color:#fff;font-size:1.2rem;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.avatar-btn{width:34px;height:34px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:1.1rem;cursor:pointer}
+.top-nav{display:flex;gap:4px;padding:10px 12px;overflow-x:auto;background:var(--bg);border-bottom:1px solid var(--border);scrollbar-width:none}
+.top-nav::-webkit-scrollbar{display:none}
+.top-nav-item{padding:8px 14px;border-radius:20px;font-size:.78rem;font-weight:600;color:var(--muted);white-space:nowrap;cursor:pointer;display:flex;align-items:center;gap:5px}
+.top-nav-item.active{background:var(--surface2);color:var(--text)}
+.live-dot{width:6px;height:6px;background:var(--red);border-radius:50%}
+.page{padding:16px;max-width:480px;margin:0 auto}
+.user-card{background:var(--surface);border-radius:16px;padding:18px;display:flex;align-items:center;gap:14px;margin-bottom:20px;border:1px solid var(--border)}
+.user-avatar{width:52px;height:52px;border-radius:50%;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.4rem;font-weight:700;flex-shrink:0}
+.user-info{flex:1;min-width:0}
+.user-name{font-weight:700;font-size:1.05rem;margin-bottom:2px}
+.user-email{font-size:.82rem;color:var(--muted);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.user-id{font-size:.75rem;color:var(--muted);margin-top:2px}
+.rank-icon{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.75rem}
+.rank-gold{background:linear-gradient(145deg,#ffd700,#b8860b)}
+.menu-list{display:flex;flex-direction:column;gap:8px}
+.menu-item{background:var(--surface);border-radius:14px;border:1px solid var(--border);overflow:hidden}
+.menu-header{padding:16px 18px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none}
+.menu-header-left{display:flex;align-items:center;gap:14px}
+.menu-icon{width:36px;height:36px;border-radius:10px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:1rem;color:var(--muted)}
+.menu-title{font-weight:600;font-size:.95rem}
+.menu-arrow{color:var(--muted);transition:transform .25s;font-size:.85rem}
+.menu-item.open .menu-arrow{transform:rotate(180deg)}
+.menu-body{max-height:0;overflow:hidden;transition:max-height .35s ease;background:var(--surface2)}
+.menu-item.open .menu-body{max-height:900px}
+.menu-body-inner{padding:8px 18px 18px 18px}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:.75rem;font-weight:600;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.3px}
+.field input,.field select,.field textarea{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:11px 13px;color:var(--text);font-size:.92rem;outline:none}
+.field input:focus,.field select:focus{border-color:var(--red)}
+.field textarea{min-height:70px;resize:vertical}
+.field-hint{font-size:.72rem;color:var(--muted);margin-top:4px}
+.field-error{font-size:.72rem;color:var(--red);margin-top:4px}
+.btn-save{width:100%;background:var(--red);color:#fff;border:none;padding:12px;border-radius:10px;font-weight:700;font-size:.9rem;cursor:pointer;margin-top:6px}
+.btn-save:hover{background:#c42820}
+.btn-save:disabled{opacity:.6;cursor:not-allowed}
+.btn-outline{width:100%;background:transparent;border:1px solid var(--border);color:var(--text);padding:11px;border-radius:10px;font-weight:600;font-size:.88rem;cursor:pointer;margin-top:8px}
+.btn-danger{background:#7f1d1d;color:#fff;border:none;padding:11px;border-radius:10px;font-weight:700;width:100%;cursor:pointer;margin-top:8px}
+.status-badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.72rem;font-weight:700}
+.status-pending{background:rgba(245,200,66,.15);color:var(--gold)}
+.status-ok{background:rgba(34,197,94,.15);color:var(--green)}
+.status-bad{background:rgba(230,48,39,.15);color:var(--red)}
+.limit-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)}
+.limit-row:last-child{border-bottom:none}
+.toggle{width:46px;height:26px;background:var(--border);border-radius:20px;position:relative;cursor:pointer;flex-shrink:0}
+.toggle.on{background:var(--green)}
+.toggle::after{content:'';position:absolute;width:20px;height:20px;background:#fff;border-radius:50%;top:3px;left:3px;transition:.2s}
+.toggle.on::after{left:23px}
+.promo-banner{background:linear-gradient(135deg,#1a0a0a,#2d0f0f);border:1px solid rgba(230,48,39,.3);border-radius:18px;padding:28px 20px;text-align:center;margin-bottom:24px}
+.promo-banner h2{font-family:'Bebas Neue',sans-serif;font-size:2.2rem}
+.promo-banner .pct{color:var(--red);font-size:3rem}
+.casino-row{display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;scrollbar-width:none}
+.casino-row::-webkit-scrollbar{display:none}
+.casino-game{flex:0 0 110px;text-align:center;cursor:pointer}
+.casino-game .thumb{width:110px;height:110px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:2.6rem;margin-bottom:6px}
+.casino-game .name{font-size:.72rem;font-weight:600}
+.auth-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:300;align-items:center;justify-content:center;padding:16px}
+.auth-overlay.open{display:flex}
+.auth-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;width:100%;max-width:400px;overflow:hidden;max-height:92vh;overflow-y:auto}
+.auth-tabs{display:flex}
+.auth-tab{flex:1;padding:15px;text-align:center;font-weight:700;cursor:pointer;background:var(--surface2);color:var(--muted)}
+.auth-tab.active{background:var(--surface);color:var(--text);border-bottom:2px solid var(--red)}
+.auth-body{padding:24px}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:.78rem;font-weight:600;color:var(--muted);margin-bottom:5px}
+.form-group input,.form-group select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;color:var(--text);font-size:.95rem;outline:none}
+.form-group input:focus{border-color:var(--red)}
+.auth-submit{width:100%;background:var(--red);color:#fff;border:none;padding:14px;border-radius:12px;font-weight:700;font-size:1rem;cursor:pointer;margin-top:8px}
+.auth-submit:disabled{opacity:.6;cursor:not-allowed}
+.auth-error{background:rgba(230,48,39,.12);border:1px solid rgba(230,48,39,.35);color:#ff9a94;border-radius:10px;padding:10px 12px;font-size:.82rem;margin-bottom:12px;display:none}
+.auth-error.show{display:block}
+.hidden{display:none!important}
+footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
+.live-list{display:flex;flex-direction:column;gap:10px}
+.live-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px}
+.live-card .lc-top{display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-bottom:8px}
+.live-card .lc-teams{display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:.92rem}
+.live-card .lc-score{font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--gold)}
+.live-card .lc-odds{display:flex;gap:8px;margin-top:10px}
+.live-card .lc-odds div{flex:1;background:var(--surface2);border-radius:8px;padding:8px;text-align:center;font-size:.8rem;font-weight:700}
+.conn-badge{font-size:.7rem;color:var(--muted);text-align:center;padding:6px 0}
+.deposit-methods{display:flex;gap:8px;margin-bottom:14px}
+.dm-btn{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 6px;text-align:center;font-size:.78rem;font-weight:600;color:var(--muted);cursor:pointer}
+.dm-btn.active{border-color:var(--red);color:var(--text);background:rgba(230,48,39,.08)}
+</style>
+</head>
+<body>
+
+<!-- Config: aponta para a API do backend. Em produção, sirva o backend no mesmo domínio
+     (ex: /api) e deixe API_BASE vazio para usar caminhos relativos. -->
+<script>
+window.BET62_CONFIG = {
+  API_BASE: (window.localStorage.getItem('bet62_api_base')) || 'http://localhost:4000/api',
+  WS_BASE: (window.localStorage.getItem('bet62_ws_base')) || 'ws://localhost:4000'
+};
+</script>
+
+<!-- HEADER -->
+<header class="header">
+    <div class="header-left">
+        <button class="back-btn hidden" id="btn-back" onclick="goBack()">←</button>
+        <button class="menu-btn" id="btn-menu" onclick="alert('Menu lateral (em desenvolvimento)')">☰</button>
+        <div class="logo">BET<span>62</span></div>
+    </div>
+    <div class="header-right">
+        <div class="balance-pill" id="balance-display">€ 0.00</div>
+        <button class="add-btn" onclick="openDeposit()">+</button>
+        <button class="avatar-btn" id="btn-avatar" onclick="showPage('profile')">👤</button>
+    </div>
+</header>
+
+<!-- TOP NAV -->
+<div class="top-nav" id="top-nav">
+    <div class="top-nav-item active" data-page="destaques" onclick="showPage('destaques')"><i class="fas fa-star"></i> DESTAQUES</div>
+    <div class="top-nav-item" data-page="esportes" onclick="showPage('esportes')"><i class="fas fa-trophy"></i> ESPORTES</div>
+    <div class="top-nav-item" data-page="aovivo" onclick="showPage('aovivo')"><i class="fas fa-broadcast-tower"></i> AO VIVO <span class="live-dot"></span></div>
+    <div class="top-nav-item" data-page="casino" onclick="showPage('casino')"><i class="fas fa-dice"></i> CASINO</div>
+</div>
+
+<!-- ========== DESTAQUES ========== -->
+<div id="page-destaques" class="page">
+    <div class="promo-banner">
+        <div style="font-size:.8rem;color:var(--muted);margin-bottom:6px">BÓNUS DE BOAS-VINDAS</div>
+        <h2><span class="pct">100%</span> ATÉ 200€</h2>
+        <button style="margin-top:16px;background:var(--red);color:#fff;border:none;padding:12px 28px;border-radius:10px;font-weight:700;cursor:pointer" onclick="openAuth('register')">REGISTE-SE AGORA</button>
+    </div>
+    <div style="font-family:'Bebas Neue';font-size:1.3rem;margin-bottom:12px">CASSINO EM DESTAQUE</div>
+    <div class="casino-row">
+        <div class="casino-game" onclick="playGame('Sweet Bonanza')"><div class="thumb" style="background:linear-gradient(135deg,#ff6b9d,#c44569)">🍭</div><div class="name">Sweet Bonanza</div></div>
+        <div class="casino-game" onclick="playGame('Gates of Olympus')"><div class="thumb" style="background:linear-gradient(135deg,#3949ab,#1a237e)">⚡</div><div class="name">Gates of Olympus</div></div>
+        <div class="casino-game" onclick="playGame('Big Bass')"><div class="thumb" style="background:linear-gradient(135deg,#00acc1,#006064)">🎣</div><div class="name">Big Bass</div></div>
+        <div class="casino-game" onclick="playGame('Wanted')"><div class="thumb" style="background:linear-gradient(135deg,#5d4037,#3e2723)">🤠</div><div class="name">Wanted</div></div>
+    </div>
+</div>
+
+<!-- ========== PERFIL ========== -->
+<div id="page-profile" class="page hidden">
+    <div class="user-card">
+        <div class="user-avatar" id="user-avatar">?</div>
+        <div class="user-info">
+            <div class="user-name" id="user-name">Convidado</div>
+            <div class="user-email">
+                <span id="user-email">Não autenticado</span>
+                <span class="rank-icon rank-gold" id="user-rank">🥇</span>
+            </div>
+            <div class="user-id" id="user-id">—</div>
+        </div>
+    </div>
+
+    <div class="menu-list" id="profile-menus">
+        <!-- Informações Pessoais -->
+        <div class="menu-item">
+            <div class="menu-header" onclick="toggleAccordion(this)">
+                <div class="menu-header-left">
+                    <div class="menu-icon"><i class="fas fa-user"></i></div>
+                    <div class="menu-title">Informações Pessoais</div>
+                </div>
+                <i class="fas fa-chevron-down menu-arrow"></i>
+            </div>
+            <div class="menu-body">
+                <div class="menu-body-inner">
+                    <div class="field"><label>Nome Completo</label><input type="text" id="f-name" placeholder="Seu nome"></div>
+                    <div class="field"><label>E-mail</label><input type="email" id="f-email" placeholder="seu@email.com" disabled></div>
+                    <div class="field-hint" style="margin-top:-10px;margin-bottom:14px">O e-mail não pode ser alterado por aqui. Contacte o suporte.</div>
+                    <div class="field"><label>Telefone</label><input type="tel" id="f-phone" placeholder="+351 900 000 000"></div>
+                    <div class="field"><label>Morada</label><input type="text" id="f-address" placeholder="Rua, número, cidade"></div>
+                    <button class="btn-save" onclick="savePersonal()">Salvar Alterações</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Verificação de Identidade -->
+        <div class="menu-item">
+            <div class="menu-header" onclick="toggleAccordion(this)">
+                <div class="menu-header-left">
+                    <div class="menu-icon"><i class="fas fa-shield-alt"></i></div>
+                    <div class="menu-title">Verificação de Identidade</div>
+                </div>
+                <i class="fas fa-chevron-down menu-arrow"></i>
+            </div>
+            <div class="menu-body">
+                <div class="menu-body-inner">
+                    <div style="margin-bottom:12px">Estado: <span class="status-badge status-pending" id="kyc-status">Não iniciado</span></div>
+                    <div class="field"><label>Tipo de Documento</label>
+                        <select id="f-doc-type"><option value="CITIZEN_CARD">Cartão de Cidadão</option><option value="PASSPORT">Passaporte</option><option value="DRIVING_LICENSE">Carta de Condução</option></select>
+                    </div>
+                    <div class="field"><label>Número do Documento</label><input type="text" id="f-doc-number" placeholder="Número"></div>
+                    <button class="btn-save" onclick="submitKYC()">Enviar para Verificação</button>
+                    <div class="field-hint">A verificação é obrigatória antes de qualquer levantamento (AML/KYC).</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Definições de Segurança -->
+        <div class="menu-item">
+            <div class="menu-header" onclick="toggleAccordion(this)">
+                <div class="menu-header-left">
+                    <div class="menu-icon"><i class="fas fa-key"></i></div>
+                    <div class="menu-title">Definições de Segurança</div>
+                </div>
+                <i class="fas fa-chevron-down menu-arrow"></i>
+            </div>
+            <div class="menu-body">
+                <div class="menu-body-inner">
+                    <div class="field-hint" style="margin-bottom:10px">Alteração de senha ainda não disponível nesta versão — será adicionada com o fluxo de recuperação por e-mail.</div>
+                    <div class="limit-row">
+                        <div><div style="font-weight:600">Autenticação 2FA</div><div style="font-size:.8rem;color:var(--muted)">Código por SMS/App (em breve)</div></div>
+                        <div class="toggle" id="toggle-2fa" onclick="this.classList.toggle('on')"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Preferências de Conta -->
+        <div class="menu-item">
+            <div class="menu-header" onclick="toggleAccordion(this)">
+                <div class="menu-header-left">
+                    <div class="menu-icon"><i class="fas fa-cog"></i></div>
+                    <div class="menu-title">Preferências de Conta</div>
+                </div>
+                <i class="fas fa-chevron-down menu-arrow"></i>
+            </div>
+            <div class="menu-body">
+                <div class="menu-body-inner">
+                    <div class="field"><label>Idioma</label>
+                        <select id="f-lang"><option value="pt">Português</option><option value="en">English</option><option value="es">Español</option></select>
+                    </div>
+                    <div class="field"><label>Moeda</label>
+                        <select id="f-currency"><option value="EUR">EUR (€)</option><option value="BRL">BRL (R$)</option><option value="USD">USD ($)</option></select>
+                    </div>
+                    <div class="field"><label>Formato de Odds</label>
+                        <select id="f-odds"><option value="decimal">Decimal</option><option value="fractional">Fracionário</option><option value="american">Americano</option></select>
+                    </div>
+                    <button class="btn-save" onclick="savePreferences()">Salvar Preferências</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Limites e Autoexclusão -->
+        <div class="menu-item">
+            <div class="menu-header" onclick="toggleAccordion(this)">
+                <div class="menu-header-left">
+                    <div class="menu-icon"><i class="fas fa-exclamation-triangle"></i></div>
+                    <div class="menu-title">Limites e Autoexclusão</div>
+                </div>
+                <i class="fas fa-chevron-down menu-arrow"></i>
+            </div>
+            <div class="menu-body">
+                <div class="menu-body-inner">
+                    <div class="field"><label>Limite de Depósito Diário (€)</label><input type="number" id="f-limit-deposit" value="500" min="0"></div>
+                    <div class="field"><label>Limite de Perda Semanal (€)</label><input type="number" id="f-limit-loss" value="1000" min="0"></div>
+                    <div class="field"><label>Limite de Tempo de Sessão (minutos)</label><input type="number" id="f-limit-session" value="120" min="1" max="1440"></div>
+                    <div class="field-hint" style="margin-top:-10px;margin-bottom:10px">Reduzir limites é imediato. Aumentar exige período de reflexão de 24h — contacte o suporte.</div>
+                    <div class="limit-row">
+                        <div><div style="font-weight:600">Reality Check</div><div style="font-size:.8rem;color:var(--muted)">Aviso a cada 60 min</div></div>
+                        <div class="toggle on" id="toggle-reality" onclick="this.classList.toggle('on')"></div>
+                    </div>
+                    <button class="btn-save" onclick="saveLimits()">Salvar Limites</button>
+                    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+                        <div style="font-weight:600;margin-bottom:10px">Autoexclusão</div>
+                        <div style="display:flex;flex-wrap:wrap;gap:8px">
+                            <button class="btn-outline" style="width:auto;padding:8px 14px" onclick="autoExclude(1)">1 dia</button>
+                            <button class="btn-outline" style="width:auto;padding:8px 14px" onclick="autoExclude(7)">7 dias</button>
+                            <button class="btn-outline" style="width:auto;padding:8px 14px" onclick="autoExclude(30)">30 dias</button>
+                            <button class="btn-outline" style="width:auto;padding:8px 14px" onclick="autoExclude(90)">90 dias</button>
+                            <button class="btn-danger" style="width:auto;padding:8px 14px" onclick="autoExclude(null)">Permanente</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Histórico de Atividade -->
+        <div class="menu-item">
+            <div class="menu-header" onclick="toggleAccordion(this)">
+                <div class="menu-header-left">
+                    <div class="menu-icon"><i class="fas fa-chart-line"></i></div>
+                    <div class="menu-title">Histórico de Atividade</div>
+                </div>
+                <i class="fas fa-chevron-down menu-arrow"></i>
+            </div>
+            <div class="menu-body">
+                <div class="menu-body-inner" id="history-content">
+                    <div style="color:var(--muted);text-align:center;padding:20px 0">Nenhuma atividade ainda</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dados Bancários + Levantamento -->
+        <div class="menu-item">
+            <div class="menu-header" onclick="toggleAccordion(this)">
+                <div class="menu-header-left">
+                    <div class="menu-icon"><i class="fas fa-university"></i></div>
+                    <div class="menu-title">Dados Bancários e Levantamentos</div>
+                </div>
+                <i class="fas fa-chevron-down menu-arrow"></i>
+            </div>
+            <div class="menu-body">
+                <div class="menu-body-inner">
+                    <div class="field"><label>Titular da Conta</label><input type="text" id="f-bank-name" placeholder="Nome do titular"></div>
+                    <div class="field"><label>IBAN</label><input type="text" id="f-iban" placeholder="PT50 0000 0000 0000 0000 0000 0"></div>
+                    <div class="field"><label>BIC/SWIFT</label><input type="text" id="f-bic" placeholder="XXXXPTXX"></div>
+                    <button class="btn-save" onclick="saveBank()">Guardar Conta Bancária</button>
+                    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+                        <div class="field"><label>Valor a levantar (€)</label><input type="number" id="f-withdraw-amount" min="10" placeholder="Mínimo 10€"></div>
+                        <button class="btn-outline" onclick="requestWithdraw()">Solicitar Levantamento (Revolut)</button>
+                        <div class="field-hint">Requer KYC aprovado. Processado via Revolut Business após revisão de conformidade.</div>
+                    </div>
+                    <div id="withdrawals-list" style="margin-top:12px"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Notificações -->
+        <div class="menu-item">
+            <div class="menu-header" onclick="toggleAccordion(this)">
+                <div class="menu-header-left">
+                    <div class="menu-icon"><i class="fas fa-bell"></i></div>
+                    <div class="menu-title">Notificações</div>
+                </div>
+                <i class="fas fa-chevron-down menu-arrow"></i>
+            </div>
+            <div class="menu-body">
+                <div class="menu-body-inner">
+                    <div class="limit-row"><div style="font-weight:600">Notificações Push</div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+                    <div class="limit-row"><div style="font-weight:600">E-mail</div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+                    <div class="limit-row"><div style="font-weight:600">SMS</div><div class="toggle" onclick="this.classList.toggle('on')"></div></div>
+                    <div class="limit-row"><div style="font-weight:600">Promoções</div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+                    <button class="btn-save" onclick="alert('Preferências de notificação salvas!')">Salvar</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Suporte -->
+        <div class="menu-item">
+            <div class="menu-header" onclick="toggleAccordion(this)">
+                <div class="menu-header-left">
+                    <div class="menu-icon"><i class="fas fa-question-circle"></i></div>
+                    <div class="menu-title">Suporte e Assistência</div>
+                </div>
+                <i class="fas fa-chevron-down menu-arrow"></i>
+            </div>
+            <div class="menu-body">
+                <div class="menu-body-inner">
+                    <button class="btn-outline" onclick="alert('Chat ao vivo em breve')">💬 Chat ao Vivo</button>
+                    <button class="btn-outline" onclick="alert('FAQ em breve')">❓ FAQ</button>
+                    <button class="btn-outline" onclick="alert('Ticket em breve')">🎫 Abrir Ticket</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Privacidade -->
+        <div class="menu-item">
+            <div class="menu-header" onclick="toggleAccordion(this)">
+                <div class="menu-header-left">
+                    <div class="menu-icon"><i class="fas fa-eye"></i></div>
+                    <div class="menu-title">Configurações de Privacidade</div>
+                </div>
+                <i class="fas fa-chevron-down menu-arrow"></i>
+            </div>
+            <div class="menu-body">
+                <div class="menu-body-inner">
+                    <button class="btn-outline" onclick="alert('Política de Privacidade em breve')">Política de Privacidade</button>
+                    <button class="btn-outline" onclick="alert('Termos e Condições em breve')">Termos e Condições</button>
+                    <button class="btn-outline" onclick="alert('Gestão de Cookies em breve')">Cookies</button>
+                    <button class="btn-danger" style="margin-top:12px" onclick="logout()">Terminar Sessão</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Outras páginas -->
+<div id="page-esportes" class="page hidden" style="text-align:center;padding:60px 20px;color:var(--muted)">Página de Esportes (pré-jogo) — em desenvolvimento</div>
+<div id="page-aovivo" class="page hidden">
+    <div style="font-family:'Bebas Neue';font-size:1.3rem;margin-bottom:4px">AO VIVO</div>
+    <div class="conn-badge" id="ws-status">A conectar ao feed ao vivo…</div>
+    <div class="live-list" id="live-list"></div>
+</div>
+<div id="page-casino" class="page hidden" style="text-align:center;padding:60px 20px;color:var(--muted)">Casino — em desenvolvimento</div>
+
+<!-- AUTH MODAL -->
+<div class="auth-overlay" id="auth-modal">
+    <div class="auth-box">
+        <div class="auth-tabs">
+            <div class="auth-tab active" id="tab-login" onclick="switchAuth('login')">Entrar</div>
+            <div class="auth-tab" id="tab-register" onclick="switchAuth('register')">Registar</div>
+        </div>
+        <div class="auth-body">
+            <div class="auth-error" id="auth-error"></div>
+            <div id="login-form">
+                <div class="form-group"><label>E-mail ou Utilizador</label><input type="text" id="login-user" placeholder="seu@email.com"></div>
+                <div class="form-group"><label>Senha</label><input type="password" id="login-pass" placeholder="••••••••"></div>
+                <button class="auth-submit" id="btn-login" onclick="doLogin()">ENTRAR</button>
+            </div>
+            <div id="register-form" class="hidden">
+                <div class="form-group"><label>Nome Completo</label><input type="text" id="reg-name" placeholder="Seu nome completo"></div>
+                <div class="form-group"><label>E-mail</label><input type="email" id="reg-email" placeholder="seu@email.com"></div>
+                <div class="form-group"><label>Utilizador</label><input type="text" id="reg-user" placeholder="usuario123"></div>
+                <div class="form-group"><label>Senha</label><input type="password" id="reg-pass" placeholder="Mínimo 8 caracteres"></div>
+                <div class="form-group"><label>Data de Nascimento</label><input type="date" id="reg-birth"></div>
+                <div style="font-size:.78rem;color:var(--muted);margin:12px 0">
+                    <label><input type="checkbox" id="reg-terms"> Aceito os Termos e a Política de Privacidade. Confirmo ter 18 anos ou mais.</label>
+                </div>
+                <button class="auth-submit" id="btn-register" onclick="doRegister()">CRIAR CONTA</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- DEPOSIT MODAL -->
+<div class="auth-overlay" id="deposit-modal">
+    <div class="auth-box">
+        <div class="auth-tabs"><div class="auth-tab active" style="cursor:default">Depositar</div></div>
+        <div class="auth-body">
+            <div class="auth-error" id="deposit-error"></div>
+            <div class="deposit-methods">
+                <div class="dm-btn active" data-method="STRIPE_CARD" onclick="selectDepositMethod('STRIPE_CARD')">💳 Cartão</div>
+                <div class="dm-btn" data-method="STRIPE_MBWAY" onclick="selectDepositMethod('STRIPE_MBWAY')">📱 MB WAY</div>
+                <div class="dm-btn" data-method="STRIPE_MULTIBANCO" onclick="selectDepositMethod('STRIPE_MULTIBANCO')">🏧 Multibanco</div>
+            </div>
+            <div class="form-group"><label>Valor (€)</label><input type="number" id="deposit-amount" min="5" max="5000" placeholder="Mínimo 5€"></div>
+            <div class="form-group hidden" id="deposit-phone-group"><label>Telemóvel (MB WAY)</label><input type="tel" id="deposit-phone" placeholder="+351 900 000 000"></div>
+            <button class="auth-submit" id="btn-deposit" onclick="submitDeposit()">CONTINUAR</button>
+            <button class="btn-outline" onclick="closeDeposit()">Cancelar</button>
+        </div>
+    </div>
+</div>
+
+<footer>© 2026 Bet62 • 18+ • Jogo Responsável • Licenciado (SRIJ Portugal)</footer>
+
+<script src="api.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
