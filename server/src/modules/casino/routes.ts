@@ -4,6 +4,7 @@ import { Errors } from "../../lib/errors";
 import { asyncHandler } from "../../middleware/errorHandler";
 import { requireAuth, type AuthedRequest } from "../../middleware/auth";
 import { listGames, listHighlightedGames } from "./catalog";
+import { getGameImage } from "./imageProxy";
 import {
   handleWinCallback,
   handleCancelCallback,
@@ -30,6 +31,21 @@ router.get(
   "/games/highlighted",
   asyncHandler(async (_req, res) => {
     res.json({ games: listHighlightedGames() });
+  })
+);
+
+// Proxy de imagens: tenta buscar a imagem real do provedor no servidor (em vez do browser do
+// jogador ir buscar diretamente a api.playxspin.com, que confirmámos dar timeout de ligação —
+// provavelmente falta de whitelist de IP do lado do provedor). Sem imagem real, devolve sempre
+// um placeholder gerado, nunca um 404 — o cartão do jogo nunca fica com ícone de imagem partida.
+router.get(
+  "/image/:gameCode",
+  asyncHandler(async (req, res) => {
+    const image = await getGameImage(req.params.gameCode);
+    if (!image) return res.status(404).end();
+    res.setHeader("Cache-Control", image.isPlaceholder ? "public, max-age=120" : "public, max-age=21600");
+    res.setHeader("Content-Type", image.contentType);
+    res.send(image.buffer);
   })
 );
 

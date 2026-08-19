@@ -786,7 +786,7 @@ async function renderDestaquesCasinoRow() {
       .map(
         (g) => `
       <div class="casino-game" onclick='playGame(${JSON.stringify(g.game_code)}, ${JSON.stringify(g.game_name)})'>
-        <div class="thumb"><img src="${g.game_image}" alt="${g.game_name}" loading="lazy" onerror="this.style.display='none'"></div>
+        <div class="thumb"><img src="${window.BET62_CONFIG.API_BASE}/casino/image/${g.game_code}" alt="${g.game_name}" loading="lazy" onerror="this.style.display='none'"></div>
         <div class="name">${g.game_name}</div>
       </div>`
       )
@@ -815,7 +815,7 @@ async function renderCasinoPage(search = "") {
       .map(
         (g) => `
       <div class="casino-grid-item" onclick='playGame(${JSON.stringify(g.game_code)}, ${JSON.stringify(g.game_name)})'>
-        <div class="thumb"><img src="${g.game_image}" alt="${g.game_name}" loading="lazy" onerror="this.style.display='none'"></div>
+        <div class="thumb"><img src="${window.BET62_CONFIG.API_BASE}/casino/image/${g.game_code}" alt="${g.game_name}" loading="lazy" onerror="this.style.display='none'"></div>
         <div class="name">${g.game_name}</div>
       </div>`
       )
