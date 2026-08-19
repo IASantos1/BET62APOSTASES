@@ -68,6 +68,16 @@ function countryLabel(code) {
   return code;
 }
 
+// Código ISO de 2 letras -> emoji de bandeira (dois "regional indicator symbols" Unicode, ex:
+// "US" -> 🇺🇸). Sem imagens/lista para manter — funciona para qualquer código real.
+function flagEmoji(code) {
+  if (!code || code.length !== 2) return "";
+  const upper = code.toUpperCase();
+  if (!/^[A-Z]{2}$/.test(upper)) return "";
+  const codePoints = [...upper].map((c) => 0x1f1e6 + (c.charCodeAt(0) - 65));
+  return String.fromCodePoint(...codePoints);
+}
+
 let footballCountriesTree = null; // null = ainda não carregado; [] = carregado mas vazio
 let footballCountriesTreeAt = 0;
 const FOOTBALL_TREE_TTL_MS = 5 * 60 * 1000;
@@ -772,6 +782,39 @@ function isClockMissing(e) {
   return e.status === "live" && (!e.minuteOrPeriod || e.minuteOrPeriod === "AO VIVO");
 }
 
+// Cartão de ténis: nomes empilhados (casa em cima, fora em baixo) com bandeira, jogos do set
+// atual alinhados à direita de cada linha, ponto a indicar quem serve, e "Sn" (set atual) no
+// canto superior direito em vez do relógio genérico — pedido explicitamente pelo utilizador,
+// a partir de referência visual de outra casa de apostas.
+function renderTennisCard(e, clockClass, oddsHtml) {
+  const sets = e.statistics?.sets;
+  const lastIdx = sets ? sets.home.length - 1 : -1;
+  const homeSetGames = lastIdx >= 0 ? sets.home[lastIdx] : null;
+  const awaySetGames = lastIdx >= 0 ? sets.away[lastIdx] : null;
+  const homeServe = sets?.homeServe === true;
+  const awayServe = sets?.homeServe === false;
+  const setLabel = e.minuteOrPeriod.replace(/^Set /, "S");
+  const showPoints = typeof e.homeScore === "number" && typeof e.awayScore === "number";
+  const flag = flagEmoji(e.country);
+
+  return `
+    <div class="live-card tennis-card" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
+      <div class="lc-top"><span>🎾 ${e.league}</span><span class="${clockClass}">${setLabel}</span></div>
+      ${showPoints ? `<div class="tennis-points">${e.homeScore} - ${e.awayScore}</div>` : ""}
+      <div class="tennis-rows">
+        <div class="tennis-row">
+          <span class="tennis-team">${flag} ${e.home}${homeServe ? '<span class="serve-dot"></span>' : ""}</span>
+          <span class="tennis-set-score">${homeSetGames ?? ""}</span>
+        </div>
+        <div class="tennis-row">
+          <span class="tennis-team">${flag} ${e.away}${awayServe ? '<span class="serve-dot"></span>' : ""}</span>
+          <span class="tennis-set-score">${awaySetGames ?? ""}</span>
+        </div>
+      </div>
+      ${oddsHtml}
+    </div>`;
+}
+
 function renderLiveEvents() {
   const container = document.getElementById("live-list");
   const events = [...liveEventsById.values()].filter((e) => !selectedSport || e.sport === selectedSport);
@@ -786,6 +829,18 @@ function renderLiveEvents() {
       const odds = primaryMarket?.selections;
       const showScore = typeof e.homeScore === "number" && typeof e.awayScore === "number";
       const clockClass = isClockMissing(e) ? "clock-missing" : "";
+      const oddsHtml = odds
+        ? `<div class="lc-odds">${Object.entries(odds)
+            .slice(0, 3)
+            .map(([k, v]) => {
+              const arrow = oddsArrowHtml(`${e.id}|${primaryMarket.market}|${k}`, Number(v));
+              return `<div>${k}<br>${Number(v).toFixed(2)}${arrow}</div>`;
+            })
+            .join("")}</div>`
+        : "";
+
+      if (e.sport === "tennis") return renderTennisCard(e, clockClass, oddsHtml);
+
       return `
         <div class="live-card" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
           <div class="lc-top"><span>${sportIcon[e.sport] || ""} ${e.league}</span><span class="${clockClass}">${e.minuteOrPeriod}</span></div>
@@ -794,17 +849,7 @@ function renderLiveEvents() {
             ${showScore ? `<span class="lc-score">${e.homeScore} - ${e.awayScore}</span>` : '<span style="color:var(--muted);font-size:.8rem">AO VIVO</span>'}
             <span>${e.away}</span>
           </div>
-          ${
-            odds
-              ? `<div class="lc-odds">${Object.entries(odds)
-                  .slice(0, 3)
-                  .map(([k, v]) => {
-                    const arrow = oddsArrowHtml(`${e.id}|${primaryMarket.market}|${k}`, Number(v));
-                    return `<div>${k}<br>${Number(v).toFixed(2)}${arrow}</div>`;
-                  })
-                  .join("")}</div>`
-              : ""
-          }
+          ${oddsHtml}
         </div>`;
     })
     .join("");

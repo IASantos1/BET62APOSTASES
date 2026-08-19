@@ -56,6 +56,11 @@ interface WsTeamStats {
   redCards?: number;
   corners?: number;
 }
+interface WsSetsStats {
+  home: number[];
+  away: number[];
+  homeServe?: boolean;
+}
 interface WsEvent {
   eventId: string;
   league: string;
@@ -73,7 +78,7 @@ interface WsEvent {
   markets?: WsMarket[];
   country?: string;
   matchClock?: WsMatchClock;
-  statistics?: { football?: { home?: WsTeamStats; away?: WsTeamStats } };
+  statistics?: { football?: { home?: WsTeamStats; away?: WsTeamStats }; sets?: WsSetsStats };
 }
 interface WsFrame {
   type?: string; // "connected" handshake frame
@@ -122,6 +127,7 @@ function normalizeWsMarket(m: WsMarket): LiveOdds {
 function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
   const markets = orderMarketsWithPrimaryFirst(e.markets ?? []);
   const football = e.statistics?.football;
+  const sets = e.statistics?.sets;
   return {
     id: `pulsescore:${e.eventId}`,
     sport,
@@ -136,7 +142,10 @@ function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
     source: "pulsescore",
     startTime: e.startTime,
     country: e.country,
-    statistics: football ? { home: football.home ?? {}, away: football.away ?? {} } : undefined,
+    statistics:
+      football || sets
+        ? { home: football?.home ?? {}, away: football?.away ?? {}, sets: sets ? { home: sets.home, away: sets.away, homeServe: sets.homeServe } : undefined }
+        : undefined,
   };
 }
 
