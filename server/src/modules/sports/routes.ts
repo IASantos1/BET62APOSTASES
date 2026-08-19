@@ -2,6 +2,7 @@ import { Router } from "express";
 import { asyncHandler } from "../../middleware/errorHandler";
 import { hybridSportsService } from "./hybridService";
 import { getPrematchEvents } from "./prematch/service";
+import { getTodayCompetitions } from "./competitions/service";
 import { fetchEventById } from "./pulsescore/client";
 import { ALL_SPORTS, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
@@ -25,6 +26,14 @@ router.get(
     }
     const result = await getPrematchEvents(sport as Sport);
     res.json(result);
+  })
+);
+
+router.get(
+  "/competitions",
+  asyncHandler(async (_req, res) => {
+    const competitions = await getTodayCompetitions();
+    res.json({ competitions });
   })
 );
 

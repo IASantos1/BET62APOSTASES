@@ -15,8 +15,8 @@ Preencher pelo menos:
 
 As restantes variáveis (Stripe, Revolut, Pulsescore, API-Football) podem ficar vazias — o
 servidor arranca na mesma; cada integração só falha (com uma mensagem clara em português) se
-for chamada sem a respetiva chave configurada. Os dados desportivos usam automaticamente um
-feed simulado enquanto `PULSESCORE_API_KEY` não estiver definida.
+for chamada sem a respetiva chave configurada. Sem `PULSESCORE_API_KEY`, as páginas Ao Vivo e
+Esportes ficam simplesmente sem jogos — nunca se mostram dados simulados.
 
 ```bash
 npm install
@@ -63,7 +63,7 @@ src/
 Fluxo completo validado com PostgreSQL real: registo → perfil → saldo → submissão de KYC →
 atualização de limites → bloqueio correto de depósito sem chave Stripe → bloqueio correto de
 levantamento sem KYC aprovado → login → refresh token inválido rejeitado. WebSocket `/ws/live`
-testado com o feed simulado de desporto.
+testado com odds ao vivo reais da Pulsescore (ver docs/SPORTS_DATA.md).
 
 Não testado nesta sessão (sem credenciais/rede disponíveis): ligação real à Pulsescore,
 chamadas reais à API-Football, PaymentIntents reais na Stripe, payouts reais na Revolut

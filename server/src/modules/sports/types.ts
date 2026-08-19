@@ -13,10 +13,10 @@ export const ALL_SPORTS: Sport[] = [
   "tennis",
   "basketball",
   "ice_hockey",
+  "mma",
   "baseball",
   "volleyball",
   "formula1",
-  "mma",
 ];
 
 export interface LiveOdds {
@@ -25,7 +25,7 @@ export interface LiveOdds {
 }
 
 export interface LiveEvent {
-  id: string; // provider-native id, prefixed with source: "pulsescore:12345" or "mock:football-1"
+  id: string; // provider-native id, prefixed with source: "pulsescore:12345"
   sport: Sport;
   league: string;
   home: string;
@@ -38,7 +38,7 @@ export interface LiveEvent {
   status: "scheduled" | "live" | "finished";
   odds: LiveOdds[];
   updatedAt: string; // ISO timestamp
-  source: "pulsescore" | "mock";
+  source: "pulsescore";
   apiFootballFixtureId?: number; // present when a matching API-Football fixture id is known
   startTime?: string; // ISO timestamp — kickoff time, present for scheduled (pré-jogo) events
 }

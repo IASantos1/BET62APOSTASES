@@ -49,7 +49,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 .sport-subnav::-webkit-scrollbar{display:none}
 .sport-chip{padding:7px 12px;border-radius:16px;font-size:.74rem;font-weight:600;color:var(--muted);white-space:nowrap;cursor:pointer;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;gap:5px}
 .sport-chip.active{border-color:var(--red);color:var(--text);background:rgba(230,48,39,.08)}
-.page{padding:16px;max-width:480px;margin:0 auto}
+.page{padding:16px;max-width:900px;margin:0 auto}
 .user-card{background:var(--surface);border-radius:16px;padding:18px;display:flex;align-items:center;gap:14px;margin-bottom:20px;border:1px solid var(--border)}
 .user-avatar{width:52px;height:52px;border-radius:50%;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.4rem;font-weight:700;flex-shrink:0}
 .user-info{flex:1;min-width:0}
@@ -155,8 +155,49 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .selection-btn .sel-odd{display:block;font-weight:700;font-variant-numeric:tabular-nums}
 .selection-btn.picked{border-color:var(--red);background:rgba(230,48,39,.1)}
 .selection-btn.picked .sel-odd{color:var(--red)}
-.betslip-bar{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;margin:20px -16px -16px;border-radius:0 0 0 0}
-.betslip-bar button{background:var(--red);color:#fff;border:none;padding:10px 20px;border-radius:10px;font-weight:700;cursor:pointer;font-size:.85rem}
+/* ===== Layout: Menu lateral esquerdo (Competições + Desportos) e direito (Boletim) ===== */
+.app-shell{display:flex;align-items:flex-start;max-width:1400px;margin:0 auto}
+.main-col{flex:1;min-width:0}
+.sidebar-left,.sidebar-right{width:270px;flex-shrink:0;padding:18px 14px;position:sticky;top:0;max-height:100vh;overflow-y:auto;scrollbar-width:thin}
+.sidebar-title{font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:.6px;color:var(--muted);margin:16px 4px 8px}
+.sidebar-title:first-child{margin-top:2px}
+.comp-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-radius:10px;cursor:pointer;font-size:.8rem;margin-bottom:3px}
+.comp-item:hover{background:var(--surface2)}
+.comp-item .comp-count{background:var(--surface2);color:var(--muted);font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:10px}
+.sports-menu-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;cursor:pointer;font-size:.85rem;font-weight:600;margin-bottom:2px;color:var(--text)}
+.sports-menu-item:hover{background:var(--surface2)}
+.sports-menu-item.active{background:rgba(230,48,39,.08);color:var(--red)}
+.drawer-overlay{display:none}
+@media (max-width: 900px) {
+  .sidebar-left,.sidebar-right{position:fixed;top:0;bottom:0;width:280px;max-width:85vw;background:var(--bg);z-index:250;transition:transform .25s ease;box-shadow:0 0 30px rgba(0,0,0,.35)}
+  .sidebar-left{left:0;transform:translateX(-100%)}
+  .sidebar-left.open{transform:translateX(0)}
+  .sidebar-right{right:0;transform:translateX(100%)}
+  .sidebar-right.open{transform:translateX(0)}
+  .drawer-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:240}
+  .drawer-overlay.open{display:block}
+  .betslip-fab{display:flex!important}
+}
+/* ===== Boletim de aposta (Simples/Múltipla) — sidebar direito + drawer PWA ===== */
+.bs-tabs{display:flex;gap:6px;background:var(--surface2);border-radius:10px;padding:4px;margin-bottom:12px}
+.bs-tab{flex:1;text-align:center;padding:8px;border-radius:8px;font-size:.8rem;font-weight:700;cursor:pointer;color:var(--muted)}
+.bs-tab.active{background:var(--surface);color:var(--text)}
+.bs-tab.disabled{opacity:.4;cursor:not-allowed}
+.bs-rows{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+.bs-row{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.bs-row-teams{font-weight:700;font-size:.8rem}
+.bs-row-sel{font-size:.75rem;color:var(--muted);margin-top:2px}
+.bs-row-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.bs-stake-input{width:64px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:6px 8px;color:var(--text);font-size:.8rem;outline:none}
+.bs-remove{background:none;border:none;color:var(--muted);cursor:pointer;font-size:.9rem;padding:4px}
+.bs-remove:hover{color:var(--red)}
+.bs-summary{display:flex;justify-content:space-between;font-size:.82rem;padding:6px 2px;color:var(--muted)}
+.bs-return{color:var(--gold);font-weight:700}
+.betslip-fab{display:none;position:fixed;right:18px;bottom:18px;z-index:150;background:var(--red);color:#fff;border:none;border-radius:30px;padding:13px 20px;font-weight:700;align-items:center;gap:8px;box-shadow:0 6px 20px rgba(0,0,0,.35);cursor:pointer;font-size:.85rem}
+.betslip-inline-bar{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;margin:20px -16px -16px}
+.betslip-inline-bar span{font-size:.82rem;color:var(--muted)}
+.betslip-inline-bar button{background:var(--red);color:#fff;border:none;padding:10px 20px;border-radius:10px;font-weight:700;cursor:pointer;font-size:.85rem}
+@media (min-width: 901px){.betslip-inline-bar{display:none}}
 </style>
 </head>
 <body>
@@ -166,11 +207,25 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
      se aberto diretamente como ficheiro estático sem esse servidor. -->
 <script src="/config.js" onerror="window.BET62_CONFIG = { API_BASE: localStorage.getItem('bet62_api_base') || 'http://localhost:4000/api', WS_BASE: localStorage.getItem('bet62_ws_base') || 'ws://localhost:4000' };"></script>
 
+<div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawers()"></div>
+
+<div class="app-shell">
+
+<!-- MENU LATERAL ESQUERDO: Competições (top-5 ligas do dia) + Menu Desportos -->
+<aside class="sidebar-left" id="sidebar-left">
+    <div class="sidebar-title">COMPETIÇÕES</div>
+    <div id="competitions-list"><div class="empty-note" style="padding:6px 2px">A carregar…</div></div>
+    <div class="sidebar-title">DESPORTOS</div>
+    <div id="sports-menu-list"></div>
+</aside>
+
+<div class="main-col">
+
 <!-- HEADER -->
 <header class="header">
     <div class="header-left">
         <button class="back-btn hidden" id="btn-back" onclick="goBack()">←</button>
-        <button class="menu-btn" id="btn-menu" onclick="alert('Menu lateral (em desenvolvimento)')">☰</button>
+        <button class="menu-btn" id="btn-menu" onclick="toggleLeftDrawer()" title="Menu" aria-label="Menu">⋮</button>
         <div class="logo">BET<span>62</span></div>
     </div>
     <div class="header-right">
@@ -466,9 +521,11 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
     </div>
     <div class="match-tracker" id="match-tracker"></div>
     <div id="market-groups"></div>
-    <div class="betslip-bar">
-        <span id="betslip-count" style="font-size:.82rem;color:var(--muted)">Nenhuma seleção</span>
-        <button onclick="placeBetDemo()">Fazer Aposta</button>
+    <!-- Resumo compacto no fim da página de mercados (mobile/PWA); o boletim completo com
+         Simples/Múltipla vive no menu lateral direito (desktop) / drawer (mobile). -->
+    <div class="betslip-inline-bar" id="betslip-inline-bar">
+        <span id="betslip-count">Nenhuma seleção</span>
+        <button onclick="openRightDrawer()">Abrir Boletim</button>
     </div>
 </div>
 
@@ -523,6 +580,19 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 </div>
 
 <footer>© 2026 Bet62 • 18+ • Jogo Responsável • Licenciado (SRIJ Portugal)</footer>
+
+</div><!-- /main-col -->
+
+<!-- MENU LATERAL DIREITO: Boletim de Aposta (Simples / Múltipla) -->
+<aside class="sidebar-right" id="sidebar-right">
+    <div class="sidebar-title">BOLETIM DE APOSTA</div>
+    <div id="betslip-panel"><div class="empty-note">Selecione odds nos mercados para adicionar ao boletim</div></div>
+</aside>
+
+</div><!-- /app-shell -->
+
+<!-- Atalho do boletim em mobile/PWA (sidebar direito vira drawer abaixo de 1100px) -->
+<button class="betslip-fab hidden" id="betslip-fab" onclick="openRightDrawer()">🧾 <span id="betslip-fab-count">0</span></button>
 
 <script src="api.js"></script>
 <script src="app.js"></script>

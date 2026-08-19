@@ -1,0 +1,204 @@
+import { EventEmitter } from "events";
+import WebSocket from "ws";
+import { env } from "../../../config/env";
+import { logger } from "../../../lib/logger";
+import type { LiveEvent, LiveOdds, Sport } from "../types";
+import { SPORT_SLUGS, bookmakerFor, orderMarketsWithPrimaryFirst, fetchLiveSportsWithEvents } from "./client";
+
+/**
+ * Real-time WebSocket feed — confirmed via the official Pulsescore documentation (not
+ * guesswork, unlike most of client.ts's earlier iterations). Pattern: one connection per
+ * {bookmaker, sport} pair, `wss://api.pulsescore.net/api/{bookmaker}/ws/live?key=&sport=`
+ * (query-param auth, unlike REST's x-secret header), one frame/second with every live event of
+ * that sport. Requires PRO/MAX/ULTRA — the plan mentioned at the start of this integration
+ * (149€/mo, 3 simultaneous connections) is MAX, so this should work, but the exact plan on the
+ * account actually configured isn't something this code can know in advance: if the plan is
+ * too low, the server closes with code 4003 and this manager stops retrying and just leaves
+ * REST polling (hybridService.ts) as the only source — no functional loss, just no live score.
+ *
+ * With only `maxConnections` slots (3 on MAX) and 8 sports, connections are opened for the
+ * busiest sports right now (by live event count) and re-evaluated periodically; REST polling in
+ * hybridService.ts covers whichever sports aren't currently WS-connected, so nothing goes
+ * unpolled — WS is a live-score/lower-latency upgrade for the top sports, not a replacement.
+ */
+const REFRESH_INTERVAL_MS = 60_000;
+const RECONNECT_DELAY_MS = 5_000;
+
+// Bet365 alone uses a versioned path (/api/v3/bet365/ws/live); every other bookmaker, including
+// "10bet" (the default here) and "unibetau" (used for Fórmula 1), is unversioned.
+function wsUrlFor(sport: Sport): string {
+  const bookmaker = bookmakerFor(sport);
+  const slug = SPORT_SLUGS[sport];
+  const base = env.PULSESCORE_REST_URL.replace(/^http/, "ws").replace(/\/api$/, "");
+  const path = bookmaker === "bet365" ? "/api/v3/bet365/ws/live" : `/api/${bookmaker}/ws/live`;
+  return `${base}${path}?key=${env.PULSESCORE_API_KEY}&sport=${slug}`;
+}
+
+interface WsSelection {
+  name?: string;
+  rawName?: string;
+  decimal?: string | number;
+  odds?: string | number;
+  isActive?: boolean;
+}
+interface WsMarket {
+  canonicalMarket?: string;
+  rawName?: string;
+  selections?: WsSelection[];
+}
+interface WsEvent {
+  eventId: string;
+  league: string;
+  home: string;
+  away: string;
+  score?: string; // e.g. "1-0" — the one field REST doesn't have
+  live?: boolean;
+  startTime?: string;
+  markets?: WsMarket[];
+}
+interface WsFrame {
+  type?: string; // "connected" handshake frame
+  bookmaker?: string;
+  sport?: string;
+  plan?: string;
+  validSports?: string[];
+  count?: number;
+  data?: WsEvent[];
+}
+
+function parseScore(score: string | undefined): { homeScore?: number; awayScore?: number } {
+  if (!score) return {};
+  const [h, a] = score.split("-").map((p) => Number(p.trim()));
+  if (h === undefined || a === undefined || Number.isNaN(h) || Number.isNaN(a)) return {};
+  return { homeScore: h, awayScore: a };
+}
+
+function normalizeWsMarket(m: WsMarket): LiveOdds {
+  const selections = (m.selections ?? [])
+    .filter((s) => s.isActive !== false)
+    .map((s): [string, number] => [s.rawName ?? s.name ?? "?", Number(s.odds ?? s.decimal ?? NaN)])
+    .filter(([, odd]) => !Number.isNaN(odd));
+  return { market: m.rawName ?? m.canonicalMarket ?? "Mercado", selections: Object.fromEntries(selections) };
+}
+
+function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
+  const markets = orderMarketsWithPrimaryFirst(e.markets ?? []);
+  return {
+    id: `pulsescore:${e.eventId}`,
+    sport,
+    league: e.league,
+    home: e.home,
+    away: e.away,
+    ...parseScore(e.score),
+    minuteOrPeriod: e.live === false ? "" : "AO VIVO",
+    status: e.live === false ? "scheduled" : "live",
+    odds: markets.map(normalizeWsMarket),
+    updatedAt: new Date().toISOString(),
+    source: "pulsescore",
+    startTime: e.startTime,
+  };
+}
+
+// WebSocket close codes the server won't recover from on its own — retrying is pointless.
+const CLOSE_CODES_NO_RETRY = new Set([4001, 4003, 4004, 4010, 4029]);
+
+class PulsescoreWsManager extends EventEmitter {
+  private sockets = new Map<Sport, WebSocket>();
+  private reconnectTimers = new Map<Sport, NodeJS.Timeout>();
+  private planTooLow = false;
+  private maxConnections = 3; // matches the MAX plan (149€/mo) mentioned when this was set up
+
+  start() {
+    if (!env.PULSESCORE_API_KEY) return;
+    this.refreshTargets();
+    setInterval(() => this.refreshTargets(), REFRESH_INTERVAL_MS);
+  }
+
+  activeSports(): Set<Sport> {
+    return new Set(this.sockets.keys());
+  }
+
+  private async refreshTargets() {
+    if (this.planTooLow) return;
+    let targets: Sport[];
+    try {
+      const liveSports = await fetchLiveSportsWithEvents();
+      // formula1 runs under a different bookmaker (unibetau) not covered by the default
+      // bookmaker's /live-events/sports summary, so it's never in liveSports — check it anyway.
+      const withFormula1: Sport[] = liveSports.filter((s) => s !== "formula1");
+      withFormula1.push("formula1");
+      targets = withFormula1.slice(0, this.maxConnections);
+    } catch (err) {
+      logger.warn({ err }, "Pulsescore WS: falha ao decidir a que desportos ligar, a manter ligações atuais");
+      return;
+    }
+
+    for (const sport of targets) {
+      if (!this.sockets.has(sport)) this.connect(sport);
+    }
+    for (const sport of this.sockets.keys()) {
+      if (!targets.includes(sport)) this.disconnect(sport);
+    }
+  }
+
+  private connect(sport: Sport) {
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(wsUrlFor(sport));
+    } catch (err) {
+      logger.warn({ err, sport }, "Pulsescore WS: não foi possível abrir a ligação");
+      return;
+    }
+    this.sockets.set(sport, ws);
+
+    ws.on("message", (raw) => {
+      let frame: WsFrame;
+      try {
+        frame = JSON.parse(raw.toString());
+      } catch {
+        return;
+      }
+      if (frame.type === "connected") {
+        logger.info({ sport, bookmaker: frame.bookmaker, plan: frame.plan }, "Pulsescore WS: ligado");
+        return;
+      }
+      if (!frame.data) return;
+      const events = frame.data.map((e) => normalizeWsEvent(e, sport));
+      this.emit("snapshot", { sport, events });
+    });
+
+    ws.on("close", (code) => {
+      this.sockets.delete(sport);
+      if (CLOSE_CODES_NO_RETRY.has(code)) {
+        if (code === 4003) {
+          this.planTooLow = true;
+          logger.warn("Pulsescore WS: plano atual não inclui WebSocket (precisa de PRO/MAX/ULTRA) — a usar só REST/polling");
+        } else {
+          logger.warn({ sport, code }, "Pulsescore WS: ligação fechada, sem nova tentativa");
+        }
+        return;
+      }
+      const timer = setTimeout(() => {
+        this.reconnectTimers.delete(sport);
+        this.connect(sport);
+      }, RECONNECT_DELAY_MS);
+      this.reconnectTimers.set(sport, timer);
+    });
+
+    ws.on("error", (err) => {
+      logger.warn({ err, sport }, "Pulsescore WS: erro de ligação");
+    });
+  }
+
+  private disconnect(sport: Sport) {
+    const timer = this.reconnectTimers.get(sport);
+    if (timer) {
+      clearTimeout(timer);
+      this.reconnectTimers.delete(sport);
+    }
+    this.sockets.get(sport)?.close();
+    this.sockets.delete(sport);
+  }
+}
+
+export const pulsescoreWs = new PulsescoreWsManager();

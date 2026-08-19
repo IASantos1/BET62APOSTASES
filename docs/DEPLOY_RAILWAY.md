@@ -71,9 +71,9 @@ No serviço criado a partir do repo:
   gerado para a variável no Railway.
 - Preencher as restantes variáveis (`STRIPE_SECRET_KEY`, `REVOLUT_*`, `PULSESCORE_API_KEY`,
   `API_FOOTBALL_KEY`) e redeploy do serviço.
-- Sem `PULSESCORE_API_KEY`, o sistema continua a funcionar com o feed de desporto simulado
-  (`SPORTS_DATA_MOCK_FALLBACK=true` por defeito) — não é bloqueante para o resto da
-  plataforma funcionar.
+- Sem `PULSESCORE_API_KEY`, o resto da plataforma continua a funcionar normalmente — só as
+  páginas Ao Vivo e Esportes ficam sem jogos (nunca se mostram odds/eventos simulados a
+  utilizadores reais).
 
 ## Alternativa: Railway CLI
 
