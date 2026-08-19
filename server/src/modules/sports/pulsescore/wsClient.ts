@@ -25,7 +25,7 @@ const REFRESH_INTERVAL_MS = 60_000;
 const RECONNECT_DELAY_MS = 5_000;
 
 // Bet365 alone uses a versioned path (/api/v3/bet365/ws/live); every other bookmaker, including
-// "10bet" (the default here) and "unibetau" (used for Fórmula 1), is unversioned.
+// "paddypower" (the default here) and "unibetau" (used for Fórmula 1), is unversioned.
 function wsUrlFor(sport: Sport): string {
   const bookmaker = bookmakerFor(sport);
   const slug = SPORT_SLUGS[sport];
@@ -51,7 +51,10 @@ interface WsEvent {
   league: string;
   home: string;
   away: string;
-  score?: string; // e.g. "1-0" — the one field REST doesn't have
+  // e.g. "1-0" — per the official docs' WS frame shape. NOTE: this single "H-A" string format is
+  // the WS contract; paddypower's REST /live-events uses a different shape ({home,away} strings
+  // — see PulsescoreScore in client.ts), so the two are parsed separately, not shared code.
+  score?: string;
   live?: boolean;
   startTime?: string;
   markets?: WsMarket[];

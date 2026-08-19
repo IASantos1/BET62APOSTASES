@@ -186,6 +186,70 @@ matriz de desportos por casa de apostas). Isto confirma/corrige vários pontos:
   como definitiva — `orderMarketsWithPrimaryFirst()` verifica os dois nomes possíveis do
   mercado principal, e o parser do WebSocket aceita `rawName`/`name` e `odds`/`decimal`.
 
+## ✅ Migração para a bookmaker "paddypower" — placar/cronómetro/estatísticas reais via REST
+
+O utilizador comparou amostras reais de duas bookmakers (contagem de mercados, campos presentes)
+e pediu a troca. Confirmado com pedidos/respostas reais:
+
+```
+GET /paddypower/live-events/sports
+GET /paddypower/live-events?page=&limit=&sport=soccer
+GET /paddypower/live-events/events/{eventId}
+```
+
+Ao contrário da "10bet" (secção anterior — placar/cronómetro confirmados **ausentes**), a
+**paddypower já devolve tudo isto diretamente no REST `/live-events`**, sem precisar do
+WebSocket:
+
+```json
+{
+  "eventId": "35931412", "away": "NK Celje", "country": "", "home": "Slovan Bratislava",
+  "league": "UEFA Champions League Qualifiers", "sport": "soccer",
+  "matchClock": { "minute": 90, "second": 0, "period": "2H" },
+  "statistics": { "football": { "home": {"yellowCards":2,"redCards":0,"corners":4},
+                                 "away": {"yellowCards":2,"redCards":0,"corners":0} } },
+  "score": { "home": "1", "away": "1" }
+}
+```
+
+Pontos confirmados:
+- **`matchClock`** (`minute`/`second`/`period`, ex: `"2H"`) — usado em `formatMatchClock()`
+  (`pulsescore/client.ts`) para preencher `minuteOrPeriod` (ex: `"90'"`) em vez do genérico
+  "AO VIVO" usado quando ausente.
+- **`score`** vem como `{home, away}` (strings) — **formato diferente** do `"H-A"` string única
+  documentado para o frame WebSocket oficial (`wsClient.ts`); os dois são parseados
+  separadamente (`parsePulsescoreScore()` no REST, `parseScore()` no WS), não é código partilhado.
+- **`statistics.football`** (cartões amarelos/vermelhos, cantos, por equipa) — bónus não pedido
+  mas presente; mapeado para `LiveEvent.statistics` (`types.ts`), ainda sem UI dedicada.
+- **`country`** (ISO 2 letras, ou `""` para competições internacionais/qualificação) — mapeado
+  para `LiveEvent.country`; ainda não usado no frontend (o menu lateral usa uma lista curada
+  `FOOTBALL_LEAGUES_BY_COUNTRY` em `web/app.js`, não este campo — trocar seria um passo futuro).
+- **Cobertura de mercados muito maior**: até 47 mercados por jogo (vs. 5–17 na 10bet para os
+  mesmos jogos), com vários `canonicalMarket` novos (`WIN_TO_NIL`, `CORRECT_SCORE_COMBINATIONS`,
+  `HALF_TIME_FULL_TIME`, `RESULT_BOTH_TEAMS_TO_SCORE`, `WINNING_MARGIN`, `CORNERS_RACE_TO`,
+  `PLAYER_CARDS`, `ANYTIME_GOALSCORER`, etc.) — nenhum exigiu mudanças de código, mercados nunca
+  passaram por uma lista fixa.
+- Uma amostra de `/{sport}/events` (não `/live-events`) trouxe uma entrada promocional/lixo
+  ("Football Boosts", `away: ""`, `startTime` de 2017) misturada com jogos reais — `extractEvents()`
+  em `client.ts` agora descarta qualquer evento sem `home`/`away` preenchidos.
+
+Alterações de código:
+- `PULSESCORE_BOOKMAKER` (`env.ts`) mudou de `"10bet"` para `"paddypower"`.
+- `PulsescoreEvent` (`client.ts`) ganhou `country?`, `matchClock?`, `statistics?`, `score?`.
+- `LiveEvent` (`types.ts`) ganhou `country?` e `statistics?`; `homeScore`/`awayScore` deixam de
+  estar sempre `undefined` para dados reais — o comentário anterior ("Pulsescore não devolve
+  placar") só era verdade para a "10bet".
+- `normalizeEvent()` preenche `homeScore`/`awayScore` a partir de `score.home`/`score.away`, e
+  `minuteOrPeriod` a partir de `matchClock.minute` quando presente.
+- O frontend (`web/app.js`) já verificava `typeof e.homeScore === "number"` de forma defensiva —
+  não precisou de nenhuma alteração, o placar real passa a aparecer automaticamente.
+
+⚠️ **Por confirmar**: a paddypower cobre basquete/hóquei de gelo/voleibol/MMA da mesma forma?
+`/paddypower/live-events/sports` só mostrou eventos ao vivo reais para futebol, ténis, basebol,
+esports e ténis de mesa no momento da amostra — os outros desportos podem simplesmente não ter
+jogos a decorrer agora, ou podem não ser suportados por esta bookmaker. Fórmula 1 mantém-se em
+`unibetau` via `SPORT_BOOKMAKER_OVERRIDE` (sem evidência de cobertura pela paddypower).
+
 ## ⚠️ Ainda por confirmar
 
 1. **Slug exato da Fórmula 1** dentro de `unibetau` — continua uma estimativa (`formula-1`).

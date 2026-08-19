@@ -31,8 +31,10 @@ const envSchema = z.object({
   PULSESCORE_API_KEY: z.string().default(""),
   PULSESCORE_REST_URL: z.string().default("https://api.pulsescore.net/api"),
   // Endpoint shape is /{bookmaker}/{sport}/leagues — Pulsescore aggregates odds per bookmaker
-  // source; "10bet" is the bookmaker confirmed in the sample. Change if a different source is preferred.
-  PULSESCORE_BOOKMAKER: z.string().default("10bet"),
+  // source. Switched from "10bet" to "paddypower": confirmed via real /live-events samples that
+  // paddypower's REST live-events already includes matchClock, score and statistics (10bet's
+  // REST did not — see pulsescore/client.ts). Change if a different source is preferred.
+  PULSESCORE_BOOKMAKER: z.string().default("paddypower"),
 
   // --- API-Football (statistics) ---
   API_FOOTBALL_KEY: z.string().default(""),
