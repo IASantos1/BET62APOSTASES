@@ -2,10 +2,15 @@ import { EventEmitter } from "events";
 import WebSocket from "ws";
 import { env } from "../../../config/env";
 import { logger } from "../../../lib/logger";
-import type { LiveEvent, Sport } from "../types";
+import { ALL_SPORTS, type LiveEvent, type Sport } from "../types";
 
 /**
- * Pulsescore.com live websocket client (plan: 3 canais — futebol, ténis, basquete).
+ * Pulsescore.com live websocket client — futebol, ténis, basquete, hóquei de gelo, beisebol,
+ * voleibol, Fórmula 1 e MMA.
+ *
+ * NOTA: o plano de 149€ mencionado inicialmente cobria 3 canais (futebol/ténis/basquete).
+ * Cobrir os 8 desportos pedidos aqui pode exigir um plano superior ou canais adicionais —
+ * confirmar com a Pulsescore antes de assumir que os 8 estão incluídos no mesmo preço.
  *
  * NEEDS VALIDATION against Pulsescore's own docs: this environment's network egress proxy
  * blocks pulsescore.com, so the exact connection URL, auth handshake, subscription message
@@ -21,7 +26,7 @@ import type { LiveEvent, Sport } from "../types";
  * payload shape is confirmed — everything downstream consumes the normalized `LiveEvent` type.
  */
 
-const SPORTS: Sport[] = ["football", "tennis", "basketball"];
+const SPORTS: Sport[] = ALL_SPORTS;
 const RECONNECT_BASE_MS = 2000;
 const RECONNECT_MAX_MS = 30_000;
 

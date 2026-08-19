@@ -2,9 +2,9 @@ import type { Server as HttpServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { logger } from "../../../lib/logger";
 import { hybridSportsService } from "../hybridService";
-import type { Sport } from "../types";
+import { ALL_SPORTS, type Sport } from "../types";
 
-const VALID_SPORTS: Sport[] = ["football", "tennis", "basketball"];
+const VALID_SPORTS: Sport[] = ALL_SPORTS;
 
 interface ClientState {
   socket: WebSocket;
@@ -23,7 +23,7 @@ export function attachSportsWebsocketGateway(httpServer: HttpServer) {
 
   wss.on("connection", (socket, req) => {
     const url = new URL(req.url ?? "", "http://localhost");
-    const requested = (url.searchParams.get("sports") ?? "football,tennis,basketball")
+    const requested = (url.searchParams.get("sports") ?? "")
       .split(",")
       .map((s) => s.trim())
       .filter((s): s is Sport => VALID_SPORTS.includes(s as Sport));
