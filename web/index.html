@@ -158,7 +158,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 /* ===== Layout: Menu lateral esquerdo (Competições + Desportos) e direito (Boletim) ===== */
 .app-shell{display:flex;align-items:flex-start;max-width:1400px;margin:0 auto}
 .main-col{flex:1;min-width:0}
-.sidebar-left,.sidebar-right{width:270px;flex-shrink:0;padding:18px 14px;position:sticky;top:0;max-height:100vh;overflow-y:auto;scrollbar-width:thin}
+.sidebar-left,.sidebar-right{width:270px;flex-shrink:0;padding:18px 14px;position:sticky;top:61px;max-height:calc(100vh - 61px);overflow-y:auto;scrollbar-width:thin}
 .sidebar-title{font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:.6px;color:var(--muted);margin:16px 4px 8px}
 .sidebar-title:first-child{margin-top:2px}
 .comp-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-radius:10px;cursor:pointer;font-size:.8rem;margin-bottom:3px}
@@ -193,7 +193,11 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .bs-remove:hover{color:var(--red)}
 .bs-summary{display:flex;justify-content:space-between;font-size:.82rem;padding:6px 2px;color:var(--muted)}
 .bs-return{color:var(--gold);font-weight:700}
-.betslip-fab{display:none;position:fixed;right:18px;bottom:18px;z-index:150;background:var(--red);color:#fff;border:none;border-radius:30px;padding:13px 20px;font-weight:700;align-items:center;gap:8px;box-shadow:0 6px 20px rgba(0,0,0,.35);cursor:pointer;font-size:.85rem}
+.betslip-fab{display:none;position:fixed;right:18px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:150;width:46px;height:46px;background:var(--red);color:#fff;border:none;border-radius:50%;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(0,0,0,.35);cursor:pointer;font-size:.9rem;font-weight:700;animation:betslip-pulse 1.8s ease-in-out infinite}
+@keyframes betslip-pulse{0%,100%{box-shadow:0 0 0 0 rgba(230,48,39,.55),0 6px 16px rgba(0,0,0,.35)}50%{box-shadow:0 0 0 10px rgba(230,48,39,0),0 6px 16px rgba(0,0,0,.35)}}
+@media (prefers-reduced-motion: reduce){.betslip-fab{animation:none}}
+/* Na página de Mercados já há a barra inline com "Abrir Boletim" — sobe a bola para não ficar em cima dela. */
+body.on-market-page .betslip-fab{bottom:calc(78px + env(safe-area-inset-bottom))}
 .betslip-inline-bar{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;margin:20px -16px -16px}
 .betslip-inline-bar span{font-size:.82rem;color:var(--muted)}
 .betslip-inline-bar button{background:var(--red);color:#fff;border:none;padding:10px 20px;border-radius:10px;font-weight:700;cursor:pointer;font-size:.85rem}
@@ -209,19 +213,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 
 <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawers()"></div>
 
-<div class="app-shell">
-
-<!-- MENU LATERAL ESQUERDO: Competições (top-5 ligas do dia) + Menu Desportos -->
-<aside class="sidebar-left" id="sidebar-left">
-    <div class="sidebar-title">COMPETIÇÕES</div>
-    <div id="competitions-list"><div class="empty-note" style="padding:6px 2px">A carregar…</div></div>
-    <div class="sidebar-title">DESPORTOS</div>
-    <div id="sports-menu-list"></div>
-</aside>
-
-<div class="main-col">
-
-<!-- HEADER -->
+<!-- HEADER: ocupa a largura toda da página, acima dos menus laterais -->
 <header class="header">
     <div class="header-left">
         <button class="back-btn hidden" id="btn-back" onclick="goBack()">←</button>
@@ -235,13 +227,25 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
     </div>
 </header>
 
-<!-- TOP NAV -->
+<!-- TOP NAV: também de ponta a ponta -->
 <div class="top-nav" id="top-nav">
     <div class="top-nav-item active" data-page="destaques" onclick="showPage('destaques')"><i class="fas fa-star"></i> DESTAQUES</div>
     <div class="top-nav-item" data-page="esportes" onclick="showPage('esportes')"><i class="fas fa-trophy"></i> ESPORTES</div>
     <div class="top-nav-item" data-page="aovivo" onclick="showPage('aovivo')"><i class="fas fa-broadcast-tower"></i> AO VIVO <span class="live-dot"></span></div>
     <div class="top-nav-item" data-page="casino" onclick="showPage('casino')"><i class="fas fa-dice"></i> CASINO</div>
 </div>
+
+<div class="app-shell">
+
+<!-- MENU LATERAL ESQUERDO: Competições (top-5 ligas do dia) + Menu Desportos -->
+<aside class="sidebar-left" id="sidebar-left">
+    <div class="sidebar-title">COMPETIÇÕES</div>
+    <div id="competitions-list"><div class="empty-note" style="padding:6px 2px">A carregar…</div></div>
+    <div class="sidebar-title">DESPORTOS</div>
+    <div id="sports-menu-list"></div>
+</aside>
+
+<div class="main-col">
 
 <!-- SUB-NAV DE DESPORTOS (Esportes / Ao Vivo) -->
 <div class="sport-subnav hidden" id="sport-subnav"></div>
@@ -592,7 +596,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 </div><!-- /app-shell -->
 
 <!-- Atalho do boletim em mobile/PWA (sidebar direito vira drawer abaixo de 1100px) -->
-<button class="betslip-fab hidden" id="betslip-fab" onclick="openRightDrawer()">🧾 <span id="betslip-fab-count">0</span></button>
+<button class="betslip-fab hidden" id="betslip-fab" onclick="openRightDrawer()" aria-label="Abrir boletim"><span id="betslip-fab-count">0</span></button>
 
 <script src="api.js"></script>
 <script src="app.js"></script>

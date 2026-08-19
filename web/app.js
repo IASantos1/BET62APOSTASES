@@ -156,6 +156,7 @@ const betslipSelections = new Map(); // key -> { eventId, market, selection, odd
 function showPage(page) {
   if (pageHistory[pageHistory.length - 1] !== page) pageHistory.push(page);
   closeDrawers();
+  document.body.classList.toggle("on-market-page", page === "market");
 
   ["destaques", "profile", "esportes", "aovivo", "casino", "market"].forEach((p) => {
     const el = document.getElementById("page-" + p);
