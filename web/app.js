@@ -20,11 +20,11 @@ const SPORTS_META = [
   { id: "formula1", label: "Fórmula 1", icon: "🏎️" },
 ];
 let selectedSport = null; // null = todos
-let selectedLeague = null; // filtra ainda mais por liga (ver FOOTBALL_LEAGUES_BY_COUNTRY)
+let selectedLeague = null; // filtra ainda mais por liga (ver loadFootballCountriesTree)
 
-// Só 1ª e 2ª divisão + taça(s) principal(is) de cada país — sem 3ª divisão para baixo, sem
-// ligas amadores, como pedido. Comparação por "contém" no nome da liga real da Pulsescore
-// (que às vezes vem "Premier League", às vezes "England - Premier League" consoante o país).
+// Lista estática usada só como fallback instantâneo enquanto a árvore real (ver
+// loadFootballCountriesTree, abaixo) ainda não carregou, ou se a API não devolver nada (ex: sem
+// PULSESCORE_API_KEY configurada). Assim que houver dados reais, o menu troca para eles.
 const FOOTBALL_LEAGUES_BY_COUNTRY = {
   Inglaterra: ["Premier League", "Championship", "FA Cup", "EFL Cup"],
   Espanha: ["La Liga", "Segunda División", "Copa del Rey"],
@@ -41,6 +41,61 @@ const FOOTBALL_LEAGUES_BY_COUNTRY = {
   Turquia: ["Süper Lig", "1. Lig", "Türkiye Kupası"],
   México: ["Liga MX", "Liga de Expansión MX", "Copa MX"],
 };
+
+// ====================== PAÍSES/LIGAS DE FUTEBOL — dados reais (campo `country`) ======================
+// A bookmaker atual (paddypower, ver docs/SPORTS_DATA.md) devolve um `country` real (código ISO
+// de 2 letras, ou "" para competições internacionais) em cada evento. Em vez de confiar só na
+// lista estática acima, construímos a árvore país→ligas a partir dos jogos reais de futebol
+// (pré-jogo + ao vivo) devolvidos agora pela API. Intl.DisplayNames traduz o código para um nome
+// legível em português sem precisar de manter uma lista de países à mão.
+const countryDisplayNames = (() => {
+  try {
+    return new Intl.DisplayNames(["pt"], { type: "region" });
+  } catch {
+    return null; // navegador sem suporte a Intl.DisplayNames — mostra o código em bruto
+  }
+})();
+function countryLabel(code) {
+  if (!code) return "Internacional";
+  if (countryDisplayNames) {
+    try {
+      const name = countryDisplayNames.of(code.toUpperCase());
+      if (name && name.toUpperCase() !== code.toUpperCase()) return name;
+    } catch {
+      /* código não reconhecido — cai para mostrar o código em bruto abaixo */
+    }
+  }
+  return code;
+}
+
+let footballCountriesTree = null; // null = ainda não carregado; [] = carregado mas vazio
+let footballCountriesTreeAt = 0;
+const FOOTBALL_TREE_TTL_MS = 5 * 60 * 1000;
+
+async function loadFootballCountriesTree() {
+  if (footballCountriesTree && footballCountriesTree.length && Date.now() - footballCountriesTreeAt < FOOTBALL_TREE_TTL_MS) {
+    return footballCountriesTree;
+  }
+  try {
+    const [prematch, live] = await Promise.all([Bet62Api.getPrematchEvents("football"), Bet62Api.getLiveEvents("football")]);
+    const events = [...(prematch?.source === "pulsescore" ? prematch.events : []), ...(live?.events || [])];
+    const byCountry = new Map(); // código ISO (ou "") -> Set<nome da liga>
+    for (const e of events) {
+      if (!e.league) continue;
+      const code = e.country ?? "";
+      if (!byCountry.has(code)) byCountry.set(code, new Set());
+      byCountry.get(code).add(e.league);
+    }
+    const tree = [...byCountry.entries()]
+      .map(([code, leagues]) => ({ label: countryLabel(code), leagues: [...leagues].sort((a, b) => a.localeCompare(b, "pt")) }))
+      .sort((a, b) => (a.label === "Internacional" ? 1 : b.label === "Internacional" ? -1 : a.label.localeCompare(b.label, "pt")));
+    footballCountriesTree = tree;
+    footballCountriesTreeAt = Date.now();
+    return tree;
+  } catch {
+    return footballCountriesTree || [];
+  }
+}
 
 function renderSportSubnav() {
   const el = document.getElementById("sport-subnav");
@@ -92,8 +147,14 @@ const expandedCountries = new Set();
 
 function toggleSportExpand(sportId, ev) {
   ev.stopPropagation();
-  if (expandedSports.has(sportId)) expandedSports.delete(sportId);
-  else expandedSports.add(sportId);
+  if (expandedSports.has(sportId)) {
+    expandedSports.delete(sportId);
+  } else {
+    expandedSports.add(sportId);
+    // Carrega a árvore país→ligas real na primeira vez que o utilizador abre Futebol; entretanto
+    // o menu mostra a lista estática (renderSportsMenu trata disso), depois troca sozinho.
+    if (sportId === "football") loadFootballCountriesTree().then(() => renderSportsMenu());
+  }
   renderSportsMenu();
 }
 function toggleCountryExpand(country, ev) {
@@ -133,7 +194,14 @@ function renderSportsMenu() {
       </div>`;
     if (!hasChildren || !isExpanded) return header;
 
-    const countries = Object.entries(FOOTBALL_LEAGUES_BY_COUNTRY)
+    // Usa a árvore real (país→ligas dos jogos reais) assim que carregada; até lá, ou se vier
+    // vazia (ex: sem PULSESCORE_API_KEY), cai para a lista estática curada.
+    const countriesData =
+      footballCountriesTree && footballCountriesTree.length
+        ? footballCountriesTree.map((c) => [c.label, c.leagues])
+        : Object.entries(FOOTBALL_LEAGUES_BY_COUNTRY);
+
+    const countries = countriesData
       .map(([country, leagues]) => {
         const countryOpen = expandedCountries.has(country);
         const leaguesHtml = countryOpen
@@ -802,7 +870,35 @@ function renderMatchTracker(e) {
       ${hasScore ? `<div class="mt-score">${e.homeScore} - ${e.awayScore}</div>` : '<div style="color:var(--muted);font-size:.85rem">vs</div>'}
       <div class="mt-team">${e.away}</div>
     </div>
-    <div class="mt-period">${e.minuteOrPeriod}</div>`;
+    <div class="mt-period">${e.minuteOrPeriod}</div>
+    ${renderStatsRow(e.statistics)}`;
+}
+
+// Cartões amarelos/vermelhos + cantos, quando a bookmaker os devolve (ver LiveEvent.statistics
+// em types.ts — vem da paddypower, não existia na 10bet). Ausente => nada é desenhado, em vez de
+// inventar zeros para um jogo sem estes dados.
+function renderStatsRow(stats) {
+  if (!stats) return "";
+  const h = stats.home || {};
+  const a = stats.away || {};
+  return `
+    <div class="mt-stats">
+      <div class="mt-stats-col home">
+        <div>${h.corners ?? 0}</div>
+        <div>🟨 ${h.yellowCards ?? 0}</div>
+        <div>🟥 ${h.redCards ?? 0}</div>
+      </div>
+      <div class="mt-stats-labels">
+        <div>Cantos</div>
+        <div>Amarelos</div>
+        <div>Vermelhos</div>
+      </div>
+      <div class="mt-stats-col away">
+        <div>${a.corners ?? 0}</div>
+        <div>🟨 ${a.yellowCards ?? 0}</div>
+        <div>🟥 ${a.redCards ?? 0}</div>
+      </div>
+    </div>`;
 }
 
 function renderMarketGroups(e) {
