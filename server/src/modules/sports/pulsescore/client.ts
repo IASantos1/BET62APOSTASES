@@ -46,25 +46,27 @@ import type { LiveEvent, LiveOdds, Sport } from "../types";
  * reason as fetchLeagueEvents() — no response body was provided for either yet.
  *
  * The same endpoints were then confirmed again under /10bet/tennis/..., /10bet/volleyball/...,
- * /10bet/mma/..., /10bet/ice-hockey/... and /10bet/basketball/... — same shape every time,
- * just a different sport slug, which confirms the path is uniformly /{bookmaker}/{sport}/...
- * for any sport rather than something sport-specific. The MMA and basketball samples used real
- * league names ("UFC", "NBA"); the volleyball and ice-hockey ones used the literal placeholder
- * text "league name" (URL-encoded), clearly a Swagger/OpenAPI "Try it out" default rather than
- * a real league. If these curl commands are being copied from a Swagger UI, hitting "Execute"
- * there would capture the real response body, which is the one thing still missing to fully
- * confirm this integration — no response body has been provided for any endpoint except the
- * very first leagues sample.
+ * /10bet/mma/..., /10bet/ice-hockey/..., /10bet/basketball/... and /10bet/baseball/... — same
+ * shape every time, just a different sport slug, which confirms the path is uniformly
+ * /{bookmaker}/{sport}/... for any sport rather than something sport-specific. The MMA,
+ * basketball and baseball samples used real league names ("UFC", "NBA", "CPBL" — Chinese
+ * Professional Baseball League); the volleyball and ice-hockey ones used the literal
+ * placeholder text "league name" (URL-encoded), clearly a Swagger/OpenAPI "Try it out" default
+ * rather than a real league. If these curl commands are being copied from a Swagger UI,
+ * hitting "Execute" there would capture the real response body, which is the one thing still
+ * missing to fully confirm this integration — no response body has been provided for any
+ * endpoint except the very first leagues sample.
  *
  * NEEDS VALIDATION — not covered by any sample yet, still assumptions:
- *   - The sport slug is confirmed for football ("soccer"), tennis ("tennis"), volleyball
- *     ("volleyball"), MMA ("mma"), ice hockey ("ice-hockey") and basketball ("basketball").
- *     Slugs below for the other 2 sports are best-effort guesses; if wrong, that sport's fetch
- *     just comes back empty/404, which fetchEvents() below swallows per-sport rather than
- *     failing the whole poll cycle.
- *   - Whether Fórmula 1 exists under this bookmaker in this leagues/home-away shape — MMA
- *     turned out to fit fine (fighter vs fighter), but motorsport still doesn't map cleanly to
- *     a two-competitor model, so this one specifically stays an open question.
+ *   - The sport slug is confirmed for every sport except Fórmula 1 — football ("soccer"),
+ *     tennis ("tennis"), volleyball ("volleyball"), MMA ("mma"), ice hockey ("ice-hockey"),
+ *     basketball ("basketball") and baseball ("baseball") have all been seen in real requests.
+ *     `formula1: "formula-1"` below is still a guess; if wrong, that sport's fetch just comes
+ *     back empty/404, which fetchEvents() below swallows per-sport rather than failing the
+ *     whole poll cycle.
+ *   - Whether Fórmula 1 exists under this bookmaker in this leagues/home-away shape at all — 7
+ *     out of 8 sports turned out to fit fine (even MMA, fighter vs fighter), but motorsport
+ *     still doesn't map cleanly to a two-competitor model, so this one specifically stays open.
  *   - What a `live:true` event's payload adds for score/clock — the sample only shows
  *     `live:false` (pré-jogo) events, so homeScore/awayScore/minuteOrPeriod are best-effort
  *     defaults for live events until a live sample is seen.
@@ -77,7 +79,7 @@ const SPORT_SLUGS: Record<Sport, string> = {
   tennis: "tennis", // CONFIRMED
   basketball: "basketball", // CONFIRMED
   ice_hockey: "ice-hockey", // CONFIRMED
-  baseball: "baseball",
+  baseball: "baseball", // CONFIRMED
   volleyball: "volleyball", // CONFIRMED
   formula1: "formula-1",
   mma: "mma", // CONFIRMED (also confirms MMA exists in this leagues/events shape, e.g. league "UFC")
