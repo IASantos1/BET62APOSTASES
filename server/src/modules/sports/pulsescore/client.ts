@@ -42,8 +42,13 @@ import type { LiveEvent, LiveOdds, Sport } from "../types";
  * one. The second fetches a single event by its numeric id directly, which is the interesting
  * one: it's the natural way to refresh one event's odds/detail on demand (e.g. when a user
  * opens the Match Tracker for it) instead of relying on the last bulk poll. Implemented as
- * `fetchEventsFlat()` and `fetchEventById()` below, both parsed defensively for the same
- * reason as fetchLeagueEvents() — no response body was provided for either yet.
+ * `fetchEventsFlat()` and `fetchEventById()` below.
+ *
+ * The flat /events response was later confirmed with a real body (850 total soccer events,
+ * page of 5 real matches, each with 5–17 markets depending on league popularity) — shape
+ * matches exactly what was assumed: `{ total, page, limit, totalPages, hasNextPage,
+ * hasPrevPage, events: [...PulsescoreEvent] }`. /events/{id} (single event) is still
+ * unconfirmed, parsed defensively the same way as fetchLeagueEvents().
  *
  * The same endpoints were then confirmed again under /10bet/tennis/..., /10bet/volleyball/...,
  * /10bet/mma/..., /10bet/ice-hockey/..., /10bet/basketball/... and /10bet/baseball/... — same
@@ -264,9 +269,12 @@ async function fetchEventsFlatPage(sport: Sport, page: number, limit: number): P
 
 /**
  * Flat, paginated event list for a sport — an alternative to fetchEvents() that skips the
- * leagues nesting. NEEDS VALIDATION: response shape assumed to mirror the leagues endpoint's
- * pagination fields with an `events` array instead of `leagues`; parsed defensively via
- * extractEvents() so a slightly different shape (or a bare array) still works.
+ * leagues nesting. CONFIRMED via a real sample (GET /soccer/events?page=1&limit=5, 850 total
+ * events, 5 real matches with 5–17 markets each): response shape is exactly
+ * `{ total, page, limit, totalPages, hasNextPage, hasPrevPage, events: [...] }`, matching
+ * PulsescoreFlatEventsResponse/PulsescoreEvent as coded — no changes needed. The sample also
+ * surfaced canonicalMarket values not seen before (CORNERS_OVER_UNDER, CORRECT_SCORE), handled
+ * fine since markets are never filtered by a fixed whitelist.
  */
 export async function fetchEventsFlat(sport: Sport, opts: { maxPages?: number; limit?: number } = {}): Promise<LiveEvent[]> {
   const maxPages = opts.maxPages ?? 3;
