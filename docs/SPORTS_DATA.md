@@ -397,6 +397,51 @@ Sox`), não sempre "0"-"0". A forma dos dados (`moreInfo` com chaves `FI`/`NA`/`
   relógio deste desporto continua a cair no fallback "AO VIVO" (a vermelho, já implementado) até
   surgir uma amostra com esse campo preenchido.
 
+### Beisebol não tem empate — corrigida a escolha do mercado principal do cartão
+
+O utilizador lembrou uma regra real do desporto: **um jogo de beisebol nunca empata** (é sempre
+casa ou fora, prolonga-se em innings extra se necessário), ao contrário do 1X2 do futebol. A
+amostra real da bet365 confirmou um risco concreto disto correr mal: o evento **não tinha nenhum
+mercado `MATCH_RESULT`** — o moneyline vinha só como duas seleções ("Money") dentro de um mercado
+misto ("Game Lines", junto com Run Line e Total) — e havia um mercado real separado, "3-Way
+Handicap", com uma seleção genuína "Tie - ARI Diamondbacks" (empate no hándicap de corridas, um
+tipo de aposta real, não um erro de dados). Sem mercado principal reconhecido,
+`orderMarketsWithPrimaryFirst()` escolhia às cegas o primeiro mercado do array para a
+pré-visualização do cartão (que não mostra o nome do mercado) — se esse "3-Way Handicap" alguma
+vez calhasse em primeiro lugar, o cartão pareceria um 1X2 com empate, o que não existe no
+beisebol.
+
+Corrigido em `pulsescore/client.ts`: `orderMarketsWithPrimaryFirst()` agora, quando não encontra
+nenhum mercado principal reconhecido, empurra para trás qualquer mercado com uma seleção de
+empate (`canonicalOutcome === "DRAW"` ou `rawName` a conter "tie"/"empate") em vez de o deixar
+ficar em primeiro por acaso. Testado com a amostra real: nos 5 eventos de beisebol testados,
+"Game Lines" já vinha primeiro por acaso (não tem empate), por isso o comportamento visível não
+mudou nesta amostra específica — mas a proteção evita que aconteça com outra ordem de array.
+
+⚠️ **Nota**: mesmo com esta correção, "Game Lines" (o mercado que acaba por ser mostrado como
+pré-visualização) continua a ser um mercado misto (Run Line + Total + Money juntos), não um
+1X2/moneyline limpo — a bet365 não expõe um mercado moneyline autónomo para este jogo.
+
+### Seguimento: extraído o moneyline limpo do mercado misto (com um limite deliberado)
+
+O utilizador colou exatamente o que a app real estava a mostrar — confirmou o problema descrito
+acima ("Run Line 1.63 / Total 1.80 / Money 1.04" nos 5 cartões de beisebol da bet365). Como o
+nome de seleção `"Money"` apareceu consistente nos 5 eventos reais (Nicaragua CNBS, MLB x3,
+Triple A Minor League), `withSyntheticMoneyline()` (`pulsescore/client.ts`) passou a extrair as
+duas seleções `"Money"` para o seu próprio mercado sintético `MATCH_RESULT`/"Moneyline" — sem
+inventar nenhuma odd, só reagrupando as duas que já vinham reais — e a removê-las do mercado
+misto original (não ficam duplicadas na lista completa de mercados). Só ativa quando não existe
+já um mercado `MATCH_RESULT` real, para não interferir com futebol/ténis/etc.
+
+⚠️ **Limite deliberado**: as duas seleções ficam com o nome real `"Money"` tal como vêm — **não**
+foram trocadas pelo nome da equipa (casa/fora). Ao tentar confirmar qual pertence a qual equipa,
+descobriu-se que `canonicalOutcome: "HOME"` da bet365, no mesmo evento, aponta para o Arizona
+Diamondbacks — que o campo `event.home` diz ser a equipa **visitante** (Boston Red Sox é a casa
+segundo o próprio evento). Ou seja, os campos HOME/AWAY (e o `moreInfo.OR` associado) desta
+bookmaker não são fiáveis para saber qual `"Money"` pertence a qual equipa neste mercado — atribuir
+a odd errada à equipa errada seria pior do que mostrar "Money" duas vezes, por isso ficou por
+resolver deliberadamente em vez de adivinhar.
+
 ## ⚠️ Ainda por confirmar
 
 1. **Slug exato da Fórmula 1** dentro de `unibetau` — continua uma estimativa (`formula-1`).
@@ -458,6 +503,33 @@ Ficheiros:
   **não está implementada** — é preciso um mapeamento entre os dois provedores, tipicamente
   por nomes de equipa + hora de início, ou uma tabela de correspondência mantida
   manualmente).
+
+### Corrigido: Match Tracker podia perder mercados ao "atualizar" um evento (todos os desportos)
+
+O utilizador reportou que, no pré-jogo, só apareciam as odds principais — nenhum mercado extra —
+independentemente do desporto. Investigado o caminho `openMarket()` → `renderMarketGroups()` em
+`web/app.js`: a lista de pré-jogo/ao vivo já chega rica em mercados (confirmado com uma amostra
+real de beisebol enviada pelo utilizador: 23–34 mercados por jogo via `GET /events?page=&limit=`),
+e `renderMarketGroups()` desenha `e.odds` inteiro sem cortar nada — por isso o problema não estava
+nesses dois pontos.
+
+O suspeito é `openMarket()`: assim que a página do Match Tracker abre, chama sempre
+`Bet62Api.refreshEvent()` → `GET /events/{id}?sport=` no backend (`fetchEventById()` em
+`pulsescore/client.ts`) para trazer dados frescos, e **substituía incondicionalmente** os mercados
+já mostrados pelo que esse pedido devolvesse. Esse endpoint em particular nunca teve a forma da
+resposta confirmada com um pedido real (está assinalado como tal no código desde o início desta
+integração) — ao contrário do endpoint de lista, que já foi confirmado por duas vezes. Se ele
+devolver menos mercados (ou vier numa forma que o parser interprete de forma mais pobre), a troca
+incondicional apagava os mercados ricos que já estavam no ecrã, sobrando só o principal — em
+qualquer desporto, porque é o mesmo código partilhado por todos.
+
+**Correção** (`web/app.js`, `openMarket()`): antes de trocar `currentMarketEvent` pelo resultado
+do refresh, compara o número de mercados. Só troca a lista de mercados se a resposta fresca vier
+com pelo menos tantos quanto já tínhamos; caso contrário mantém os mercados antigos (mais ricos) e
+só deixa os outros campos (placar, relógio, estatísticas) atualizarem-se com os dados frescos —
+esses sim beneficiam de vir sempre atualizados. Continua por confirmar com um pedido real a
+`GET /events/{id}` o que este endpoint devolve de facto; esta correção protege a UI
+independentemente da resposta, sem inventar dados.
 
 ## Testado nesta build
 

@@ -30,7 +30,10 @@
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{background:var(--bg)}
 body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding-bottom:env(safe-area-inset-bottom);transition:background .3s,color .3s}
-.header{position:sticky;top:0;z-index:100;background:rgba(12,12,14,.97);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 20px}
+/* padding-top inclui env(safe-area-inset-top): em modo PWA standalone (viewport-fit=cover +
+   status-bar-style=black-translucent no <head>) o conteúdo desenha por baixo da barra de estado
+   do telemóvel (relógio/bateria) — sem isto o cabeçalho fica escondido atrás dela. */
+.header{position:sticky;top:0;z-index:100;background:rgba(12,12,14,.97);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:calc(12px + env(safe-area-inset-top)) 16px 12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 20px}
 :root[data-theme="light"] .header{background:rgba(255,255,255,.95)}
 .header-left{display:flex;align-items:center;gap:12px}
 .back-btn,.menu-btn{background:none;border:none;color:var(--text);font-size:1.25rem;cursor:pointer;padding:4px}
@@ -245,12 +248,6 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .betslip-fab{display:none;position:fixed;right:18px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:150;width:46px;height:46px;background:var(--red);color:#fff;border:none;border-radius:50%;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(0,0,0,.35);cursor:pointer;font-size:.9rem;font-weight:700;animation:betslip-pulse 1.8s ease-in-out infinite}
 @keyframes betslip-pulse{0%,100%{box-shadow:0 0 0 0 rgba(230,48,39,.55),0 6px 16px rgba(0,0,0,.35)}50%{box-shadow:0 0 0 10px rgba(230,48,39,0),0 6px 16px rgba(0,0,0,.35)}}
 @media (prefers-reduced-motion: reduce){.betslip-fab{animation:none}}
-/* Na página de Mercados já há a barra inline com "Abrir Boletim" — sobe a bola para não ficar em cima dela. */
-body.on-market-page .betslip-fab{bottom:calc(78px + env(safe-area-inset-bottom))}
-.betslip-inline-bar{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;margin:20px -16px -16px}
-.betslip-inline-bar span{font-size:.82rem;color:var(--muted)}
-.betslip-inline-bar button{background:var(--red);color:#fff;border:none;padding:10px 20px;border-radius:10px;font-weight:700;cursor:pointer;font-size:.85rem}
-@media (min-width: 901px){.betslip-inline-bar{display:none}}
 </style>
 </head>
 <body>
@@ -576,12 +573,6 @@ body.on-market-page .betslip-fab{bottom:calc(78px + env(safe-area-inset-bottom))
     </div>
     <div class="match-tracker" id="match-tracker"></div>
     <div id="market-groups"></div>
-    <!-- Resumo compacto no fim da página de mercados (mobile/PWA); o boletim completo com
-         Simples/Múltipla vive no menu lateral direito (desktop) / drawer (mobile). -->
-    <div class="betslip-inline-bar" id="betslip-inline-bar">
-        <span id="betslip-count">Nenhuma seleção</span>
-        <button onclick="openRightDrawer()">Abrir Boletim</button>
-    </div>
 </div>
 
 <div id="page-casino" class="page hidden" style="text-align:center;padding:60px 20px;color:var(--muted)">Casino — em desenvolvimento</div>

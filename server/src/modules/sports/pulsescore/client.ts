@@ -522,13 +522,33 @@ function normalizeMarket(m: PulsescoreMarket): LiveOdds {
 // odds[0]) could show an unrelated market. Moves the primary market to the front when present.
 const PRIMARY_MARKET_NAMES = new Set(["match_result", "match_winner", "1x2"]);
 
-export function orderMarketsWithPrimaryFirst<T extends { canonicalMarket?: string }>(markets: T[]): T[] {
+// CONFIRMED numa amostra real de beisebol (bet365): o evento não tinha NENHUM mercado
+// MATCH_RESULT — o moneyline vinha só como duas seleções soltas dentro de um mercado misto
+// ("Game Lines"). Sem mercado principal reconhecido, o primeiro mercado do array acabava por ser
+// escolhido às cegas para a pré-visualização do cartão (que não mostra o nome do mercado) — e
+// calhou ser "3-Way Handicap" com uma seleção "Tie - ...", fazendo o cartão parecer um 1X2 com
+// empate, o que não existe no beisebol (é sempre casa/fora, um jogo de beisebol não empata).
+function hasTieSelection(selections: { canonicalOutcome?: string; rawName?: string }[] | undefined): boolean {
+  return (selections ?? []).some((s) => s.canonicalOutcome === "DRAW" || /\btie\b|empate/i.test(s.rawName ?? ""));
+}
+
+export function orderMarketsWithPrimaryFirst<T extends { canonicalMarket?: string; selections?: { canonicalOutcome?: string; rawName?: string }[] }>(
+  markets: T[]
+): T[] {
   const primaryIdx = markets.findIndex((m) => m.canonicalMarket && PRIMARY_MARKET_NAMES.has(m.canonicalMarket.toLowerCase()));
-  if (primaryIdx <= 0) return markets;
-  const ordered = [...markets];
-  const [primary] = ordered.splice(primaryIdx, 1);
-  ordered.unshift(primary!);
-  return ordered;
+  if (primaryIdx > 0) {
+    const ordered = [...markets];
+    const [primary] = ordered.splice(primaryIdx, 1);
+    ordered.unshift(primary!);
+    return ordered;
+  }
+  if (primaryIdx === 0) return markets;
+
+  // Nenhum mercado principal reconhecido: evita que um mercado com empate fique por acidente em
+  // primeiro — passa para trás os que têm empate, mantendo a ordem original dentro de cada grupo.
+  const withoutTie = markets.filter((m) => !hasTieSelection(m.selections));
+  const withTie = markets.filter((m) => hasTieSelection(m.selections));
+  return withoutTie.length ? [...withoutTie, ...withTie] : markets;
 }
 
 // "H"/"A" score strings -> number, only when both sides parse cleanly — otherwise undefined
@@ -560,8 +580,48 @@ function mapStatistics(stats: PulsescoreStatistics | undefined) {
   };
 }
 
+// CONFIRMED em 5 eventos reais de beisebol na bet365 (Nicaragua CNBS, MLB x3, Triple A Minor
+// League): quando não há mercado MATCH_RESULT, o moneyline aparece sempre com seleções chamadas
+// exatamente "Money" (nome consistente nos 5), misturado dentro de um mercado "Game Lines" junto
+// com Run Line (handicap) e Total. Isso fazia o cartão mostrar "Run Line 1.63 / Total 1.80 /
+// Money 1.04" em vez de um casa/fora limpo — confirmado pelo utilizador a ver isto na app real.
+// Extrai as seleções "Money" para o seu próprio mercado (sem inventar nada, só reagrupa odds
+// reais que já vinham na resposta) e remove-as do mercado misto original, para não aparecerem
+// duplicadas na lista completa de mercados do Match Tracker.
+//
+// DELIBERADAMENTE não trocado o rótulo "Money" pelo nome da equipa (casa/fora): confirmado no
+// mesmo evento que `canonicalOutcome: "HOME"` da bet365 aponta para o Arizona Diamondbacks, que
+// o próprio evento (`event.home`) diz ser a equipa VISITANTE (Boston Red Sox é a casa) — os
+// campos HOME/AWAY/OR desta bookmaker não são fiáveis para saber qual "Money" pertence a qual
+// equipa. Atribuir a odd à equipa errada seria pior do que mostrar "Money" duas vezes, por isso
+// mantém-se o nome real da seleção tal como veio, sem adivinhar.
+function withSyntheticMoneyline(markets: PulsescoreMarket[]): PulsescoreMarket[] {
+  const hasMatchResult = markets.some((m) => m.canonicalMarket && PRIMARY_MARKET_NAMES.has(m.canonicalMarket.toLowerCase()));
+  if (hasMatchResult) return markets;
+
+  for (let i = 0; i < markets.length; i++) {
+    const m = markets[i]!;
+    const moneySelections = m.selections.filter((s) => /^money$/i.test(s.rawName));
+    if (moneySelections.length < 2) continue;
+
+    const rest = m.selections.filter((s) => !/^money$/i.test(s.rawName));
+    const synthetic: PulsescoreMarket = {
+      canonicalMarket: "MATCH_RESULT",
+      rawName: "Moneyline",
+      period: m.period,
+      isActive: true,
+      marketId: `${m.marketId}.money`,
+      selections: moneySelections,
+    };
+    const withoutMoney = markets.filter((_, idx) => idx !== i);
+    if (rest.length > 0) withoutMoney.splice(i, 0, { ...m, selections: rest });
+    return [synthetic, ...withoutMoney];
+  }
+  return markets;
+}
+
 function normalizeEvent(e: PulsescoreEvent, sport: Sport): LiveEvent {
-  const activeMarkets = orderMarketsWithPrimaryFirst(e.markets.filter((m) => m.isActive));
+  const activeMarkets = orderMarketsWithPrimaryFirst(withSyntheticMoneyline(e.markets.filter((m) => m.isActive)));
   return {
     id: `pulsescore:${e.eventId}`,
     sport,

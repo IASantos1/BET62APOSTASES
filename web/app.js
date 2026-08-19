@@ -341,7 +341,6 @@ function oddsArrowHtml(key, value) {
 function showPage(page) {
   if (pageHistory[pageHistory.length - 1] !== page) pageHistory.push(page);
   closeDrawers();
-  document.body.classList.toggle("on-market-page", page === "market");
 
   ["destaques", "profile", "esportes", "aovivo", "casino", "promocao", "market"].forEach((p) => {
     const el = document.getElementById("page-" + p);
@@ -368,6 +367,44 @@ function goBack() {
     showPage("destaques");
   }
 }
+
+// Gesto "arrastar da borda esquerda para voltar" (como no iOS), pedido pelo utilizador além do
+// botão de seta. Só ativa quando o toque começa perto da borda esquerda do ecrã — não em
+// qualquer ponto do ecrã — para não entrar em conflito com listas com scroll horizontal que já
+// existem (chips de desporto, carrossel do casino, linhas de odds, etc.).
+(function setupSwipeBack() {
+  const EDGE_PX = 24;
+  const MIN_DX = 70;
+  let startX = null;
+  let startY = null;
+  let tracking = false;
+
+  document.addEventListener(
+    "touchstart",
+    (ev) => {
+      const t = ev.touches[0];
+      tracking = t.clientX <= EDGE_PX;
+      startX = tracking ? t.clientX : null;
+      startY = tracking ? t.clientY : null;
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    "touchend",
+    (ev) => {
+      if (!tracking || startX === null) return;
+      tracking = false;
+      const t = ev.changedTouches[0];
+      const dx = t.clientX - startX;
+      const dy = Math.abs(t.clientY - startY);
+      if (dx > MIN_DX && dx > dy * 1.5) goBack();
+      startX = null;
+      startY = null;
+    },
+    { passive: true }
+  );
+})();
 
 function toggleAccordion(header) {
   header.closest(".menu-item").classList.toggle("open");
@@ -906,10 +943,21 @@ function openMarket(eventId, isLive) {
   // Eventos reais da Pulsescore: pede dados frescos em vez de confiar só na última leitura
   // em cache (snapshot ao vivo ou lista de pré-jogo).
   if (event.source === "pulsescore") {
+    const marketsBeforeRefresh = event.odds || [];
     Bet62Api.refreshEvent(eventId, event.sport)
       .then((res) => {
         if (pageHistory[pageHistory.length - 1] !== "market" || !currentMarketEvent || currentMarketEvent.id !== eventId) return;
-        currentMarketEvent = res.event;
+        const refreshed = res.event;
+        // /events/{id} (usado aqui) nunca teve a forma da resposta confirmada com um pedido
+        // real, ao contrário da lista de pré-jogo/ao vivo (essa sim, confirmada rica — até 34
+        // mercados numa amostra real de beisebol). Para não arriscar substituir mercados já
+        // mostrados por uma resposta mais pobre deste endpoint, só troca a lista de mercados se
+        // vier com pelo menos tantos quanto já tínhamos; os restantes campos (placar, relógio,
+        // estatísticas) atualizam sempre, porque esses sim ganham em ser frescos.
+        if (!refreshed.odds || refreshed.odds.length < marketsBeforeRefresh.length) {
+          refreshed.odds = marketsBeforeRefresh;
+        }
+        currentMarketEvent = refreshed;
         currentMarketEvent._isLive = isLive;
         renderMarketPage();
       })
@@ -1087,9 +1135,6 @@ function renderBetslipPanel() {
     fabCount.textContent = selections.length;
     fab.classList.toggle("hidden", selections.length === 0);
   }
-  const inlineCount = document.getElementById("betslip-count");
-  if (inlineCount) inlineCount.textContent = selections.length ? `${selections.length} seleção(ões)` : "Nenhuma seleção";
-
   const eventIds = selections.map(([, s]) => s.eventId);
   const hasDuplicateEvent = new Set(eventIds).size < eventIds.length;
   const canMultipla = selections.length >= 2 && !hasDuplicateEvent;
