@@ -161,12 +161,10 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 </head>
 <body>
 
-<script>
-window.BET62_CONFIG = {
-  API_BASE: (window.localStorage.getItem('bet62_api_base')) || 'http://localhost:4000/api',
-  WS_BASE: (window.localStorage.getItem('bet62_ws_base')) || 'ws://localhost:4000'
-};
-</script>
+<!-- Gerado em runtime por web/server.js a partir de BET62_API_BASE / BET62_WS_BASE
+     (variáveis de ambiente do serviço "web" no Railway). Faz fallback para localhost
+     se aberto diretamente como ficheiro estático sem esse servidor. -->
+<script src="/config.js" onerror="window.BET62_CONFIG = { API_BASE: localStorage.getItem('bet62_api_base') || 'http://localhost:4000/api', WS_BASE: localStorage.getItem('bet62_ws_base') || 'ws://localhost:4000' };"></script>
 
 <!-- HEADER -->
 <header class="header">
