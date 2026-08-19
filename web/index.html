@@ -146,8 +146,12 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .sets-grid{display:flex;flex-direction:column;gap:5px}
 .sets-grid-row{display:flex;align-items:center;gap:8px}
 .sets-grid-name{flex:1;min-width:0;display:flex;align-items:center;gap:6px;font-weight:600;font-size:.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Largura fixa em rem (não em em): a linha de rótulos (S1/S2/S3) usa uma fonte mais pequena que
+   a dos números, então uma largura em "em" dava colunas com tamanhos diferentes entre as duas
+   linhas e desalinhava tudo. Em rem, a largura é sempre igual independentemente do font-size de
+   cada linha, garantindo cada Sn perfeitamente centrado por cima do número da equipa em baixo. */
 .sets-grid-header .sets-grid-col{color:var(--muted);font-size:.62rem;text-transform:uppercase;letter-spacing:.03em}
-.sets-grid-col{width:1.7em;flex-shrink:0;text-align:center;font-family:'Bebas Neue',sans-serif;font-size:1.05rem;color:var(--gold);font-variant-numeric:tabular-nums}
+.sets-grid-col{width:1.9rem;flex-shrink:0;text-align:center;font-family:'Bebas Neue',sans-serif;font-size:1.05rem;color:var(--gold);font-variant-numeric:tabular-nums}
 .odds-arrow{display:inline-block;font-size:.7em;margin-left:3px;animation:odds-flash 2s ease-out}
 .odds-arrow.up{color:var(--green)}
 .odds-arrow.down{color:var(--red)}
