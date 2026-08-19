@@ -206,14 +206,26 @@ interface PulsescoreTeamStatistics {
   redCards?: number;
   corners?: number;
 }
+// Ténis: jogos ganhos por set, um índice por set (ex: home:[6,6], away:[4,6] = 1º set 6-4,
+// 2º set 6-6) — CONFIRMED numa amostra real de /paddypower/live-events?sport=tennis, forma
+// própria do ténis, distinta de `football` acima.
+interface PulsescoreSetsStatistics {
+  home: number[];
+  away: number[];
+  homeServe?: boolean;
+}
 interface PulsescoreStatistics {
   football?: { home: PulsescoreTeamStatistics; away: PulsescoreTeamStatistics };
+  sets?: PulsescoreSetsStatistics;
 }
 // Score as separate string fields per side — CONFIRMED shape for paddypower's REST
 // /live-events, distinct from the official WS docs' single "H-A" string (see wsClient.ts).
+// No ténis, home/away são os pontos do jogo atual (ex: "40"/"15") — `info` (ex: "Set 1") repete
+// o mesmo período de `matchClock.period`, por isso não é reaproveitado à parte.
 interface PulsescoreScore {
   home: string;
   away: string;
+  info?: string;
 }
 interface PulsescoreEvent {
   sport: string;
@@ -525,8 +537,12 @@ function formatMatchClock(clock: PulsescoreMatchClock | undefined, fallback: str
 }
 
 function mapStatistics(stats: PulsescoreStatistics | undefined) {
-  if (!stats?.football) return undefined;
-  return { home: stats.football.home ?? {}, away: stats.football.away ?? {} };
+  if (!stats?.football && !stats?.sets) return undefined;
+  return {
+    home: stats?.football?.home ?? {},
+    away: stats?.football?.away ?? {},
+    sets: stats?.sets ? { home: stats.sets.home, away: stats.sets.away, homeServe: stats.sets.homeServe } : undefined,
+  };
 }
 
 function normalizeEvent(e: PulsescoreEvent, sport: Sport): LiveEvent {

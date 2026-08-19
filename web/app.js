@@ -68,6 +68,16 @@ function countryLabel(code) {
   return code;
 }
 
+// Código ISO de 2 letras -> emoji de bandeira (dois "regional indicator symbols" Unicode, ex:
+// "US" -> 🇺🇸). Sem imagens/lista para manter — funciona para qualquer código real.
+function flagEmoji(code) {
+  if (!code || code.length !== 2) return "";
+  const upper = code.toUpperCase();
+  if (!/^[A-Z]{2}$/.test(upper)) return "";
+  const codePoints = [...upper].map((c) => 0x1f1e6 + (c.charCodeAt(0) - 65));
+  return String.fromCodePoint(...codePoints);
+}
+
 let footballCountriesTree = null; // null = ainda não carregado; [] = carregado mas vazio
 let footballCountriesTreeAt = 0;
 const FOOTBALL_TREE_TTL_MS = 5 * 60 * 1000;
@@ -772,6 +782,67 @@ function isClockMissing(e) {
   return e.status === "live" && (!e.minuteOrPeriod || e.minuteOrPeriod === "AO VIVO");
 }
 
+// Cartão "por sets": ativado por DADOS (statistics.sets presente), não por nome do desporto —
+// ténis tem sets confirmado num exemplo real; voleibol também se joga por sets no mundo real
+// (o utilizador tinha razão), por isso ativa-se sozinho assim que a bookmaker devolver
+// statistics.sets para voleibol também, sem precisar de código novo. Beisebol NÃO entra aqui —
+// joga-se por innings, não por sets, um conceito diferente (e a bookmaker não devolveria
+// statistics.sets para beisebol).
+// Nomes empilhados (casa em cima, fora em baixo) com bandeira, jogos do set atual alinhados à
+// direita de cada linha (mesma coluna em todos os cartões — sempre centralizado/alinhado), ponto
+// a indicar quem serve, e "Sn" (set atual) no canto superior direito.
+function renderSetsCard(e, clockClass, oddsHtml, icon) {
+  const sets = e.statistics.sets;
+  const lastIdx = sets.home.length - 1;
+  const homeSetScore = lastIdx >= 0 ? sets.home[lastIdx] : null;
+  const awaySetScore = lastIdx >= 0 ? sets.away[lastIdx] : null;
+  const homeServe = sets.homeServe === true;
+  const awayServe = sets.homeServe === false;
+  const setLabel = e.minuteOrPeriod.replace(/^Set /, "S");
+  const showPoints = typeof e.homeScore === "number" && typeof e.awayScore === "number";
+  const flag = flagEmoji(e.country);
+
+  return `
+    <div class="live-card" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
+      <div class="lc-top"><span>${icon} ${e.league}</span><span class="${clockClass}">${setLabel}</span></div>
+      ${showPoints ? `<div class="event-points">${e.homeScore} - ${e.awayScore}</div>` : ""}
+      <div class="event-rows">
+        <div class="event-row">
+          <span class="event-team">${flag} ${e.home}${homeServe ? '<span class="serve-dot"></span>' : ""}</span>
+          <span class="event-row-score">${homeSetScore ?? ""}</span>
+        </div>
+        <div class="event-row">
+          <span class="event-team">${flag} ${e.away}${awayServe ? '<span class="serve-dot"></span>' : ""}</span>
+          <span class="event-row-score">${awaySetScore ?? ""}</span>
+        </div>
+      </div>
+      ${oddsHtml}
+    </div>`;
+}
+
+// Cartão genérico (futebol, basquete, hóquei, beisebol, MMA, F1): casa e fora um embaixo do
+// outro, placar alinhado na mesma coluna à direita em todos os cartões — nunca um placar único
+// "empurrado" para um lado consoante o tamanho dos nomes das equipas.
+function renderGenericCard(e, clockClass, oddsHtml, icon) {
+  const hasScore = typeof e.homeScore === "number" && typeof e.awayScore === "number";
+  return `
+    <div class="live-card" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
+      <div class="lc-top"><span>${icon} ${e.league}</span><span class="${clockClass}">${e.minuteOrPeriod}</span></div>
+      ${
+        hasScore
+          ? `<div class="event-rows">
+              <div class="event-row"><span class="event-team">${e.home}</span><span class="event-row-score">${e.homeScore}</span></div>
+              <div class="event-row"><span class="event-team">${e.away}</span><span class="event-row-score">${e.awayScore}</span></div>
+            </div>`
+          : `<div class="event-rows">
+              <div class="event-row"><span class="event-team">${e.home}</span></div>
+              <div class="event-row"><span class="event-team">${e.away}</span></div>
+            </div>`
+      }
+      ${oddsHtml}
+    </div>`;
+}
+
 function renderLiveEvents() {
   const container = document.getElementById("live-list");
   const events = [...liveEventsById.values()].filter((e) => !selectedSport || e.sport === selectedSport);
@@ -784,28 +855,20 @@ function renderLiveEvents() {
     .map((e) => {
       const primaryMarket = e.odds?.[0];
       const odds = primaryMarket?.selections;
-      const showScore = typeof e.homeScore === "number" && typeof e.awayScore === "number";
       const clockClass = isClockMissing(e) ? "clock-missing" : "";
-      return `
-        <div class="live-card" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
-          <div class="lc-top"><span>${sportIcon[e.sport] || ""} ${e.league}</span><span class="${clockClass}">${e.minuteOrPeriod}</span></div>
-          <div class="lc-teams">
-            <span>${e.home}</span>
-            ${showScore ? `<span class="lc-score">${e.homeScore} - ${e.awayScore}</span>` : '<span style="color:var(--muted);font-size:.8rem">AO VIVO</span>'}
-            <span>${e.away}</span>
-          </div>
-          ${
-            odds
-              ? `<div class="lc-odds">${Object.entries(odds)
-                  .slice(0, 3)
-                  .map(([k, v]) => {
-                    const arrow = oddsArrowHtml(`${e.id}|${primaryMarket.market}|${k}`, Number(v));
-                    return `<div>${k}<br>${Number(v).toFixed(2)}${arrow}</div>`;
-                  })
-                  .join("")}</div>`
-              : ""
-          }
-        </div>`;
+      const icon = sportIcon[e.sport] || "";
+      const oddsHtml = odds
+        ? `<div class="lc-odds">${Object.entries(odds)
+            .slice(0, 3)
+            .map(([k, v]) => {
+              const arrow = oddsArrowHtml(`${e.id}|${primaryMarket.market}|${k}`, Number(v));
+              return `<div>${k}<br>${Number(v).toFixed(2)}${arrow}</div>`;
+            })
+            .join("")}</div>`
+        : "";
+
+      if (e.statistics?.sets) return renderSetsCard(e, clockClass, oddsHtml, icon);
+      return renderGenericCard(e, clockClass, oddsHtml, icon);
     })
     .join("");
 }

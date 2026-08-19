@@ -280,6 +280,52 @@ relógio real nenhum (`matchClock` ausente ou numa forma não reconhecida, fican
 VIVO"), o texto do relógio aparece a **vermelho** (`isClockMissing()` + classe `.clock-missing`)
 em vez de se confundir com um relógio normal — tanto no cartão de "Ao Vivo" como no Match Tracker.
 
+### Cartão de "Ao Vivo" próprio para ténis (nomes empilhados)
+
+Pedido pelo utilizador com uma captura de outra casa de apostas como referência: o cartão de
+ténis em "Ao Vivo" deixou de usar o layout genérico (casa/fora lado a lado) e passou a ter
+`renderTennisCard()` próprio em `web/app.js`:
+
+- Nome de casa em cima, nome de fora em baixo, cada um com a bandeira do país (`e.country`,
+  convertido para emoji via `flagEmoji()` — dois "regional indicator symbols" Unicode, sem lista
+  de países mantida à mão) e um ponto ao lado do nome de quem está a servir
+  (`statistics.sets.homeServe`).
+- Canto superior direito: o set atual, abreviado ("Set 2" → "S2") em vez do texto genérico da
+  Match Clock.
+- Centro: o placar de pontos do jogo atual (`e.homeScore`/`awayScore`, ex: "40 - 15").
+- Lado direito de cada linha de equipa: jogos ganhos no set atual (`statistics.sets.home`/`away`,
+  último índice do array).
+
+Isto exigiu capturar `statistics.sets` no backend, que antes só sabia ler `statistics.football`
+(cartões/cantos): `PulsescoreStatistics`/`WsEvent.statistics` (`client.ts`/`wsClient.ts`) e
+`LiveStatistics` (`types.ts`) ganharam o campo `sets: {home: number[], away: number[],
+homeServe?: boolean}` — CONFIRMADO na mesma amostra real de `/paddypower/live-events?sport=tennis`
+(ex: `sets: {home:[6,6], away:[4,6], homeServe:false}` = 1º set 6-4, 2º set 6-6, a servir a
+equipa "away"). Testado com Playwright reproduzindo os dois jogos reais da amostra (Zverev vs
+Paul, Fils vs De Minaur) — bandeira, "Sn", pontos e jogos por set todos corretos.
+
+### Generalizado: layout "por sets" ativado por dados, não por desporto — e cartões unificados
+
+O utilizador corrigiu um ponto: **voleibol também se joga por sets** no mundo real (tal como
+ténis), mas **beisebol não** — joga-se por *innings*, um conceito diferente. Em vez de fixar o
+layout acima só a `sport === "tennis"`, `renderLiveEvents()` (`web/app.js`) passou a decidir pelo
+próprio formato dos dados: `if (e.statistics?.sets) return renderSetsCard(...)`. Assim, assim que
+a paddypower devolver `statistics.sets` para voleibol (ainda não confirmado com uma amostra real —
+`/paddypower/live-events/sports` só mostrou eventos ao vivo de futebol/ténis/basebol/esports/
+ténis de mesa no momento testado), o cartão de voleibol muda sozinho para o layout de sets, sem
+precisar de mais código; beisebol nunca ativa este caminho, corretamente, por não ter essa forma
+de dados.
+
+Ao mesmo tempo, o cartão genérico (futebol, basquete, hóquei, beisebol, MMA, Fórmula 1) também foi
+redesenhado — pedido explícito do utilizador: em vez do antigo placar único ao centro (`"1 - 1"`
+entre os dois nomes, que podia parecer descentrado consoante o tamanho dos nomes das equipas),
+`renderGenericCard()` mostra casa/fora um embaixo do outro com o placar de cada equipa alinhado
+à direita, na mesma posição em todos os cartões da lista (`.event-row-score{min-width:1.4em;
+text-align:right}`) — mesmo com nomes de equipa muito compridos. `renderSetsCard()` e
+`renderGenericCard()` partilham as mesmas classes CSS (`.event-rows`/`.event-row`/`.event-team`/
+`.event-row-score`), só o cartão de sets acrescenta bandeira, ponto de serviço e a pontuação do
+jogo atual centralizada por cima.
+
 ⚠️ **Por confirmar**: a paddypower cobre basquete/hóquei de gelo/voleibol/MMA da mesma forma?
 `/paddypower/live-events/sports` só mostrou eventos ao vivo reais para futebol, ténis, basebol,
 esports e ténis de mesa no momento da amostra — os outros desportos podem simplesmente não ter

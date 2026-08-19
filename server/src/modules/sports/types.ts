@@ -30,9 +30,16 @@ export interface LiveTeamStats {
   corners?: number;
 }
 
+export interface LiveSetsStatistics {
+  home: number[]; // jogos ganhos por set, um índice por set (ex: [6,4] = 1º set 6, 2º set 4)
+  away: number[];
+  homeServe?: boolean;
+}
+
 export interface LiveStatistics {
   home: LiveTeamStats;
   away: LiveTeamStats;
+  sets?: LiveSetsStatistics; // só ténis — jogos por set + quem está a servir
 }
 
 export interface LiveEvent {
