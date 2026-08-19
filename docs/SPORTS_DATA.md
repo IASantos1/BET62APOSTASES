@@ -420,10 +420,27 @@ mudou nesta amostra específica — mas a proteção evita que aconteça com out
 
 ⚠️ **Nota**: mesmo com esta correção, "Game Lines" (o mercado que acaba por ser mostrado como
 pré-visualização) continua a ser um mercado misto (Run Line + Total + Money juntos), não um
-1X2/moneyline limpo — a bet365 não expõe um mercado moneyline autónomo para este jogo. Extrair só
-as seleções "Money" para construir uma pré-visualização sintética limpa seria possível mas fica
-por fazer — depende de "Money" ser mesmo o nome usado de forma consistente noutros
-eventos/desportos da bet365, o que só uma amostra maior confirmaria.
+1X2/moneyline limpo — a bet365 não expõe um mercado moneyline autónomo para este jogo.
+
+### Seguimento: extraído o moneyline limpo do mercado misto (com um limite deliberado)
+
+O utilizador colou exatamente o que a app real estava a mostrar — confirmou o problema descrito
+acima ("Run Line 1.63 / Total 1.80 / Money 1.04" nos 5 cartões de beisebol da bet365). Como o
+nome de seleção `"Money"` apareceu consistente nos 5 eventos reais (Nicaragua CNBS, MLB x3,
+Triple A Minor League), `withSyntheticMoneyline()` (`pulsescore/client.ts`) passou a extrair as
+duas seleções `"Money"` para o seu próprio mercado sintético `MATCH_RESULT`/"Moneyline" — sem
+inventar nenhuma odd, só reagrupando as duas que já vinham reais — e a removê-las do mercado
+misto original (não ficam duplicadas na lista completa de mercados). Só ativa quando não existe
+já um mercado `MATCH_RESULT` real, para não interferir com futebol/ténis/etc.
+
+⚠️ **Limite deliberado**: as duas seleções ficam com o nome real `"Money"` tal como vêm — **não**
+foram trocadas pelo nome da equipa (casa/fora). Ao tentar confirmar qual pertence a qual equipa,
+descobriu-se que `canonicalOutcome: "HOME"` da bet365, no mesmo evento, aponta para o Arizona
+Diamondbacks — que o campo `event.home` diz ser a equipa **visitante** (Boston Red Sox é a casa
+segundo o próprio evento). Ou seja, os campos HOME/AWAY (e o `moreInfo.OR` associado) desta
+bookmaker não são fiáveis para saber qual `"Money"` pertence a qual equipa neste mercado — atribuir
+a odd errada à equipa errada seria pior do que mostrar "Money" duas vezes, por isso ficou por
+resolver deliberadamente em vez de adivinhar.
 
 ## ⚠️ Ainda por confirmar
 
