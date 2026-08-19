@@ -766,12 +766,18 @@ function ensureLiveSocket() {
       data.events.forEach((e) => liveEventsById.set(e.id, e));
     } else if (data.type === "update") {
       liveEventsById.set(data.event.id, data.event);
+    } else if (data.type === "remove") {
+      // Jogo terminado (ou já não devolvido pela Pulsescore) — sai da página Ao Vivo assim que
+      // este frame chega, sem esperar por um reload (ver applySportSnapshot em hybridService.ts
+      // e o relay em websocket/gateway.ts).
+      liveEventsById.delete(data.id);
+      if (currentMarketEvent && currentMarketEvent.id === data.id) currentMarketEvent._finished = true;
     }
     renderLiveEvents();
     if (currentMarketEvent && liveEventsById.has(currentMarketEvent.id)) {
       currentMarketEvent = liveEventsById.get(currentMarketEvent.id);
-      if (pageHistory[pageHistory.length - 1] === "market") renderMarketPage();
     }
+    if (currentMarketEvent && pageHistory[pageHistory.length - 1] === "market") renderMarketPage();
   };
 }
 
@@ -788,32 +794,34 @@ function isClockMissing(e) {
 // statistics.sets para voleibol também, sem precisar de código novo. Beisebol NÃO entra aqui —
 // joga-se por innings, não por sets, um conceito diferente (e a bookmaker não devolveria
 // statistics.sets para beisebol).
-// Nomes empilhados (casa em cima, fora em baixo) com bandeira, jogos do set atual alinhados à
-// direita de cada linha (mesma coluna em todos os cartões — sempre centralizado/alinhado), ponto
-// a indicar quem serve, e "Sn" (set atual) no canto superior direito.
+// Nomes empilhados (casa em cima, fora em baixo) com bandeira, TODOS os sets já jogados visíveis
+// em colunas fixas lado a lado (S1, S2, S3... — pedido explícito: o placar de um set não some
+// quando o seguinte começa, fica lá marcado), ponto a indicar quem serve, e o set atual abreviado
+// ("Sn") no canto superior direito como indicador de estado ao vivo.
 function renderSetsCard(e, clockClass, oddsHtml, icon) {
   const sets = e.statistics.sets;
-  const lastIdx = sets.home.length - 1;
-  const homeSetScore = lastIdx >= 0 ? sets.home[lastIdx] : null;
-  const awaySetScore = lastIdx >= 0 ? sets.away[lastIdx] : null;
+  const numSets = Math.max(sets.home.length, sets.away.length);
   const homeServe = sets.homeServe === true;
   const awayServe = sets.homeServe === false;
   const setLabel = e.minuteOrPeriod.replace(/^Set /, "S");
   const showPoints = typeof e.homeScore === "number" && typeof e.awayScore === "number";
   const flag = flagEmoji(e.country);
 
+  const cols = (arr) =>
+    Array.from({ length: numSets }, (_, i) => `<span class="sets-grid-col">${arr[i] ?? ""}</span>`).join("");
+  const headerCols = Array.from({ length: numSets }, (_, i) => `<span class="sets-grid-col">S${i + 1}</span>`).join("");
+
   return `
     <div class="live-card" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
       <div class="lc-top"><span>${icon} ${e.league}</span><span class="${clockClass}">${setLabel}</span></div>
       ${showPoints ? `<div class="event-points">${e.homeScore} - ${e.awayScore}</div>` : ""}
-      <div class="event-rows">
-        <div class="event-row">
-          <span class="event-team">${flag} ${e.home}${homeServe ? '<span class="serve-dot"></span>' : ""}</span>
-          <span class="event-row-score">${homeSetScore ?? ""}</span>
+      <div class="sets-grid">
+        <div class="sets-grid-row sets-grid-header"><span class="sets-grid-name"></span>${headerCols}</div>
+        <div class="sets-grid-row">
+          <span class="sets-grid-name">${flag} ${e.home}${homeServe ? '<span class="serve-dot"></span>' : ""}</span>${cols(sets.home)}
         </div>
-        <div class="event-row">
-          <span class="event-team">${flag} ${e.away}${awayServe ? '<span class="serve-dot"></span>' : ""}</span>
-          <span class="event-row-score">${awaySetScore ?? ""}</span>
+        <div class="sets-grid-row">
+          <span class="sets-grid-name">${flag} ${e.away}${awayServe ? '<span class="serve-dot"></span>' : ""}</span>${cols(sets.away)}
         </div>
       </div>
       ${oddsHtml}
@@ -821,31 +829,44 @@ function renderSetsCard(e, clockClass, oddsHtml, icon) {
 }
 
 // Cartão genérico (futebol, basquete, hóquei, beisebol, MMA, F1): casa e fora um embaixo do
-// outro, placar alinhado na mesma coluna à direita em todos os cartões — nunca um placar único
-// "empurrado" para um lado consoante o tamanho dos nomes das equipas.
+// outro, com o placar ANTES do nome da equipa (à esquerda, não à direita — pedido explícito do
+// utilizador; o ténis/voleibol em renderSetsCard() mantém o placar do lado direito). Alinhado na
+// mesma coluna em todos os cartões, nunca "empurrado" consoante o tamanho dos nomes.
+// Cartõezinhos vermelhos junto ao nome da equipa (ex: "🟥" x1 por expulsão) — pedido explícito
+// do utilizador para o cartão principal de Ao Vivo, não só no Match Tracker (que já tinha isto
+// na linha de estatísticas). Repete o emoji por cada expulsão, não só uma vez, já que mais de um
+// jogador expulso no mesmo jogo acontece e cada um conta.
+function redCardsHtml(redCards) {
+  const n = Number(redCards) || 0;
+  // Retângulo fino em CSS em vez do emoji 🟥 (que é largo, um quadrado) — mais parecido com um
+  // cartão de futebol real.
+  return n > 0 ? ` ${'<span class="mini-red-card"></span>'.repeat(n)}` : "";
+}
+
 function renderGenericCard(e, clockClass, oddsHtml, icon) {
   const hasScore = typeof e.homeScore === "number" && typeof e.awayScore === "number";
+  const homeRed = redCardsHtml(e.statistics?.home?.redCards);
+  const awayRed = redCardsHtml(e.statistics?.away?.redCards);
   return `
     <div class="live-card" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
       <div class="lc-top"><span>${icon} ${e.league}</span><span class="${clockClass}">${e.minuteOrPeriod}</span></div>
-      ${
-        hasScore
-          ? `<div class="event-rows">
-              <div class="event-row"><span class="event-team">${e.home}</span><span class="event-row-score">${e.homeScore}</span></div>
-              <div class="event-row"><span class="event-team">${e.away}</span><span class="event-row-score">${e.awayScore}</span></div>
-            </div>`
-          : `<div class="event-rows">
-              <div class="event-row"><span class="event-team">${e.home}</span></div>
-              <div class="event-row"><span class="event-team">${e.away}</span></div>
-            </div>`
-      }
+      <div class="event-rows">
+        <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.homeScore}</span>` : ""}<span class="event-team">${e.home}${homeRed}</span></div>
+        <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.awayScore}</span>` : ""}<span class="event-team">${e.away}${awayRed}</span></div>
+      </div>
       ${oddsHtml}
     </div>`;
 }
 
+// Ordem fixa pedida: Futebol sempre primeiro, depois Ténis, depois Basquete, resto abaixo —
+// mesma ordem já usada em SPORTS_META, por isso só reaproveita o índice de cada desporto lá.
+const SPORT_ORDER = Object.fromEntries(SPORTS_META.map((s, i) => [s.id, i]));
+
 function renderLiveEvents() {
   const container = document.getElementById("live-list");
-  const events = [...liveEventsById.values()].filter((e) => !selectedSport || e.sport === selectedSport);
+  const events = [...liveEventsById.values()]
+    .filter((e) => !selectedSport || e.sport === selectedSport)
+    .sort((a, b) => (SPORT_ORDER[a.sport] ?? 99) - (SPORT_ORDER[b.sport] ?? 99));
   if (!events.length) {
     container.innerHTML = '<div class="empty-note">Sem eventos ao vivo para este desporto neste momento</div>';
     return;
@@ -912,6 +933,20 @@ function renderMarketPage() {
 function renderMatchTracker(e) {
   const el = document.getElementById("match-tracker");
   const isLive = e._isLive || e.status === "live";
+
+  if (e._finished) {
+    el.innerHTML = `
+      <div class="mt-scheduled">
+        <span class="status-badge status-ok">ENCERRADO</span>
+        <div style="color:var(--muted);font-size:.85rem;margin-top:10px">${e.home} vs ${e.away}</div>
+        ${
+          typeof e.homeScore === "number" && typeof e.awayScore === "number"
+            ? `<div class="mt-score" style="margin-top:10px">${e.homeScore} - ${e.awayScore}</div>`
+            : ""
+        }
+      </div>`;
+    return;
+  }
 
   if (!isLive) {
     el.innerHTML = `
