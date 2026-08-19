@@ -115,6 +115,44 @@ Fórmula 1** — o que não prova que não existam (MMA já está confirmado a e
 `leagues/UFC/events`; só significa que não há nenhum combate a decorrer agora), mas continua a
 não confirmar a Fórmula 1 de forma nenhuma.
 
+## ✅ Resposta de `/live-events?sport=` confirmada (testado via Console da Railway)
+
+Amostras reais para futebol (`soccer`) e basquete (`basketball`), ambos com `live:true`:
+
+```json
+{"total":55,"page":1,"limit":1,"totalPages":55,"hasNextPage":true,"hasPrevPage":false,
+ "sport":"soccer","events":[{"eventId":"30759040","away":"Panionios","home":"Niki Volou",
+ "league":"Greece - Cup","live":true,"markets":[...]}]}
+```
+
+Confirma a paginação (`total`/`hasNextPage`/etc., igual à `/leagues`) e a forma do evento —
+mas com uma descoberta importante:
+
+⚠️ **Placar e cronómetro não existem nesta API.** Nenhum dos dois exemplos `live:true` (futebol
+e basquete) tem qualquer campo de placar ou minuto/tempo de jogo — só `eventId`, `home`,
+`away`, `league`, `live`, `markets`. Este contrato da Pulsescore é puramente um feed de odds,
+não um provedor de placar ao vivo. `normalizeEvent()` em `pulsescore/client.ts` deixou de
+inventar `homeScore: 0, awayScore: 0` (era enganoso, um placar fixo em "0-0" nunca refletia o
+jogo real) — `LiveEvent.homeScore`/`awayScore` ficam `undefined` para eventos reais, e o
+frontend (`web/app.js`) esconde a linha de placar quando ausente, mostrando só "AO VIVO". Só o
+feed simulado (`mockFeed.ts`) continua a preencher placar, para a interface continuar
+demonstrável.
+
+Também confirmado (mesma amostra): `startTime` **não aparece em eventos `live:true`** — só em
+`live:false` (pré-jogo). Ajustado em `PulsescoreEvent.startTime` (agora opcional).
+
+## ✅ Mercado principal identificado: `canonicalMarket === "MATCH_RESULT"`
+
+Uma amostra de `/soccer/leagues` devolveu os valores distintos de `canonicalMarket` presentes:
+`DRAW_NO_BET`, `HALF_TIME_RESULT`, `OTHER`, `MATCH_RESULT`, `BOTH_TEAMS_TO_SCORE`,
+`EUROPEAN_HANDICAP`, `OVER_UNDER`, `HALF_TIME_OVER_UNDER`, `HOME_OVER_UNDER`. `MATCH_RESULT` é
+o 1X2/vencedor — o mercado que o cartão de evento deve mostrar em destaque. Isto importava
+porque a ordem dos mercados na resposta é arbitrária (um exemplo real de um jogo da NBA trazia
+"Total Points Group 10 Points" como primeiro mercado, não o vencedor). `normalizeEvent()` agora
+reordena os mercados ativos para pôr `MATCH_RESULT` primeiro quando presente
+(`orderMarketsWithPrimaryFirst()`), mantendo os restantes; sem isso, o cartão (que só lê
+`odds[0]`) podia mostrar um mercado sem relação com o resultado do jogo.
+
 ## ⚠️ Ainda por confirmar
 
 1. **Slug da Fórmula 1** — os outros 7 desportos já têm o slug confirmado: futebol (`soccer`),
@@ -126,16 +164,22 @@ não confirmar a Fórmula 1 de forma nenhuma.
 2. **Fórmula 1 pode nem existir** nesta forma "liga → eventos casa/fora" — motorsport é o único
    dos 8 desportos que não encaixa claramente num modelo de dois competidores (todos os outros
    7, incluindo o MMA que também parecia arriscado, já foram confirmados). Confirmar no
-   catálogo da Pulsescore se a Fórmula 1 está disponível e em que forma.
-3. **Resposta de `/live-events?sport=` e `/live-events/events/{id}`** — só o pedido foi
-   confirmado; a forma exata da resposta (se tem `hasNextPage`, se o placar/cronómetro vêm
-   nestes payloads) continua por confirmar. `fetchLiveEvents()` usa `homeScore: 0, awayScore: 0,
-   minuteOrPeriod: "AO VIVO"` como placeholder até haver um exemplo real.
+   catálogo da Pulsescore se a Fórmula 1 está disponível e em que forma. Um exemplo à parte
+   testou `unibetau/formula-1/leagues` (casa de apostas diferente de `10bet`, usada em todos os
+   outros 7 desportos) — ainda por validar se é mesmo preciso trocar de bookmaker só para F1,
+   ou se `10bet/formula-1/...` também funciona.
+3. **Resposta de `/live-events/events/{id}`** — só o pedido foi confirmado; a forma exata da
+   resposta continua por confirmar (`fetchLiveEventById()` usa o mesmo parsing defensivo dos
+   outros endpoints não confirmados).
 4. **Casa de apostas (`bookmaker`)** — `10bet` foi a usada no exemplo (`PULSESCORE_BOOKMAKER`,
    por defeito `10bet`); pode haver outras disponíveis por desporto que dêem melhor cobertura.
 5. **Limites de taxa / custo por pedido** — mesmo com o `/live-events/sports` a poupar pedidos
    desnecessários, convém validar o volume total contra os limites do plano antes de produção
    (ajustar `POLL_INTERVAL_MS` e `maxPages` em `hybridService.ts` se necessário).
+6. **Fonte alternativa para placar/cronómetro ao vivo** — já que a Pulsescore não os fornece
+   (ver acima), a única forma de mostrar placar real ao vivo seria via API-Football (só
+   futebol, e só depois de mapear `apiFootballFixtureId` a cada evento Pulsescore — ainda por
+   fazer) ou aceitar mostrar só "AO VIVO" sem placar para todos os desportos, como está agora.
 
 ## Arquitetura
 

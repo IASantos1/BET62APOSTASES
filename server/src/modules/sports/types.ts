@@ -30,8 +30,10 @@ export interface LiveEvent {
   league: string;
   home: string;
   away: string;
-  homeScore: number;
-  awayScore: number;
+  // Ausente para eventos reais da Pulsescore: a API confirmou não devolver placar/relógio
+  // (ver pulsescore/client.ts) — só o feed simulado preenche estes campos.
+  homeScore?: number;
+  awayScore?: number;
   minuteOrPeriod: string; // "67'" for football, "Set 2" for tennis, "Q3" for basketball; "" for scheduled events
   status: "scheduled" | "live" | "finished";
   odds: LiveOdds[];

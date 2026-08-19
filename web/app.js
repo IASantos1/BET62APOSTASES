@@ -124,13 +124,19 @@ async function renderPrematchList() {
   }
   const icon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
   container.innerHTML = events
-    .map(
-      (e) => `
+    .map((e) => {
+      const odds = e.odds?.[0]?.selections;
+      return `
       <div class="live-card" onclick="openMarket('${e.id}', false)">
         <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime || e.kickoff)}</span></div>
         <div class="lc-teams"><span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span></div>
-      </div>`
-    )
+        ${
+          odds
+            ? `<div class="lc-odds">${Object.entries(odds).slice(0, 3).map(([k, v]) => `<div>${k}<br>${Number(v).toFixed(2)}</div>`).join("")}</div>`
+            : ""
+        }
+      </div>`;
+    })
     .join("");
 }
 renderPrematchList._token = 0;
@@ -600,7 +606,7 @@ function renderLiveEvents() {
   container.innerHTML = events
     .map((e) => {
       const odds = e.odds?.[0]?.selections;
-      const showScore = e.sport !== "formula1";
+      const showScore = typeof e.homeScore === "number" && typeof e.awayScore === "number";
       return `
         <div class="live-card" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
           <div class="lc-top"><span>${sportIcon[e.sport] || ""} ${e.league}</span><span>${e.minuteOrPeriod}</span></div>
@@ -679,11 +685,12 @@ function renderMatchTracker(e) {
     return;
   }
 
+  const hasScore = typeof e.homeScore === "number" && typeof e.awayScore === "number";
   el.innerHTML = `
     <div class="mt-live"><span class="dot"></span> AO VIVO</div>
     <div class="mt-teams">
       <div class="mt-team">${e.home}</div>
-      <div class="mt-score">${e.homeScore} - ${e.awayScore}</div>
+      ${hasScore ? `<div class="mt-score">${e.homeScore} - ${e.awayScore}</div>` : '<div style="color:var(--muted);font-size:.85rem">vs</div>'}
       <div class="mt-team">${e.away}</div>
     </div>
     <div class="mt-period">${e.minuteOrPeriod}</div>`;
