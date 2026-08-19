@@ -152,13 +152,25 @@ const liveEventsById = new Map();
 let currentMarketEvent = null;
 const betslipSelections = new Map(); // key -> { eventId, market, selection, odd }
 
+// Setas de subida/descida das odds: guarda o último valor visto por seleção (mesma chave
+// "eventId|mercado|seleção" usada no boletim) e compara a cada render — só mostra seta quando
+// o valor mudou desde o render anterior, por isso desaparece sozinha no ciclo seguinte se a
+// odd não voltar a mudar.
+const oddsHistory = new Map();
+function oddsArrowHtml(key, value) {
+  const prev = oddsHistory.get(key);
+  oddsHistory.set(key, value);
+  if (prev === undefined || value === prev) return "";
+  return value > prev ? '<span class="odds-arrow up">▲</span>' : '<span class="odds-arrow down">▼</span>';
+}
+
 // ====================== NAVIGATION ======================
 function showPage(page) {
   if (pageHistory[pageHistory.length - 1] !== page) pageHistory.push(page);
   closeDrawers();
   document.body.classList.toggle("on-market-page", page === "market");
 
-  ["destaques", "profile", "esportes", "aovivo", "casino", "market"].forEach((p) => {
+  ["destaques", "profile", "esportes", "aovivo", "casino", "promocao", "market"].forEach((p) => {
     const el = document.getElementById("page-" + p);
     if (el) el.classList.toggle("hidden", p !== page);
   });
@@ -600,7 +612,8 @@ function renderLiveEvents() {
   const sportIcon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
   container.innerHTML = events
     .map((e) => {
-      const odds = e.odds?.[0]?.selections;
+      const primaryMarket = e.odds?.[0];
+      const odds = primaryMarket?.selections;
       const showScore = typeof e.homeScore === "number" && typeof e.awayScore === "number";
       return `
         <div class="live-card" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
@@ -612,7 +625,13 @@ function renderLiveEvents() {
           </div>
           ${
             odds
-              ? `<div class="lc-odds">${Object.entries(odds).slice(0, 3).map(([k, v]) => `<div>${k}<br>${Number(v).toFixed(2)}</div>`).join("")}</div>`
+              ? `<div class="lc-odds">${Object.entries(odds)
+                  .slice(0, 3)
+                  .map(([k, v]) => {
+                    const arrow = oddsArrowHtml(`${e.id}|${primaryMarket.market}|${k}`, Number(v));
+                    return `<div>${k}<br>${Number(v).toFixed(2)}${arrow}</div>`;
+                  })
+                  .join("")}</div>`
               : ""
           }
         </div>`;
@@ -697,6 +716,7 @@ function renderMarketGroups(e) {
     el.innerHTML = '<div class="empty-note">Sem mercados disponíveis para este evento</div>';
     return;
   }
+  const isLive = e._isLive || e.status === "live";
   el.innerHTML = e.odds
     .map((group) => {
       const rows = Object.entries(group.selections)
@@ -704,8 +724,11 @@ function renderMarketGroups(e) {
           const key = `${e.id}|${group.market}|${label}`;
           const picked = betslipSelections.has(key);
           const selection = { eventId: e.id, market: group.market, selection: label, odd, home: e.home, away: e.away, league: e.league };
+          // Setas de subida/descida só em Ao Vivo — no pré-jogo o valor não costuma mudar
+          // ao ponto de justificar o indicador, e não foi pedido para essa página.
+          const arrow = isLive ? oddsArrowHtml(key, Number(odd)) : "";
           return `<div class="selection-btn ${picked ? "picked" : ""}" onclick='toggleSelection(${JSON.stringify(key)}, ${JSON.stringify(selection)})'>
-            <span class="sel-label">${label}</span><span class="sel-odd">${Number(odd).toFixed(2)}</span>
+            <span class="sel-label">${label}</span><span class="sel-odd">${Number(odd).toFixed(2)}${arrow}</span>
           </div>`;
         })
         .join("");
