@@ -816,13 +816,13 @@ function renderSetsCard(e, clockClass, oddsHtml, icon) {
       <div class="lc-top"><span>${icon} ${e.league}</span><span class="${clockClass}">${setLabel}</span></div>
       ${showPoints ? `<div class="event-points">${e.homeScore} - ${e.awayScore}</div>` : ""}
       <div class="sets-grid">
+        <div class="sets-grid-row sets-grid-header"><span class="sets-grid-name"></span>${headerCols}</div>
         <div class="sets-grid-row">
           <span class="sets-grid-name">${flag} ${e.home}${homeServe ? '<span class="serve-dot"></span>' : ""}</span>${cols(sets.home)}
         </div>
         <div class="sets-grid-row">
           <span class="sets-grid-name">${flag} ${e.away}${awayServe ? '<span class="serve-dot"></span>' : ""}</span>${cols(sets.away)}
         </div>
-        <div class="sets-grid-row sets-grid-header"><span class="sets-grid-name"></span>${headerCols}</div>
       </div>
       ${oddsHtml}
     </div>`;
