@@ -125,14 +125,16 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .live-card:hover{border-color:var(--red)}
 .live-card .lc-top{display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-bottom:8px}
 .live-card .lc-teams{display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:.92rem;gap:8px}
-.live-card .lc-score{font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--gold);font-variant-numeric:tabular-nums}
 .live-card .lc-odds{display:flex;gap:8px;margin-top:10px}
 .live-card .lc-odds div{flex:1;background:var(--surface2);border-radius:8px;padding:8px;text-align:center;font-size:.8rem;font-weight:700;font-variant-numeric:tabular-nums}
-.tennis-points{text-align:center;font-family:'Bebas Neue',sans-serif;font-size:1.3rem;color:var(--gold);font-variant-numeric:tabular-nums;margin-bottom:6px}
-.tennis-rows{display:flex;flex-direction:column;gap:6px}
-.tennis-row{display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:.92rem;gap:8px}
-.tennis-team{display:flex;align-items:center;gap:6px}
-.tennis-set-score{font-family:'Bebas Neue',sans-serif;font-size:1.15rem;color:var(--gold);font-variant-numeric:tabular-nums;min-width:1.2em;text-align:right}
+/* Casa/fora um embaixo do outro em todos os cartões de evento (não só ténis) — o placar fica
+   sempre alinhado na mesma coluna à direita, card a card, em vez de "flutuar" consoante o
+   tamanho do nome da equipa. */
+.event-points{text-align:center;font-family:'Bebas Neue',sans-serif;font-size:1.3rem;color:var(--gold);font-variant-numeric:tabular-nums;margin-bottom:6px}
+.event-rows{display:flex;flex-direction:column;gap:6px}
+.event-row{display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:.92rem;gap:8px}
+.event-team{display:flex;align-items:center;gap:6px}
+.event-row-score{font-family:'Bebas Neue',sans-serif;font-size:1.15rem;color:var(--gold);font-variant-numeric:tabular-nums;min-width:1.4em;text-align:right}
 .serve-dot{width:6px;height:6px;border-radius:50%;background:var(--gold);display:inline-block}
 .odds-arrow{display:inline-block;font-size:.7em;margin-left:3px;animation:odds-flash 2s ease-out}
 .odds-arrow.up{color:var(--green)}

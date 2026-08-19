@@ -304,6 +304,28 @@ homeServe?: boolean}` — CONFIRMADO na mesma amostra real de `/paddypower/live-
 equipa "away"). Testado com Playwright reproduzindo os dois jogos reais da amostra (Zverev vs
 Paul, Fils vs De Minaur) — bandeira, "Sn", pontos e jogos por set todos corretos.
 
+### Generalizado: layout "por sets" ativado por dados, não por desporto — e cartões unificados
+
+O utilizador corrigiu um ponto: **voleibol também se joga por sets** no mundo real (tal como
+ténis), mas **beisebol não** — joga-se por *innings*, um conceito diferente. Em vez de fixar o
+layout acima só a `sport === "tennis"`, `renderLiveEvents()` (`web/app.js`) passou a decidir pelo
+próprio formato dos dados: `if (e.statistics?.sets) return renderSetsCard(...)`. Assim, assim que
+a paddypower devolver `statistics.sets` para voleibol (ainda não confirmado com uma amostra real —
+`/paddypower/live-events/sports` só mostrou eventos ao vivo de futebol/ténis/basebol/esports/
+ténis de mesa no momento testado), o cartão de voleibol muda sozinho para o layout de sets, sem
+precisar de mais código; beisebol nunca ativa este caminho, corretamente, por não ter essa forma
+de dados.
+
+Ao mesmo tempo, o cartão genérico (futebol, basquete, hóquei, beisebol, MMA, Fórmula 1) também foi
+redesenhado — pedido explícito do utilizador: em vez do antigo placar único ao centro (`"1 - 1"`
+entre os dois nomes, que podia parecer descentrado consoante o tamanho dos nomes das equipas),
+`renderGenericCard()` mostra casa/fora um embaixo do outro com o placar de cada equipa alinhado
+à direita, na mesma posição em todos os cartões da lista (`.event-row-score{min-width:1.4em;
+text-align:right}`) — mesmo com nomes de equipa muito compridos. `renderSetsCard()` e
+`renderGenericCard()` partilham as mesmas classes CSS (`.event-rows`/`.event-row`/`.event-team`/
+`.event-row-score`), só o cartão de sets acrescenta bandeira, ponto de serviço e a pontuação do
+jogo atual centralizada por cima.
+
 ⚠️ **Por confirmar**: a paddypower cobre basquete/hóquei de gelo/voleibol/MMA da mesma forma?
 `/paddypower/live-events/sports` só mostrou eventos ao vivo reais para futebol, ténis, basebol,
 esports e ténis de mesa no momento da amostra — os outros desportos podem simplesmente não ter
