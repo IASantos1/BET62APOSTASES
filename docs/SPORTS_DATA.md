@@ -12,8 +12,8 @@ A Fórmula 1 não tem o formato "casa vs fora" dos outros desportos (é uma corr
 pilotos, não um confronto direto). Para não criar uma segunda estrutura de dados só para ela,
 o tipo `LiveEvent` é reaproveitado: `home`/`away` guardam o nome do Grande Prémio e o tipo de
 sessão, e a grelha de pilotos vai nas seleções do mercado "Vencedor da corrida" — ver
-`server/src/modules/sports/mockFeed.ts`. Não há confirmação de que a Pulsescore cubra F1/MMA
-neste formato — ver secção seguinte.
+`server/src/modules/sports/mockFeed.ts`. O MMA já está confirmado a existir neste formato
+"liga → eventos" (ver abaixo, liga real "UFC"), a Fórmula 1 continua por confirmar.
 
 ## ✅ Contrato Pulsescore confirmado (via exemplo real fornecido)
 
@@ -68,20 +68,23 @@ Factos confirmados por este exemplo (não suposição):
 
 ## ⚠️ Ainda por confirmar
 
-1. **Slugs de desporto** — confirmados: futebol (`soccer`), ténis (`tennis`) e voleibol
-   (`volleyball`) — mesmos endpoints repetidos com estes slugs, sempre a mesma forma. Os
-   restantes 4 (`basketball`, `ice-hockey`, `baseball`, `formula-1`, `mma` em
+1. **Slugs de desporto** — confirmados: futebol (`soccer`), ténis (`tennis`), voleibol
+   (`volleyball`) e MMA (`mma`) — mesmos endpoints repetidos com estes slugs, sempre a mesma
+   forma. Os restantes 3 (`basketball`, `ice-hockey`, `baseball`, `formula-1` em
    `pulsescore/client.ts`, constante `SPORT_SLUGS`) continuam a ser estimativas razoáveis, não
    confirmadas. Se o slug estiver errado, esse desporto simplesmente devolve vazio/404 — o
    código já trata isso por desporto (não derruba o ciclo inteiro), mas os dados não aparecem
    até o slug certo ser confirmado.
-   > 💡 A amostra do voleibol para `leagues/{name}/events` usou o texto literal "league name"
-   > como nome da liga — parece o valor por defeito de um "Try it out" do Swagger/OpenAPI. Se
-   > for daí que estes `curl` vêm, clicar em "Execute" ali captura a resposta real, que é a
-   > única coisa que falta para confirmar isto por completo (odds ao vivo, campos extra, etc.).
-2. **Fórmula 1 e MMA podem nem existir** nesta forma "liga → eventos casa/fora" — motorsport
-   em particular não encaixa bem no modelo de duas equipas. Confirmar no catálogo da Pulsescore
-   se estes desportos estão disponíveis e em que forma.
+   > 💡 A amostra do MMA para `leagues/{name}/events` usou uma liga real, "UFC" — ao contrário
+   > da amostra do voleibol, que usou o texto literal "league name" (o valor por defeito de um
+   > "Try it out" do Swagger/OpenAPI). Se for daí que estes `curl` vêm, clicar em "Execute" ali
+   > captura a resposta real, que é a única coisa que falta para confirmar isto por completo
+   > (odds ao vivo, campos extra, etc.) — nenhum endpoint além do primeiro exemplo de `leagues`
+   > teve a resposta confirmada até agora.
+2. **Fórmula 1 pode nem existir** nesta forma "liga → eventos casa/fora" — motorsport não
+   encaixa num modelo de dois competidores da mesma maneira que o MMA (que já está confirmado
+   a existir neste formato, com a liga "UFC"). Confirmar no catálogo da Pulsescore se a
+   Fórmula 1 está disponível e em que forma.
 3. **Payload de um evento `live: true`** — o exemplo fornecido só mostrou eventos `live: false`
    (pré-jogo). Não se sabe se um evento ao vivo traz placar/cronómetro no mesmo payload ou
    nesses mesmos campos. Por agora, `normalizeEvent()` usa `homeScore: 0, awayScore: 0,
