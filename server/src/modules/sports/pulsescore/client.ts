@@ -522,13 +522,33 @@ function normalizeMarket(m: PulsescoreMarket): LiveOdds {
 // odds[0]) could show an unrelated market. Moves the primary market to the front when present.
 const PRIMARY_MARKET_NAMES = new Set(["match_result", "match_winner", "1x2"]);
 
-export function orderMarketsWithPrimaryFirst<T extends { canonicalMarket?: string }>(markets: T[]): T[] {
+// CONFIRMED numa amostra real de beisebol (bet365): o evento não tinha NENHUM mercado
+// MATCH_RESULT — o moneyline vinha só como duas seleções soltas dentro de um mercado misto
+// ("Game Lines"). Sem mercado principal reconhecido, o primeiro mercado do array acabava por ser
+// escolhido às cegas para a pré-visualização do cartão (que não mostra o nome do mercado) — e
+// calhou ser "3-Way Handicap" com uma seleção "Tie - ...", fazendo o cartão parecer um 1X2 com
+// empate, o que não existe no beisebol (é sempre casa/fora, um jogo de beisebol não empata).
+function hasTieSelection(selections: { canonicalOutcome?: string; rawName?: string }[] | undefined): boolean {
+  return (selections ?? []).some((s) => s.canonicalOutcome === "DRAW" || /\btie\b|empate/i.test(s.rawName ?? ""));
+}
+
+export function orderMarketsWithPrimaryFirst<T extends { canonicalMarket?: string; selections?: { canonicalOutcome?: string; rawName?: string }[] }>(
+  markets: T[]
+): T[] {
   const primaryIdx = markets.findIndex((m) => m.canonicalMarket && PRIMARY_MARKET_NAMES.has(m.canonicalMarket.toLowerCase()));
-  if (primaryIdx <= 0) return markets;
-  const ordered = [...markets];
-  const [primary] = ordered.splice(primaryIdx, 1);
-  ordered.unshift(primary!);
-  return ordered;
+  if (primaryIdx > 0) {
+    const ordered = [...markets];
+    const [primary] = ordered.splice(primaryIdx, 1);
+    ordered.unshift(primary!);
+    return ordered;
+  }
+  if (primaryIdx === 0) return markets;
+
+  // Nenhum mercado principal reconhecido: evita que um mercado com empate fique por acidente em
+  // primeiro — passa para trás os que têm empate, mantendo a ordem original dentro de cada grupo.
+  const withoutTie = markets.filter((m) => !hasTieSelection(m.selections));
+  const withTie = markets.filter((m) => hasTieSelection(m.selections));
+  return withoutTie.length ? [...withoutTie, ...withTie] : markets;
 }
 
 // "H"/"A" score strings -> number, only when both sides parse cleanly — otherwise undefined

@@ -397,6 +397,34 @@ Sox`), não sempre "0"-"0". A forma dos dados (`moreInfo` com chaves `FI`/`NA`/`
   relógio deste desporto continua a cair no fallback "AO VIVO" (a vermelho, já implementado) até
   surgir uma amostra com esse campo preenchido.
 
+### Beisebol não tem empate — corrigida a escolha do mercado principal do cartão
+
+O utilizador lembrou uma regra real do desporto: **um jogo de beisebol nunca empata** (é sempre
+casa ou fora, prolonga-se em innings extra se necessário), ao contrário do 1X2 do futebol. A
+amostra real da bet365 confirmou um risco concreto disto correr mal: o evento **não tinha nenhum
+mercado `MATCH_RESULT`** — o moneyline vinha só como duas seleções ("Money") dentro de um mercado
+misto ("Game Lines", junto com Run Line e Total) — e havia um mercado real separado, "3-Way
+Handicap", com uma seleção genuína "Tie - ARI Diamondbacks" (empate no hándicap de corridas, um
+tipo de aposta real, não um erro de dados). Sem mercado principal reconhecido,
+`orderMarketsWithPrimaryFirst()` escolhia às cegas o primeiro mercado do array para a
+pré-visualização do cartão (que não mostra o nome do mercado) — se esse "3-Way Handicap" alguma
+vez calhasse em primeiro lugar, o cartão pareceria um 1X2 com empate, o que não existe no
+beisebol.
+
+Corrigido em `pulsescore/client.ts`: `orderMarketsWithPrimaryFirst()` agora, quando não encontra
+nenhum mercado principal reconhecido, empurra para trás qualquer mercado com uma seleção de
+empate (`canonicalOutcome === "DRAW"` ou `rawName` a conter "tie"/"empate") em vez de o deixar
+ficar em primeiro por acaso. Testado com a amostra real: nos 5 eventos de beisebol testados,
+"Game Lines" já vinha primeiro por acaso (não tem empate), por isso o comportamento visível não
+mudou nesta amostra específica — mas a proteção evita que aconteça com outra ordem de array.
+
+⚠️ **Nota**: mesmo com esta correção, "Game Lines" (o mercado que acaba por ser mostrado como
+pré-visualização) continua a ser um mercado misto (Run Line + Total + Money juntos), não um
+1X2/moneyline limpo — a bet365 não expõe um mercado moneyline autónomo para este jogo. Extrair só
+as seleções "Money" para construir uma pré-visualização sintética limpa seria possível mas fica
+por fazer — depende de "Money" ser mesmo o nome usado de forma consistente noutros
+eventos/desportos da bet365, o que só uma amostra maior confirmaria.
+
 ## ⚠️ Ainda por confirmar
 
 1. **Slug exato da Fórmula 1** dentro de `unibetau` — continua uma estimativa (`formula-1`).
