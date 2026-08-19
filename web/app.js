@@ -20,6 +20,27 @@ const SPORTS_META = [
   { id: "formula1", label: "Fórmula 1", icon: "🏎️" },
 ];
 let selectedSport = null; // null = todos
+let selectedLeague = null; // filtra ainda mais por liga (ver FOOTBALL_LEAGUES_BY_COUNTRY)
+
+// Só 1ª e 2ª divisão + taça(s) principal(is) de cada país — sem 3ª divisão para baixo, sem
+// ligas amadores, como pedido. Comparação por "contém" no nome da liga real da Pulsescore
+// (que às vezes vem "Premier League", às vezes "England - Premier League" consoante o país).
+const FOOTBALL_LEAGUES_BY_COUNTRY = {
+  Inglaterra: ["Premier League", "Championship", "FA Cup", "EFL Cup"],
+  Espanha: ["La Liga", "Segunda División", "Copa del Rey"],
+  Itália: ["Serie A", "Serie B", "Coppa Italia"],
+  Alemanha: ["Bundesliga", "2. Bundesliga", "DFB-Pokal"],
+  França: ["Ligue 1", "Ligue 2", "Coupe de France"],
+  Portugal: ["Primeira Liga", "Liga Portugal 2", "Taça de Portugal"],
+  "Países Baixos": ["Eredivisie", "Eerste Divisie", "KNVB Beker"],
+  Bélgica: ["Jupiler Pro League", "Challenger Pro League", "Beker van België"],
+  Escócia: ["Premiership", "Championship", "Scottish Cup"],
+  Brasil: ["Brasileirão Série A", "Brasileirão Série B", "Copa do Brasil"],
+  Argentina: ["Liga Profesional", "Primera Nacional", "Copa Argentina"],
+  "Estados Unidos": ["MLS", "USL Championship", "US Open Cup"],
+  Turquia: ["Süper Lig", "1. Lig", "Türkiye Kupası"],
+  México: ["Liga MX", "Liga de Expansión MX", "Copa MX"],
+};
 
 function renderSportSubnav() {
   const el = document.getElementById("sport-subnav");
@@ -33,6 +54,7 @@ function renderSportSubnav() {
 }
 function selectSport(sportId) {
   selectedSport = sportId;
+  selectedLeague = null;
   renderSportSubnav();
   renderSportsMenu();
   const active = pageHistory[pageHistory.length - 1];
@@ -65,15 +87,73 @@ async function renderCompetitions() {
   }
 }
 
+const expandedSports = new Set();
+const expandedCountries = new Set();
+
+function toggleSportExpand(sportId, ev) {
+  ev.stopPropagation();
+  if (expandedSports.has(sportId)) expandedSports.delete(sportId);
+  else expandedSports.add(sportId);
+  renderSportsMenu();
+}
+function toggleCountryExpand(country, ev) {
+  ev.stopPropagation();
+  if (expandedCountries.has(country)) expandedCountries.delete(country);
+  else expandedCountries.add(country);
+  renderSportsMenu();
+}
+function selectLeague(sportId, leagueName) {
+  selectedSport = sportId;
+  selectedLeague = leagueName;
+  renderSportSubnav();
+  renderSportsMenu();
+  showPage("esportes");
+  closeDrawers();
+}
+
+function goToSport(sportId) {
+  selectSport(sportId);
+  if (!["esportes", "aovivo"].includes(pageHistory[pageHistory.length - 1])) showPage("esportes");
+  closeDrawers();
+}
+
 function renderSportsMenu() {
   const el = document.getElementById("sports-menu-list");
   if (!el) return;
-  el.innerHTML = SPORTS_META.map(
-    (s) => `
-    <div class="sports-menu-item ${selectedSport === s.id ? "active" : ""}" onclick="selectSport('${s.id}'); if (!['esportes','aovivo'].includes(pageHistory[pageHistory.length - 1])) showPage('esportes'); closeDrawers();">
-      ${s.icon} ${s.label}
-    </div>`
-  ).join("");
+  el.innerHTML = SPORTS_META.map((s) => {
+    const hasChildren = s.id === "football";
+    const isExpanded = expandedSports.has(s.id);
+    const isActive = selectedSport === s.id && !selectedLeague;
+    const chevron = hasChildren
+      ? `<span class="sports-menu-chevron ${isExpanded ? "open" : ""}" onclick="toggleSportExpand('${s.id}', event)"><i class="fas fa-chevron-down"></i></span>`
+      : "";
+    const header = `
+      <div class="sports-menu-item ${isActive ? "active" : ""}" onclick="goToSport('${s.id}')">
+        <span>${s.icon} ${s.label}</span>${chevron}
+      </div>`;
+    if (!hasChildren || !isExpanded) return header;
+
+    const countries = Object.entries(FOOTBALL_LEAGUES_BY_COUNTRY)
+      .map(([country, leagues]) => {
+        const countryOpen = expandedCountries.has(country);
+        const leaguesHtml = countryOpen
+          ? leagues
+              .map((league) => {
+                const active = selectedSport === s.id && selectedLeague === league;
+                return `<div class="league-item ${active ? "active" : ""}" onclick='selectLeague(${JSON.stringify(s.id)}, ${JSON.stringify(league)})'>${league}</div>`;
+              })
+              .join("")
+          : "";
+        return `
+          <div class="country-item" onclick='toggleCountryExpand(${JSON.stringify(country)}, event)'>
+            <span class="sports-menu-chevron ${countryOpen ? "open" : ""}"><i class="fas fa-chevron-down"></i></span>${country}
+          </div>
+          ${leaguesHtml}`;
+      })
+      .join("");
+
+    return header + `<div class="country-list">${countries}</div>`;
+  }).join("");
 }
 
 // ====================== DRAWERS (mobile/PWA) ======================
@@ -93,10 +173,23 @@ function closeDrawers() {
 
 const prematchEventsById = new Map();
 
+function clearLeagueFilter() {
+  selectedLeague = null;
+  renderSportsMenu();
+  renderPrematchList();
+}
+
 async function renderPrematchList() {
   const container = document.getElementById("prematch-list");
   const requestToken = ++renderPrematchList._token;
   container.innerHTML = '<div class="empty-note">A carregar…</div>';
+
+  const badge = document.getElementById("league-filter-badge");
+  if (badge) {
+    badge.innerHTML = selectedLeague
+      ? `<div class="league-filter-badge">Filtrado por: <b>${selectedLeague}</b> <span onclick="clearLeagueFilter()">✕</span></div>`
+      : "";
+  }
 
   const sports = selectedSport ? [selectedSport] : SPORTS_META.map((s) => s.id);
   const realEvents = [];
@@ -107,7 +200,9 @@ async function renderPrematchList() {
     if (r.status === "fulfilled" && r.value.source === "pulsescore") realEvents.push(...r.value.events);
   });
 
-  const events = realEvents;
+  const events = selectedLeague
+    ? realEvents.filter((e) => e.league && e.league.toLowerCase().includes(selectedLeague.toLowerCase()))
+    : realEvents;
 
   prematchEventsById.clear();
   events.forEach((e) => prematchEventsById.set(e.id, e));
