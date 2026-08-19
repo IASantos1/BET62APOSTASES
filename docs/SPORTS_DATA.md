@@ -68,12 +68,13 @@ Factos confirmados por este exemplo (não suposição):
 
 ## ⚠️ Ainda por confirmar
 
-1. **Slugs de desporto além de "soccer"** — só o futebol foi confirmado (`soccer`). Os
-   restantes 7 (`tennis`, `basketball`, `ice-hockey`, `baseball`, `volleyball`, `formula-1`,
-   `mma` em `pulsescore/client.ts`, constante `SPORT_SLUGS`) são estimativas razoáveis, não
-   confirmadas. Se o slug estiver errado, esse desporto simplesmente devolve vazio/404 — o
-   código já trata isso por desporto (não derruba o ciclo inteiro), mas os dados não aparecem
-   até o slug certo ser confirmado.
+1. **Slugs de desporto** — confirmados: futebol (`soccer`) e ténis (`tennis`, mesmos 3
+   endpoints repetidos com este slug, mesma forma). Os restantes 6 (`basketball`,
+   `ice-hockey`, `baseball`, `volleyball`, `formula-1`, `mma` em `pulsescore/client.ts`,
+   constante `SPORT_SLUGS`) continuam a ser estimativas razoáveis, não confirmadas. Se o slug
+   estiver errado, esse desporto simplesmente devolve vazio/404 — o código já trata isso por
+   desporto (não derruba o ciclo inteiro), mas os dados não aparecem até o slug certo ser
+   confirmado.
 2. **Fórmula 1 e MMA podem nem existir** nesta forma "liga → eventos casa/fora" — motorsport
    em particular não encaixa bem no modelo de duas equipas. Confirmar no catálogo da Pulsescore
    se estes desportos estão disponíveis e em que forma.

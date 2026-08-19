@@ -45,10 +45,16 @@ import type { LiveEvent, LiveOdds, Sport } from "../types";
  * `fetchEventsFlat()` and `fetchEventById()` below, both parsed defensively for the same
  * reason as fetchLeagueEvents() — no response body was provided for either yet.
  *
- * NEEDS VALIDATION — not covered by the sample, still assumptions:
- *   - The sport slug is only confirmed for football ("soccer"). Slugs below for the other 7
- *     sports are best-effort guesses; if wrong, that sport's fetch just comes back empty/404,
- *     which fetchEvents() below swallows per-sport rather than failing the whole poll cycle.
+ * The same three endpoints (leagues, leagues/{name}/events, events, events/{id}) were then
+ * confirmed again under /10bet/tennis/... — same shape, just a different sport slug, which
+ * confirms the path is uniformly /{bookmaker}/{sport}/... for any sport rather than something
+ * sport-specific. No new response bodies came with it either.
+ *
+ * NEEDS VALIDATION — not covered by any sample yet, still assumptions:
+ *   - The sport slug is confirmed for football ("soccer") and tennis ("tennis"). Slugs below
+ *     for the other 6 sports are best-effort guesses; if wrong, that sport's fetch just comes
+ *     back empty/404, which fetchEvents() below swallows per-sport rather than failing the
+ *     whole poll cycle.
  *   - Whether Fórmula 1 / MMA exist at all under this bookmaker in this leagues/home-away shape
  *     — motorsport in particular may not fit a two-team model the way this API is structured.
  *   - What a `live:true` event's payload adds for score/clock — the sample only shows
@@ -59,8 +65,8 @@ import type { LiveEvent, LiveOdds, Sport } from "../types";
  */
 
 const SPORT_SLUGS: Record<Sport, string> = {
-  football: "soccer", // CONFIRMED by the sample
-  tennis: "tennis",
+  football: "soccer", // CONFIRMED
+  tennis: "tennis", // CONFIRMED
   basketball: "basketball",
   ice_hockey: "ice-hockey",
   baseball: "baseball",
