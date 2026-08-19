@@ -157,9 +157,10 @@ model Wallet {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  entries     LedgerEntry[]
-  deposits    Deposit[]
-  withdrawals Withdrawal[]
+  entries            LedgerEntry[]
+  deposits           Deposit[]
+  withdrawals        Withdrawal[]
+  casinoTransactions CasinoTransaction[]
 }
 
 model LedgerEntry {
@@ -177,6 +178,42 @@ model LedgerEntry {
 
   @@index([walletId, createdAt])
   @@index([referenceType, referenceId])
+}
+
+// ============ CASINO (slots — Cassino Gold Palace, seamless wallet) ============
+// Contrato confirmado pelo utilizador: callbacks Win/Cancel/Status que o provedor chama para
+// debitar/creditar a carteira do jogador em tempo real. `transGuid` é o identificador único de
+// cada transação enviado pelo provedor — usado aqui como chave de idempotência (o próprio
+// contrato pede para verificarmos "41: [transação] já processada" e "42: ID existe" antes de
+// aplicar qualquer movimento).
+
+enum CasinoTxType {
+  BET // aposta debitada (type: 2 na doc, "amount" é o valor apostado)
+  WIN // prémio creditado (type: 2 no callback "win", mas semanticamente um crédito)
+  CANCEL // estorno de uma aposta/prémio anterior (type: 16 na doc)
+  BONUS_CALL_WIN // BonusCall(32) em vez de Win(2) — não afeta o RTP nem os pontos do agente
+}
+
+model CasinoTransaction {
+  id                String       @id @default(uuid())
+  walletId          String
+  wallet            Wallet       @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  transGuid         String       @unique // idempotência: um pedido repetido com o mesmo trans_guid não é reaplicado
+  cancelOfTransGuid String? // preenchido em CANCEL: aponta para o trans_guid que está a ser estornado
+  type              CasinoTxType
+  gplayId           String // ID da partida (gplay_id)
+  account           String // identificador do jogador tal como enviado pelo provedor (userId interno)
+  roundId           String
+  providerId        Int
+  gameCode          String
+  gameType          String
+  amount            Decimal      @db.Decimal(14, 2) // valor da operação, sempre positivo
+  callId            String? // ID da chamada de bónus, quando aplicável (Bonus Call Feature)
+  ledgerEntryId     String? // LedgerEntry criado por esta transação (null se saldo insuficiente/rejeitada)
+  createdAt         DateTime     @default(now())
+
+  @@index([walletId, createdAt])
+  @@index([roundId])
 }
 
 // ============ DEPOSITS (Stripe: card / MB WAY / Multibanco) ============

@@ -13,6 +13,7 @@ import walletRoutes from "./modules/wallet/routes";
 import stripeRoutes, { stripeWebhookHandler } from "./modules/payments/stripe/routes";
 import revolutRoutes from "./modules/payments/revolut/routes";
 import sportsRoutes from "./modules/sports/routes";
+import casinoRoutes from "./modules/casino/routes";
 
 // server/src/app.ts e server/dist/app.js ficam ambos exatamente 2 níveis abaixo da raiz do
 // monorepo (server/src e server/dist), por isso este caminho relativo funciona em dev e em prod.
@@ -42,6 +43,7 @@ export function createApp() {
   app.use("/api/payments/stripe", stripeRoutes);
   app.use("/api/payments/revolut", revolutRoutes);
   app.use("/api/sports", sportsRoutes);
+  app.use("/api/casino", casinoRoutes);
 
   // Frontend estático servido pelo mesmo processo Node — mesma origem que a API, por isso
   // o frontend não precisa de saber o domínio do backend (nada de CORS nem de variáveis
