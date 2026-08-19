@@ -765,6 +765,13 @@ function ensureLiveSocket() {
   };
 }
 
+// Quando um evento ao vivo não tem relógio/período real (matchClock ausente ou numa forma que
+// formatMatchClock não reconheceu — ver client.ts/wsClient.ts), minuteOrPeriod cai no genérico
+// "AO VIVO". Sinalizado a vermelho em vez de passar despercebido como se fosse dado normal.
+function isClockMissing(e) {
+  return e.status === "live" && (!e.minuteOrPeriod || e.minuteOrPeriod === "AO VIVO");
+}
+
 function renderLiveEvents() {
   const container = document.getElementById("live-list");
   const events = [...liveEventsById.values()].filter((e) => !selectedSport || e.sport === selectedSport);
@@ -778,9 +785,10 @@ function renderLiveEvents() {
       const primaryMarket = e.odds?.[0];
       const odds = primaryMarket?.selections;
       const showScore = typeof e.homeScore === "number" && typeof e.awayScore === "number";
+      const clockClass = isClockMissing(e) ? "clock-missing" : "";
       return `
         <div class="live-card" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
-          <div class="lc-top"><span>${sportIcon[e.sport] || ""} ${e.league}</span><span>${e.minuteOrPeriod}</span></div>
+          <div class="lc-top"><span>${sportIcon[e.sport] || ""} ${e.league}</span><span class="${clockClass}">${e.minuteOrPeriod}</span></div>
           <div class="lc-teams">
             <span>${e.home}</span>
             ${showScore ? `<span class="lc-score">${e.homeScore} - ${e.awayScore}</span>` : '<span style="color:var(--muted);font-size:.8rem">AO VIVO</span>'}
@@ -852,12 +860,14 @@ function renderMatchTracker(e) {
     return;
   }
 
+  const clockClass = isClockMissing(e) ? " clock-missing" : "";
+
   if (e.sport === "formula1") {
     el.innerHTML = `
       <div class="mt-live"><span class="dot"></span> AO VIVO</div>
       <div style="text-align:center">
         <div style="font-weight:700;font-size:1.05rem">${e.home}</div>
-        <div class="mt-period" style="margin-top:8px">${e.minuteOrPeriod}</div>
+        <div class="mt-period${clockClass}" style="margin-top:8px">${e.minuteOrPeriod}</div>
       </div>`;
     return;
   }
@@ -870,7 +880,7 @@ function renderMatchTracker(e) {
       ${hasScore ? `<div class="mt-score">${e.homeScore} - ${e.awayScore}</div>` : '<div style="color:var(--muted);font-size:.85rem">vs</div>'}
       <div class="mt-team">${e.away}</div>
     </div>
-    <div class="mt-period">${e.minuteOrPeriod}</div>
+    <div class="mt-period${clockClass}">${e.minuteOrPeriod}</div>
     ${renderStatsRow(e.statistics)}`;
 }
 

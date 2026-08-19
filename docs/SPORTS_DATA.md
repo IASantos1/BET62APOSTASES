@@ -258,6 +258,28 @@ Alterações de código:
   linha sob o cronómetro com os três valores por equipa; some por completo se `statistics` estiver
   ausente (nunca inventa zeros para um jogo sem estes dados).
 
+### Correção: `matchClock` do ténis não tem `minute`/`second`
+
+Uma amostra real de `/paddypower/live-events?sport=tennis` revelou que `matchClock` **não é
+uniforme entre desportos**: futebol traz `{minute, second, period: "1H"/"2H"}`, mas ténis traz só
+`{period: "Set 2", periodId: "2"}` — sem `minute` nem `second`. `formatMatchClock()`
+(`pulsescore/client.ts`) e `formatWsMatchClock()` (`wsClient.ts`) assumiam sempre `minute`
+numérico e caíam no fallback genérico "AO VIVO" para qualquer desporto sem esse campo — corrigido
+para usar `clock.period` como texto quando `minute` não existir (ex: ténis mostra "Set 2" em vez
+de "AO VIVO"). `PulsescoreMatchClock`/`WsMatchClock` passaram a ter todos os campos opcionais.
+
+O mesmo exemplo mostrou `score: {home, away, info}` (ex: `{home:"4", away:"4", info:"Set 2"}` —
+jogos do set atual, não o resultado final) e `statistics.sets` (array de sets por jogador, ex:
+`{home:[6,6], away:[4,6], homeServe:true}`) — formas próprias do ténis, distintas de
+`statistics.football`. `score.home`/`score.away` já são lidos genericamente por
+`parsePulsescoreScore()`, mas `statistics.sets` ainda não tem UI própria (só `statistics.football`
+tem, na linha de cartões/cantos) — fica por fazer se for pedido.
+
+Também foi pedido, e implementado no frontend (`web/app.js`): quando um evento ao vivo não tem
+relógio real nenhum (`matchClock` ausente ou numa forma não reconhecida, ficando no fallback "AO
+VIVO"), o texto do relógio aparece a **vermelho** (`isClockMissing()` + classe `.clock-missing`)
+em vez de se confundir com um relógio normal — tanto no cartão de "Ao Vivo" como no Match Tracker.
+
 ⚠️ **Por confirmar**: a paddypower cobre basquete/hóquei de gelo/voleibol/MMA da mesma forma?
 `/paddypower/live-events/sports` só mostrou eventos ao vivo reais para futebol, ténis, basebol,
 esports e ténis de mesa no momento da amostra — os outros desportos podem simplesmente não ter

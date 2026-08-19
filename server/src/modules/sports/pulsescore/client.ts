@@ -192,10 +192,14 @@ interface PulsescoreMarket {
   line?: number;
 }
 // CONFIRMED via real "paddypower" /live-events samples — absent on the earlier "10bet" samples.
+// Shape differs per sport: futebol traz {minute, second, period: "1H"/"2H"}; ténis traz só
+// {period: "Set 2", periodId: "2"}, sem minute/second — os dois têm de ser tratados em
+// formatMatchClock() abaixo, sem assumir que `minute` está sempre presente.
 interface PulsescoreMatchClock {
-  minute: number;
-  second: number;
-  period: string; // e.g. "1H", "2H"
+  minute?: number;
+  second?: number;
+  period?: string; // futebol: "1H"/"2H"; ténis: "Set 2"
+  periodId?: string;
 }
 interface PulsescoreTeamStatistics {
   yellowCards?: number;
@@ -510,9 +514,14 @@ function parsePulsescoreScore(score: PulsescoreScore | undefined): { homeScore?:
   return { homeScore: h, awayScore: a };
 }
 
+// Futebol: {minute, second, period} -> "90'". Ténis (sem minute/second, CONFIRMADO num exemplo
+// real): {period: "Set 2"} -> "Set 2". Sem nenhum dos dois campos, cai no fallback (o frontend
+// destaca esse caso a vermelho — ver clock-missing em web/app.js).
 function formatMatchClock(clock: PulsescoreMatchClock | undefined, fallback: string): string {
-  if (!clock || typeof clock.minute !== "number") return fallback;
-  return `${clock.minute}'`;
+  if (!clock) return fallback;
+  if (typeof clock.minute === "number") return `${clock.minute}'`;
+  if (typeof clock.period === "string" && clock.period.trim() !== "") return clock.period;
+  return fallback;
 }
 
 function mapStatistics(stats: PulsescoreStatistics | undefined) {

@@ -103,9 +103,12 @@ function parseScore(score: WsEvent["score"]): { homeScore?: number; awayScore?: 
   return {};
 }
 
+// Mesma lógica de client.ts: futebol tem minute/second, ténis só tem period (ex: "Set 2").
 function formatWsMatchClock(clock: WsMatchClock | undefined, fallback: string): string {
-  if (!clock || typeof clock.minute !== "number") return fallback;
-  return `${clock.minute}'`;
+  if (!clock) return fallback;
+  if (typeof clock.minute === "number") return `${clock.minute}'`;
+  if (typeof clock.period === "string" && clock.period.trim() !== "") return clock.period;
+  return fallback;
 }
 
 function normalizeWsMarket(m: WsMarket): LiveOdds {
