@@ -8,14 +8,23 @@ comandos por si a partir daqui, veja a secção "Alternativa: Railway CLI" no fi
 
 ## Arquitetura do deploy
 
-Três peças no mesmo projeto Railway:
+Um único serviço Node no Railway serve tudo: a API Express (`server/`) e os ficheiros
+estáticos do frontend (`web/`) a partir do **mesmo processo e da mesma origem**. Já não há
+dois serviços nem duas Root Directories para configurar — o `package.json` na raiz do
+repositório orquestra a instalação/build/arranque do `server/`, e o próprio Express
+(`server/src/app.ts`) serve `web/index.html`, `web/app.js`, `web/api.js`, etc. a partir das
+mesmas rotas.
+
+Duas peças no projeto Railway:
 
 1. **Postgres** — plugin gerido do Railway (botão "+ New" → "Database" → "PostgreSQL").
-2. **Serviço `server`** — a API Node/Express (pasta `server/`).
-3. **Serviço `web`** — o frontend estático servido por `web/server.js` (pasta `web/`).
+2. **Serviço único** — API + frontend juntos, deploy a partir da raiz do repositório
+   (sem definir Root Directory nenhuma — a raiz já tem o `package.json` e o `railway.json`
+   corretos).
 
-São dois serviços porque o repositório é um monorepo com dois `package.json` distintos —
-é o padrão recomendado pelo próprio Railway para monorepos.
+Como frontend e backend passam a estar na mesma origem, não é preciso configurar
+`BET62_API_BASE`/`BET62_WS_BASE` nem apontar `CORS_ORIGIN` para outro domínio — o browser
+já fala com `/api/...` e `wss://<mesmo-domínio>` diretamente.
 
 ## Passo a passo
 
@@ -26,56 +35,42 @@ conforme o que tiver mais atual).
 
 ### 2. Adicionar o Postgres
 **+ New → Database → Add PostgreSQL**. O Railway cria automaticamente a variável
-`DATABASE_URL` nesse plugin — vamos referenciá-la no serviço `server` a seguir.
+`DATABASE_URL` nesse plugin — vamos referenciá-la no serviço principal a seguir.
 
-### 3. Configurar o serviço `server`
-No primeiro serviço criado a partir do repo (ou crie um novo apontando ao mesmo repo):
-- **Settings → Root Directory**: `server`
+### 3. Configurar o serviço
+No serviço criado a partir do repo:
+- **Settings → Root Directory**: deixe vazio (a raiz do repositório é o serviço).
 - **Variables**, adicionar:
   - `DATABASE_URL` → clique em "Add Reference" e escolha a variável `DATABASE_URL` do
     plugin Postgres (não copie o valor à mão — assim atualiza sozinho se o Postgres mudar).
   - `JWT_ACCESS_SECRET` → gerar com `openssl rand -hex 48`
   - `JWT_REFRESH_SECRET` → gerar com `openssl rand -hex 48` (diferente do anterior)
   - `NODE_ENV` → `production`
-  - `CORS_ORIGIN` → o domínio do serviço `web` (só sabe o valor final depois do passo 5;
-    pode voltar aqui para o ajustar)
   - Opcionais, deixe vazio até ter as contas aprovadas (ver `docs/PAYMENTS.md` e
     `docs/SPORTS_DATA.md`): `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
     `REVOLUT_CLIENT_ID`, `REVOLUT_PRIVATE_KEY`, `REVOLUT_ACCOUNT_ID`,
     `PULSESCORE_API_KEY`, `API_FOOTBALL_KEY`
-- O Railway deteta o `railway.json` em `server/` automaticamente (build com
-  `npm run build`, arranque com `npm start`, que já inclui `prisma migrate deploy` antes de
-  o servidor arrancar — o schema fica sempre sincronizado a cada deploy).
+- O Railway deteta o `package.json` e o `railway.json` na raiz automaticamente: instala
+  dependências (que por sua vez instalam as de `server/`, via `postinstall`), builda com
+  `npm run build` e arranca com `npm start` — que já inclui `prisma migrate deploy` antes de
+  o servidor arrancar, então o schema fica sempre sincronizado a cada deploy.
 - **Settings → Networking → Generate Domain** para obter o URL público (algo como
-  `https://bet62-server-production.up.railway.app`).
+  `https://bet62-production.up.railway.app`) — este único domínio serve tanto o site como
+  a API (`/api/...`).
 
-### 4. Configurar o serviço `web`
-**+ New → GitHub Repo** (mesmo repositório outra vez, como segundo serviço):
-- **Settings → Root Directory**: `web`
-- **Variables**:
-  - `BET62_API_BASE` → `https://<domínio-do-server>/api` (o domínio do passo 3)
-  - `BET62_WS_BASE` → `wss://<domínio-do-server>` (mesmo domínio, `wss://` em vez de
-    `https://`)
-- O `web/railway.json` já configura build/arranque automaticamente.
-- **Settings → Networking → Generate Domain** para obter o URL público do site.
-
-### 5. Fechar o CORS
-Volte ao serviço `server` → Variables → `CORS_ORIGIN` → cole o domínio gerado para o `web`
-no passo 4 (ex: `https://bet62-web-production.up.railway.app`, sem barra final). Guarde —
-isto reinicia o serviço automaticamente.
-
-### 6. Validar
-- Abra o domínio do `web` no browser → deve carregar a página inicial do Bet62.
+### 4. Validar
+- Abra o domínio gerado no browser → deve carregar a página inicial do Bet62 diretamente
+  (sem precisar de segundo domínio).
 - Registe uma conta de teste → se o perfil carregar e o saldo aparecer, a ligação
   frontend → backend → Postgres está a funcionar de ponta a ponta.
-- `https://<domínio-do-server>/api/health` deve devolver `{"status":"ok"}`.
+- `https://<domínio>/api/health` deve devolver `{"status":"ok"}`.
 
-### 7. Ligar Stripe/Revolut/Pulsescore/API-Football (quando tiver as contas aprovadas)
+### 5. Ligar Stripe/Revolut/Pulsescore/API-Football (quando tiver as contas aprovadas)
 - No painel Stripe, configurar o endpoint de webhook como
-  `https://<domínio-do-server>/api/payments/stripe/webhook` e copiar o
-  `STRIPE_WEBHOOK_SECRET` gerado para a variável no Railway.
+  `https://<domínio>/api/payments/stripe/webhook` e copiar o `STRIPE_WEBHOOK_SECRET`
+  gerado para a variável no Railway.
 - Preencher as restantes variáveis (`STRIPE_SECRET_KEY`, `REVOLUT_*`, `PULSESCORE_API_KEY`,
-  `API_FOOTBALL_KEY`) e redesploy do serviço `server`.
+  `API_FOOTBALL_KEY`) e redeploy do serviço.
 - Sem `PULSESCORE_API_KEY`, o sistema continua a funcionar com o feed de desporto simulado
   (`SPORTS_DATA_MOCK_FALLBACK=true` por defeito) — não é bloqueante para o resto da
   plataforma funcionar.
@@ -87,3 +82,9 @@ Railway CLI (`npm i -g @railway/cli`) na sua máquina, gere um **Project Token**
 Railway → Project Settings → Tokens, e cole-o aqui como variável de ambiente
 `RAILWAY_TOKEN`. Com isso eu consigo correr `railway up`, `railway variables set`, etc.
 diretamente. Sem esse token não tenho como autenticar-me na sua conta.
+
+## Desenvolvimento local do frontend isolado (opcional)
+
+Já não existe `web/server.js`/`web/package.json` — em desenvolvimento local, o próprio
+`npm run dev` (raiz ou `server/`) já serve o frontend em `http://localhost:4000` junto com
+a API, exatamente como vai acontecer em produção. Não é preciso correr o frontend à parte.
