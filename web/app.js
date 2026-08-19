@@ -1,3 +1,124 @@
+// ====================== TEMA AUTOMÁTICO (sem botão manual) ======================
+// Já aplicado uma vez inline no <head> para evitar flash; aqui só voltamos a
+// verificar a cada minuto para apanhar a transição das 08:00 / 20:00 com a aba aberta.
+function applyAutoTheme() {
+  const hour = new Date().getHours();
+  const theme = hour >= 8 && hour < 20 ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", theme);
+}
+setInterval(applyAutoTheme, 60000);
+
+// ====================== DESPORTOS ======================
+const SPORTS_META = [
+  { id: "football", label: "Futebol", icon: "⚽" },
+  { id: "tennis", label: "Ténis", icon: "🎾" },
+  { id: "basketball", label: "Basquete", icon: "🏀" },
+  { id: "ice_hockey", label: "Hóquei", icon: "🏒" },
+  { id: "baseball", label: "Beisebol", icon: "⚾" },
+  { id: "volleyball", label: "Voleibol", icon: "🏐" },
+  { id: "formula1", label: "Fórmula 1", icon: "🏎️" },
+  { id: "mma", label: "MMA", icon: "🥋" },
+];
+let selectedSport = null; // null = todos
+
+function renderSportSubnav() {
+  const el = document.getElementById("sport-subnav");
+  const chips = [{ id: null, label: "Todos", icon: "🔀" }, ...SPORTS_META];
+  el.innerHTML = chips
+    .map(
+      (s) =>
+        `<div class="sport-chip ${selectedSport === s.id ? "active" : ""}" onclick="selectSport(${s.id ? `'${s.id}'` : "null"})">${s.icon} ${s.label}</div>`
+    )
+    .join("");
+}
+function selectSport(sportId) {
+  selectedSport = sportId;
+  renderSportSubnav();
+  const active = pageHistory[pageHistory.length - 1];
+  if (active === "aovivo") renderLiveEvents();
+  if (active === "esportes") renderPrematchList();
+}
+
+// Odds pré-jogo estáticas de demonstração — o motor real de compilação de odds pré-jogo
+// (fora do escopo desta fase) ainda não existe; isto é só para a navegação/página de
+// mercados ser testável já.
+function marketsFor(sport, homeScore, awayScore) {
+  const h = homeScore >= awayScore ? 1.9 : 2.3;
+  const a = homeScore >= awayScore ? 2.3 : 1.9;
+  switch (sport) {
+    case "football":
+      return [
+        { market: "1X2", selections: { casa: h, empate: 3.4, fora: a } },
+        { market: "Total (mais/menos 2.5)", selections: { mais: 1.85, menos: 1.95 } },
+        { market: "Ambas Marcam", selections: { sim: 1.7, não: 2.1 } },
+      ];
+    case "basketball":
+      return [
+        { market: "Vencedor", selections: { casa: h - 0.2, fora: a - 0.2 } },
+        { market: "Hándicap (-5.5 / +5.5)", selections: { casa: 1.9, fora: 1.9 } },
+      ];
+    case "tennis":
+      return [{ market: "Vencedor do encontro", selections: { casa: h, fora: a } }];
+    case "ice_hockey":
+      return [{ market: "Moneyline", selections: { casa: h, empate: 4.2, fora: a } }];
+    case "baseball":
+      return [{ market: "Moneyline", selections: { casa: h, fora: a } }];
+    case "volleyball":
+      return [{ market: "Vencedor", selections: { casa: h - 0.1, fora: a - 0.1 } }];
+    case "mma":
+      return [
+        { market: "Vencedor do combate", selections: { casa: h, fora: a } },
+        { market: "Método de vitória", selections: { ko_tko: 2.1, submissão: 3.4, decisão: 2.8 } },
+      ];
+    case "formula1":
+      return [{ market: "Vencedor da corrida", selections: { Verstappen: 1.45, Norris: 3.6, Leclerc: 6.5 } }];
+    default:
+      return [];
+  }
+}
+function inHours(h) {
+  const d = new Date();
+  d.setHours(d.getHours() + h, 0, 0, 0);
+  return d;
+}
+const PREMATCH_EVENTS = [
+  { id: "pm:football-1", sport: "football", league: "Primeira Liga", home: "Sporting CP", away: "Braga", kickoff: inHours(3) },
+  { id: "pm:football-2", sport: "football", league: "Premier League", home: "Man City", away: "Liverpool", kickoff: inHours(26) },
+  { id: "pm:tennis-1", sport: "tennis", league: "Roland Garros", home: "N. Djokovic", away: "D. Medvedev", kickoff: inHours(5) },
+  { id: "pm:basketball-1", sport: "basketball", league: "NBA", home: "LA Lakers", away: "Boston Celtics", kickoff: inHours(8) },
+  { id: "pm:hockey-1", sport: "ice_hockey", league: "NHL", home: "Edmonton Oilers", away: "Colorado Avalanche", kickoff: inHours(30) },
+  { id: "pm:baseball-1", sport: "baseball", league: "MLB", home: "LA Dodgers", away: "Houston Astros", kickoff: inHours(20) },
+  { id: "pm:volleyball-1", sport: "volleyball", league: "Superliga", home: "Benfica", away: "Sporting CP", kickoff: inHours(48) },
+  { id: "pm:f1-1", sport: "formula1", league: "Fórmula 1", home: "GP de Mónaco", away: "Qualificação", kickoff: inHours(72) },
+  { id: "pm:mma-1", sport: "mma", league: "UFC 310", home: "C. McGregor", away: "N. Diaz", kickoff: inHours(96) },
+].map((e) => ({ ...e, homeScore: 0, awayScore: 0, odds: marketsFor(e.sport, 0, 0), status: "scheduled" }));
+
+function renderPrematchList() {
+  const container = document.getElementById("prematch-list");
+  const events = PREMATCH_EVENTS.filter((e) => !selectedSport || e.sport === selectedSport);
+  if (!events.length) {
+    container.innerHTML = '<div class="empty-note">Sem jogos agendados para este desporto neste momento</div>';
+    return;
+  }
+  const icon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
+  container.innerHTML = events
+    .map(
+      (e) => `
+      <div class="live-card" onclick="openMarket('${e.id}', false)">
+        <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.kickoff)}</span></div>
+        <div class="lc-teams"><span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span></div>
+      </div>`
+    )
+    .join("");
+}
+function formatKickoff(d) {
+  const date = new Date(d);
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  const time = date.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" });
+  return sameDay ? `Hoje, ${time}` : date.toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit" }) + `, ${time}`;
+}
+
 // ====================== STATE ======================
 let currentProfile = null;
 let currentBalance = null;
@@ -5,25 +126,29 @@ let pageHistory = ["destaques"];
 let selectedDepositMethod = "STRIPE_CARD";
 let liveSocket = null;
 const liveEventsById = new Map();
+let currentMarketEvent = null;
+const betslipSelections = new Map(); // key -> { eventId, market, selection, odd }
 
 // ====================== NAVIGATION ======================
 function showPage(page) {
   if (pageHistory[pageHistory.length - 1] !== page) pageHistory.push(page);
 
-  ["destaques", "profile", "esportes", "aovivo", "casino"].forEach((p) => {
+  ["destaques", "profile", "esportes", "aovivo", "casino", "market"].forEach((p) => {
     const el = document.getElementById("page-" + p);
     if (el) el.classList.toggle("hidden", p !== page);
   });
   document.querySelectorAll(".top-nav-item").forEach((t) => {
     t.classList.toggle("active", t.dataset.page === page);
   });
+  document.getElementById("sport-subnav").classList.toggle("hidden", page !== "esportes" && page !== "aovivo");
 
-  const showBack = page === "profile" || pageHistory.length > 1;
-  document.getElementById("btn-back").classList.toggle("hidden", !showBack || page === "destaques");
+  const showBack = page !== "destaques";
+  document.getElementById("btn-back").classList.toggle("hidden", !showBack);
   document.getElementById("btn-menu").classList.toggle("hidden", showBack && page === "profile");
 
   if (page === "profile") loadProfile();
-  if (page === "aovivo") ensureLiveSocket();
+  if (page === "aovivo") { renderSportSubnav(); ensureLiveSocket(); }
+  if (page === "esportes") { renderSportSubnav(); renderPrematchList(); }
 }
 
 function goBack() {
@@ -314,7 +439,7 @@ async function refreshWithdrawalsList() {
   try {
     const withdrawals = await Bet62Api.listWithdrawals();
     if (!withdrawals.length) {
-      container.innerHTML = '<div style="color:var(--muted);font-size:.8rem;text-align:center;padding:10px 0">Sem levantamentos ainda</div>';
+      container.innerHTML = '<div class="empty-note">Sem levantamentos ainda</div>';
       return;
     }
     const statusLabels = {
@@ -386,7 +511,7 @@ async function submitDeposit() {
   const btn = document.getElementById("btn-deposit");
   btn.disabled = true;
   try {
-    const result = await Bet62Api.createDeposit(selectedDepositMethod, amountEur, phone || undefined);
+    await Bet62Api.createDeposit(selectedDepositMethod, amountEur, phone || undefined);
     closeDeposit();
     if (selectedDepositMethod === "STRIPE_MULTIBANCO") {
       alert("Depósito iniciado. A referência Multibanco será apresentada assim que o Stripe confirmar o pagamento (fluxo completo requer Stripe.js no frontend com a chave publicável).");
@@ -413,7 +538,7 @@ function ensureLiveSocket() {
   if (liveSocket && liveSocket.readyState <= 1) return;
 
   const statusEl = document.getElementById("ws-status");
-  liveSocket = new WebSocket(`${window.BET62_CONFIG.WS_BASE}/ws/live?sports=football,tennis,basketball`);
+  liveSocket = new WebSocket(`${window.BET62_CONFIG.WS_BASE}/ws/live`);
 
   liveSocket.onopen = () => {
     statusEl.textContent = "🟢 Ligado ao feed ao vivo";
@@ -434,35 +559,36 @@ function ensureLiveSocket() {
       liveEventsById.set(data.event.id, data.event);
     }
     renderLiveEvents();
+    if (currentMarketEvent && liveEventsById.has(currentMarketEvent.id)) {
+      currentMarketEvent = liveEventsById.get(currentMarketEvent.id);
+      if (pageHistory[pageHistory.length - 1] === "market") renderMarketPage();
+    }
   };
 }
 
 function renderLiveEvents() {
   const container = document.getElementById("live-list");
-  const events = [...liveEventsById.values()];
+  const events = [...liveEventsById.values()].filter((e) => !selectedSport || e.sport === selectedSport);
   if (!events.length) {
-    container.innerHTML = '<div style="color:var(--muted);text-align:center;padding:20px 0">Sem eventos ao vivo neste momento</div>';
+    container.innerHTML = '<div class="empty-note">Sem eventos ao vivo para este desporto neste momento</div>';
     return;
   }
-  const sportIcon = { football: "⚽", tennis: "🎾", basketball: "🏀" };
+  const sportIcon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
   container.innerHTML = events
     .map((e) => {
       const odds = e.odds?.[0]?.selections;
+      const showScore = e.sport !== "formula1";
       return `
-        <div class="live-card">
+        <div class="live-card" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
           <div class="lc-top"><span>${sportIcon[e.sport] || ""} ${e.league}</span><span>${e.minuteOrPeriod}</span></div>
           <div class="lc-teams">
             <span>${e.home}</span>
-            <span class="lc-score">${e.homeScore} - ${e.awayScore}</span>
+            ${showScore ? `<span class="lc-score">${e.homeScore} - ${e.awayScore}</span>` : '<span style="color:var(--muted);font-size:.8rem">AO VIVO</span>'}
             <span>${e.away}</span>
           </div>
           ${
             odds
-              ? `<div class="lc-odds">
-                  <div>1<br>${odds.home?.toFixed ? odds.home.toFixed(2) : odds.home}</div>
-                  <div>X<br>${odds.draw?.toFixed ? odds.draw.toFixed(2) : odds.draw ?? "-"}</div>
-                  <div>2<br>${odds.away?.toFixed ? odds.away.toFixed(2) : odds.away}</div>
-                </div>`
+              ? `<div class="lc-odds">${Object.entries(odds).slice(0, 3).map(([k, v]) => `<div>${k}<br>${Number(v).toFixed(2)}</div>`).join("")}</div>`
               : ""
           }
         </div>`;
@@ -470,8 +596,106 @@ function renderLiveEvents() {
     .join("");
 }
 
+// ====================== MERCADOS + MATCH TRACKER ======================
+function openMarket(eventId, isLive) {
+  const event = isLive ? liveEventsById.get(eventId) : PREMATCH_EVENTS.find((e) => e.id === eventId);
+  if (!event) return;
+  currentMarketEvent = event;
+  currentMarketEvent._isLive = isLive;
+  showPage("market");
+  renderMarketPage();
+}
+
+function renderMarketPage() {
+  const e = currentMarketEvent;
+  if (!e) return;
+  const sportMeta = SPORTS_META.find((s) => s.id === e.sport);
+  document.getElementById("market-league").textContent = `${sportMeta ? sportMeta.icon + " " : ""}${e.league}`;
+  document.getElementById("market-title").textContent = `${e.home} vs ${e.away}`;
+  renderMatchTracker(e);
+  renderMarketGroups(e);
+  updateBetslipBar();
+}
+
+function renderMatchTracker(e) {
+  const el = document.getElementById("match-tracker");
+  const isLive = e._isLive || e.status === "live";
+
+  if (!isLive) {
+    el.innerHTML = `
+      <div class="mt-scheduled">
+        <span class="status-badge status-pending">PRÉ-JOGO</span>
+        <div class="big" style="margin-top:10px">${formatKickoff(e.kickoff)}</div>
+        <div style="color:var(--muted);font-size:.82rem;margin-top:6px">${e.home} vs ${e.away}</div>
+      </div>`;
+    return;
+  }
+
+  if (e.sport === "formula1") {
+    el.innerHTML = `
+      <div class="mt-live"><span class="dot"></span> AO VIVO</div>
+      <div style="text-align:center">
+        <div style="font-weight:700;font-size:1.05rem">${e.home}</div>
+        <div class="mt-period" style="margin-top:8px">${e.minuteOrPeriod}</div>
+      </div>`;
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="mt-live"><span class="dot"></span> AO VIVO</div>
+    <div class="mt-teams">
+      <div class="mt-team">${e.home}</div>
+      <div class="mt-score">${e.homeScore} - ${e.awayScore}</div>
+      <div class="mt-team">${e.away}</div>
+    </div>
+    <div class="mt-period">${e.minuteOrPeriod}</div>`;
+}
+
+function renderMarketGroups(e) {
+  const el = document.getElementById("market-groups");
+  if (!e.odds || !e.odds.length) {
+    el.innerHTML = '<div class="empty-note">Sem mercados disponíveis para este evento</div>';
+    return;
+  }
+  el.innerHTML = e.odds
+    .map((group) => {
+      const rows = Object.entries(group.selections)
+        .map(([label, odd]) => {
+          const key = `${e.id}|${group.market}|${label}`;
+          const picked = betslipSelections.has(key);
+          return `<div class="selection-btn ${picked ? "picked" : ""}" onclick='toggleSelection(${JSON.stringify(key)}, ${JSON.stringify({ eventId: e.id, market: group.market, selection: label, odd })})'>
+            <span class="sel-label">${label}</span><span class="sel-odd">${Number(odd).toFixed(2)}</span>
+          </div>`;
+        })
+        .join("");
+      return `<div class="market-group"><h4>${group.market}</h4><div class="selection-row">${rows}</div></div>`;
+    })
+    .join("");
+}
+
+function toggleSelection(key, selection) {
+  if (betslipSelections.has(key)) betslipSelections.delete(key);
+  else betslipSelections.set(key, selection);
+  renderMarketGroups(currentMarketEvent);
+  updateBetslipBar();
+}
+
+function updateBetslipBar() {
+  const n = betslipSelections.size;
+  document.getElementById("betslip-count").textContent = n ? `${n} seleção(ões)` : "Nenhuma seleção";
+}
+
+function placeBetDemo() {
+  if (!Bet62Api.isAuthenticated()) return openAuth("login");
+  if (!betslipSelections.size) return alert("Escolha pelo menos uma seleção nos mercados acima.");
+  alert(
+    `🧾 Boletim com ${betslipSelections.size} seleção(ões).\n\nO motor de apostas (criação de bilhete, cálculo de retorno e liquidação) ainda não foi implementado nesta fase — esta é só a navegação de mercados. As seleções foram mantidas.`
+  );
+}
+
 // ====================== INIT ======================
 (async function init() {
+  applyAutoTheme();
   updateHeader();
   showPage("destaques");
   if (Bet62Api.isAuthenticated()) {

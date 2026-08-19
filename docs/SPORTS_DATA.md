@@ -1,5 +1,19 @@
 # Dados Desportivos — Sistema Híbrido Pulsescore + API-Football
 
+## Desportos cobertos
+
+Futebol, ténis, basquete, hóquei de gelo, beisebol, voleibol, Fórmula 1 e MMA (8 no total).
+
+⚠️ **Nota sobre o plano Pulsescore**: o plano de 149€ mencionado inicialmente cobria 3 canais
+(futebol/ténis/basquete). Expandir para os 8 desportos acima pode exigir um plano superior ou
+canais adicionais — confirmar com a Pulsescore antes de assumir que os 8 cabem no mesmo preço.
+
+A Fórmula 1 não tem o formato "casa vs fora" dos outros desportos (é uma corrida com vários
+pilotos, não um confronto direto). Para não criar uma segunda estrutura de dados só para ela,
+o tipo `LiveEvent` é reaproveitado: `home`/`away` guardam o nome do Grande Prémio e o tipo de
+sessão, e a grelha de pilotos vai nas seleções do mercado "Vencedor da corrida" — ver
+`server/src/modules/sports/mockFeed.ts`.
+
 ⚠️ **Nota de validação**: `pulsescore.com` e `www.api-football.com` estavam bloqueados pelo
 proxy de rede deste ambiente durante a construção, por isso os detalhes de integração da
 Pulsescore abaixo (URL de ligação, formato de mensagens, autenticação) são um **contrato de

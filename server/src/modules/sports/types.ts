@@ -1,4 +1,23 @@
-export type Sport = "football" | "tennis" | "basketball";
+export type Sport =
+  | "football"
+  | "tennis"
+  | "basketball"
+  | "ice_hockey"
+  | "baseball"
+  | "volleyball"
+  | "formula1"
+  | "mma";
+
+export const ALL_SPORTS: Sport[] = [
+  "football",
+  "tennis",
+  "basketball",
+  "ice_hockey",
+  "baseball",
+  "volleyball",
+  "formula1",
+  "mma",
+];
 
 export interface LiveOdds {
   market: string; // e.g. "1x2", "moneyline", "total_games"

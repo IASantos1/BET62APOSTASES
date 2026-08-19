@@ -7,29 +7,48 @@
 <meta name="theme-color" content="#0c0c0e">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script>
+// Aplicado antes do CSS carregar, para não haver "flash" do tema errado.
+// Sem botão manual: modo claro das 08:00 às 20:00, escuro fora desse intervalo.
+(function () {
+  var hour = new Date().getHours();
+  var theme = hour >= 8 && hour < 20 ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", theme);
+})();
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
 <style>
-:root {
-    --red:#e63027; --bg:#0c0c0e; --surface:#161618; --surface2:#1e1e22;
+:root, :root[data-theme="dark"] {
+    --red:#e63027; --red-dim:#c42820; --bg:#0c0c0e; --surface:#161618; --surface2:#1e1e22;
     --border:#2a2a2e; --text:#f0f0f2; --muted:#8a8a96; --gold:#f5c842; --green:#22c55e;
 }
+:root[data-theme="light"] {
+    --red:#d92a22; --red-dim:#b8241d; --bg:#f4f4f6; --surface:#ffffff; --surface2:#f0f0f3;
+    --border:#e1e1e6; --text:#141416; --muted:#68686f; --gold:#a4720f; --green:#16a34a;
+}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding-bottom:env(safe-area-inset-bottom)}
+html,body{background:var(--bg)}
+body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding-bottom:env(safe-area-inset-bottom);transition:background .3s,color .3s}
 .header{position:sticky;top:0;z-index:100;background:rgba(12,12,14,.97);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;justify-content:space-between}
+:root[data-theme="light"] .header{background:rgba(255,255,255,.95)}
 .header-left{display:flex;align-items:center;gap:12px}
 .back-btn,.menu-btn{background:none;border:none;color:var(--text);font-size:1.25rem;cursor:pointer;padding:4px}
-.logo{font-family:'Bebas Neue',sans-serif;font-size:1.7rem;letter-spacing:1px}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:1.7rem;letter-spacing:1px;color:var(--text)}
 .logo span{color:var(--red)}
 .header-right{display:flex;align-items:center;gap:10px}
-.balance-pill{background:var(--surface2);border:1px solid var(--border);padding:6px 12px;border-radius:20px;font-size:.85rem;font-weight:700;color:var(--gold)}
+.balance-pill{background:var(--surface2);border:1px solid var(--border);padding:6px 12px;border-radius:20px;font-size:.85rem;font-weight:700;color:var(--gold);font-variant-numeric:tabular-nums}
 .add-btn{width:34px;height:34px;border-radius:50%;background:var(--green);border:none;color:#fff;font-size:1.2rem;display:flex;align-items:center;justify-content:center;cursor:pointer}
-.avatar-btn{width:34px;height:34px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:1.1rem;cursor:pointer}
+.avatar-btn{width:34px;height:34px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:1.1rem;cursor:pointer;color:var(--text)}
 .top-nav{display:flex;gap:4px;padding:10px 12px;overflow-x:auto;background:var(--bg);border-bottom:1px solid var(--border);scrollbar-width:none}
 .top-nav::-webkit-scrollbar{display:none}
 .top-nav-item{padding:8px 14px;border-radius:20px;font-size:.78rem;font-weight:600;color:var(--muted);white-space:nowrap;cursor:pointer;display:flex;align-items:center;gap:5px}
 .top-nav-item.active{background:var(--surface2);color:var(--text)}
 .live-dot{width:6px;height:6px;background:var(--red);border-radius:50%}
+.sport-subnav{display:flex;gap:6px;padding:8px 12px;overflow-x:auto;background:var(--bg);border-bottom:1px solid var(--border);scrollbar-width:none}
+.sport-subnav::-webkit-scrollbar{display:none}
+.sport-chip{padding:7px 12px;border-radius:16px;font-size:.74rem;font-weight:600;color:var(--muted);white-space:nowrap;cursor:pointer;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;gap:5px}
+.sport-chip.active{border-color:var(--red);color:var(--text);background:rgba(230,48,39,.08)}
 .page{padding:16px;max-width:480px;margin:0 auto}
 .user-card{background:var(--surface);border-radius:16px;padding:18px;display:flex;align-items:center;gap:14px;margin-bottom:20px;border:1px solid var(--border)}
 .user-avatar{width:52px;height:52px;border-radius:50%;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.4rem;font-weight:700;flex-shrink:0}
@@ -39,6 +58,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 .user-id{font-size:.75rem;color:var(--muted);margin-top:2px}
 .rank-icon{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.75rem}
 .rank-gold{background:linear-gradient(145deg,#ffd700,#b8860b)}
+.logout-quick-btn{background:var(--surface2);border:1px solid var(--border);color:var(--text);width:38px;height:38px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;cursor:pointer;flex-shrink:0}
+.logout-quick-btn:hover{border-color:var(--red);color:var(--red)}
 .menu-list{display:flex;flex-direction:column;gap:8px}
 .menu-item{background:var(--surface);border-radius:14px;border:1px solid var(--border);overflow:hidden}
 .menu-header{padding:16px 18px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none}
@@ -58,7 +79,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 .field-hint{font-size:.72rem;color:var(--muted);margin-top:4px}
 .field-error{font-size:.72rem;color:var(--red);margin-top:4px}
 .btn-save{width:100%;background:var(--red);color:#fff;border:none;padding:12px;border-radius:10px;font-weight:700;font-size:.9rem;cursor:pointer;margin-top:6px}
-.btn-save:hover{background:#c42820}
+.btn-save:hover{background:var(--red-dim)}
 .btn-save:disabled{opacity:.6;cursor:not-allowed}
 .btn-outline{width:100%;background:transparent;border:1px solid var(--border);color:var(--text);padding:11px;border-radius:10px;font-weight:600;font-size:.88rem;cursor:pointer;margin-top:8px}
 .btn-danger{background:#7f1d1d;color:#fff;border:none;padding:11px;border-radius:10px;font-weight:700;width:100%;cursor:pointer;margin-top:8px}
@@ -73,14 +94,16 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 .toggle::after{content:'';position:absolute;width:20px;height:20px;background:#fff;border-radius:50%;top:3px;left:3px;transition:.2s}
 .toggle.on::after{left:23px}
 .promo-banner{background:linear-gradient(135deg,#1a0a0a,#2d0f0f);border:1px solid rgba(230,48,39,.3);border-radius:18px;padding:28px 20px;text-align:center;margin-bottom:24px}
+:root[data-theme="light"] .promo-banner{background:linear-gradient(135deg,#fff0ef,#ffe1df)}
 .promo-banner h2{font-family:'Bebas Neue',sans-serif;font-size:2.2rem}
 .promo-banner .pct{color:var(--red);font-size:3rem}
+.section-title{font-family:'Bebas Neue',sans-serif;font-size:1.3rem;margin-bottom:12px;letter-spacing:.5px}
 .casino-row{display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;scrollbar-width:none}
 .casino-row::-webkit-scrollbar{display:none}
 .casino-game{flex:0 0 110px;text-align:center;cursor:pointer}
 .casino-game .thumb{width:110px;height:110px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:2.6rem;margin-bottom:6px}
 .casino-game .name{font-size:.72rem;font-weight:600}
-.auth-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:300;align-items:center;justify-content:center;padding:16px}
+.auth-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:300;align-items:center;justify-content:center;padding:16px}
 .auth-overlay.open{display:flex}
 .auth-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;width:100%;max-width:400px;overflow:hidden;max-height:92vh;overflow-y:auto}
 .auth-tabs{display:flex}
@@ -89,7 +112,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 .auth-body{padding:24px}
 .form-group{margin-bottom:14px}
 .form-group label{display:block;font-size:.78rem;font-weight:600;color:var(--muted);margin-bottom:5px}
-.form-group input,.form-group select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;color:var(--text);font-size:.95rem;outline:none}
+.form-group input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;color:var(--text);font-size:.95rem;outline:none}
 .form-group input:focus{border-color:var(--red)}
 .auth-submit{width:100%;background:var(--red);color:#fff;border:none;padding:14px;border-radius:12px;font-weight:700;font-size:1rem;cursor:pointer;margin-top:8px}
 .auth-submit:disabled{opacity:.6;cursor:not-allowed}
@@ -97,23 +120,47 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 .auth-error.show{display:block}
 .hidden{display:none!important}
 footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
-.live-list{display:flex;flex-direction:column;gap:10px}
-.live-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px}
+.live-list,.event-list{display:flex;flex-direction:column;gap:10px}
+.live-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px;cursor:pointer;transition:border-color .15s}
+.live-card:hover{border-color:var(--red)}
 .live-card .lc-top{display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-bottom:8px}
-.live-card .lc-teams{display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:.92rem}
-.live-card .lc-score{font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--gold)}
+.live-card .lc-teams{display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:.92rem;gap:8px}
+.live-card .lc-score{font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--gold);font-variant-numeric:tabular-nums}
 .live-card .lc-odds{display:flex;gap:8px;margin-top:10px}
-.live-card .lc-odds div{flex:1;background:var(--surface2);border-radius:8px;padding:8px;text-align:center;font-size:.8rem;font-weight:700}
+.live-card .lc-odds div{flex:1;background:var(--surface2);border-radius:8px;padding:8px;text-align:center;font-size:.8rem;font-weight:700;font-variant-numeric:tabular-nums}
 .conn-badge{font-size:.7rem;color:var(--muted);text-align:center;padding:6px 0}
 .deposit-methods{display:flex;gap:8px;margin-bottom:14px}
 .dm-btn{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 6px;text-align:center;font-size:.78rem;font-weight:600;color:var(--muted);cursor:pointer}
 .dm-btn.active{border-color:var(--red);color:var(--text);background:rgba(230,48,39,.08)}
+.empty-note{color:var(--muted);text-align:center;padding:20px 0;font-size:.85rem}
+/* Market page + Match Tracker */
+.market-header{margin-bottom:16px}
+.market-header .mh-league{font-size:.75rem;color:var(--muted);margin-bottom:6px}
+.match-tracker{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px;margin-bottom:20px}
+.mt-live{display:flex;align-items:center;gap:6px;font-size:.72rem;font-weight:700;color:var(--red);margin-bottom:14px}
+.mt-live .dot{width:7px;height:7px;background:var(--red);border-radius:50%;animation:pulse 1.4s infinite}
+@media (prefers-reduced-motion: reduce){.mt-live .dot{animation:none}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.mt-teams{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.mt-team{flex:1;text-align:center;font-weight:700;font-size:.95rem}
+.mt-score{font-family:'Bebas Neue',sans-serif;font-size:2.8rem;color:var(--gold);font-variant-numeric:tabular-nums;line-height:1}
+.mt-period{text-align:center;font-size:.78rem;color:var(--muted);margin-top:10px}
+.mt-scheduled{text-align:center;padding:8px 0}
+.mt-scheduled .big{font-family:'Bebas Neue',sans-serif;font-size:1.8rem;color:var(--text)}
+.market-group{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:12px}
+.market-group h4{font-size:.85rem;margin-bottom:10px;text-transform:capitalize}
+.selection-row{display:flex;gap:8px;flex-wrap:wrap}
+.selection-btn{flex:1;min-width:80px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 6px;text-align:center;cursor:pointer;font-size:.8rem}
+.selection-btn .sel-label{display:block;color:var(--muted);font-size:.68rem;text-transform:uppercase;margin-bottom:3px}
+.selection-btn .sel-odd{display:block;font-weight:700;font-variant-numeric:tabular-nums}
+.selection-btn.picked{border-color:var(--red);background:rgba(230,48,39,.1)}
+.selection-btn.picked .sel-odd{color:var(--red)}
+.betslip-bar{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;margin:20px -16px -16px;border-radius:0 0 0 0}
+.betslip-bar button{background:var(--red);color:#fff;border:none;padding:10px 20px;border-radius:10px;font-weight:700;cursor:pointer;font-size:.85rem}
 </style>
 </head>
 <body>
 
-<!-- Config: aponta para a API do backend. Em produção, sirva o backend no mesmo domínio
-     (ex: /api) e deixe API_BASE vazio para usar caminhos relativos. -->
 <script>
 window.BET62_CONFIG = {
   API_BASE: (window.localStorage.getItem('bet62_api_base')) || 'http://localhost:4000/api',
@@ -143,6 +190,9 @@ window.BET62_CONFIG = {
     <div class="top-nav-item" data-page="casino" onclick="showPage('casino')"><i class="fas fa-dice"></i> CASINO</div>
 </div>
 
+<!-- SUB-NAV DE DESPORTOS (Esportes / Ao Vivo) -->
+<div class="sport-subnav hidden" id="sport-subnav"></div>
+
 <!-- ========== DESTAQUES ========== -->
 <div id="page-destaques" class="page">
     <div class="promo-banner">
@@ -150,7 +200,7 @@ window.BET62_CONFIG = {
         <h2><span class="pct">100%</span> ATÉ 200€</h2>
         <button style="margin-top:16px;background:var(--red);color:#fff;border:none;padding:12px 28px;border-radius:10px;font-weight:700;cursor:pointer" onclick="openAuth('register')">REGISTE-SE AGORA</button>
     </div>
-    <div style="font-family:'Bebas Neue';font-size:1.3rem;margin-bottom:12px">CASSINO EM DESTAQUE</div>
+    <div class="section-title">CASSINO EM DESTAQUE</div>
     <div class="casino-row">
         <div class="casino-game" onclick="playGame('Sweet Bonanza')"><div class="thumb" style="background:linear-gradient(135deg,#ff6b9d,#c44569)">🍭</div><div class="name">Sweet Bonanza</div></div>
         <div class="casino-game" onclick="playGame('Gates of Olympus')"><div class="thumb" style="background:linear-gradient(135deg,#3949ab,#1a237e)">⚡</div><div class="name">Gates of Olympus</div></div>
@@ -171,6 +221,7 @@ window.BET62_CONFIG = {
             </div>
             <div class="user-id" id="user-id">—</div>
         </div>
+        <button class="logout-quick-btn" id="btn-logout-quick" onclick="logout()" title="Sair" aria-label="Sair">🚪</button>
     </div>
 
     <div class="menu-list" id="profile-menus">
@@ -396,13 +447,33 @@ window.BET62_CONFIG = {
     </div>
 </div>
 
-<!-- Outras páginas -->
-<div id="page-esportes" class="page hidden" style="text-align:center;padding:60px 20px;color:var(--muted)">Página de Esportes (pré-jogo) — em desenvolvimento</div>
+<!-- ========== ESPORTES (pré-jogo) ========== -->
+<div id="page-esportes" class="page hidden">
+    <div class="section-title">PRÉ-JOGO</div>
+    <div class="event-list" id="prematch-list"></div>
+</div>
+
+<!-- ========== AO VIVO ========== -->
 <div id="page-aovivo" class="page hidden">
-    <div style="font-family:'Bebas Neue';font-size:1.3rem;margin-bottom:4px">AO VIVO</div>
+    <div class="section-title">AO VIVO</div>
     <div class="conn-badge" id="ws-status">A conectar ao feed ao vivo…</div>
     <div class="live-list" id="live-list"></div>
 </div>
+
+<!-- ========== MERCADOS (detalhe do evento) ========== -->
+<div id="page-market" class="page hidden">
+    <div class="market-header">
+        <div class="mh-league" id="market-league">—</div>
+        <div class="section-title" id="market-title" style="margin-bottom:0">—</div>
+    </div>
+    <div class="match-tracker" id="match-tracker"></div>
+    <div id="market-groups"></div>
+    <div class="betslip-bar">
+        <span id="betslip-count" style="font-size:.82rem;color:var(--muted)">Nenhuma seleção</span>
+        <button onclick="placeBetDemo()">Fazer Aposta</button>
+    </div>
+</div>
+
 <div id="page-casino" class="page hidden" style="text-align:center;padding:60px 20px;color:var(--muted)">Casino — em desenvolvimento</div>
 
 <!-- AUTH MODAL -->
