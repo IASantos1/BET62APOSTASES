@@ -326,11 +326,36 @@ text-align:right}`) — mesmo com nomes de equipa muito compridos. `renderSetsCa
 `.event-row-score`), só o cartão de sets acrescenta bandeira, ponto de serviço e a pontuação do
 jogo atual centralizada por cima.
 
-⚠️ **Por confirmar**: a paddypower cobre basquete/hóquei de gelo/voleibol/MMA da mesma forma?
-`/paddypower/live-events/sports` só mostrou eventos ao vivo reais para futebol, ténis, basebol,
-esports e ténis de mesa no momento da amostra — os outros desportos podem simplesmente não ter
-jogos a decorrer agora, ou podem não ser suportados por esta bookmaker. Fórmula 1 mantém-se em
-`unibetau` via `SPORT_BOOKMAKER_OVERRIDE` (sem evidência de cobertura pela paddypower).
+⚠️ **Por confirmar**: a paddypower cobre basquete/hóquei de gelo/voleibol/MMA da mesma forma **ao
+vivo**? `/paddypower/live-events/sports` só mostrou eventos ao vivo reais para futebol, ténis,
+basebol, esports e ténis de mesa no momento da amostra — os outros desportos podem simplesmente
+não ter jogos a decorrer agora, ou podem não ser suportados por esta bookmaker. Fórmula 1
+mantém-se em `unibetau` via `SPORT_BOOKMAKER_OVERRIDE` (sem evidência de cobertura pela
+paddypower).
+
+### ✅ Confirmado: pré-jogo (não ao vivo) rico para basquete, hóquei de gelo, voleibol, ténis e MMA
+
+O utilizador colou cinco amostras reais de `/events?page=1&limit=5` (a mesma forma
+`{total,page,limit,...,events:[...PulsescoreEvent]}` já confirmada), uma por desporto:
+voleibol (Campeonato Europeu Feminino), MMA (UFC), hóquei de gelo (Champions Hockey League,
+PWHL), ténis (challengers/UTR) e basquete (WNBA, FIBA, ligas universitárias/nacionais). Todas
+`live:false`, sem `matchClock`/`score`/`statistics` (esperado — são jogos ainda não começados),
+mas com uma cobertura de mercados tão rica quanto a já vista em futebol/beisebol: até ~30
+mercados por jogo em basquete (incluindo mercados por quarto — `FIRST_QUARTER`,
+`SECOND_QUARTER`, etc. —, `PLAYER_POINTS_ASSISTS`, `WINNING_MARGIN`, `RACE_TO_POINTS`), mercados
+por set em ténis/voleibol (`SET_WINNER`, `SET_BETTING`, hándicaps por set), e mercados completos
+de luta em MMA (método de vitória, combinações método+assalto, ida à distância).
+
+Isto **resolve a dúvida em aberto sobre o pré-jogo** destes quatro desportos — a mesma
+bookmaker por omissão (`PULSESCORE_BOOKMAKER`) que já cobre bem futebol/ténis/beisebol também
+devolve pré-jogo rico para basquete, hóquei de gelo, voleibol e MMA. A dúvida que continua em
+aberto é só sobre `/live-events` (ao vivo), não testada por estas amostras.
+
+Nota curiosa confirmada numa amostra de hóquei de gelo: o mercado `MATCH_RESULT`/"Match Odds"
+inclui uma seleção `DRAW`/"Tie" com odd real — ao contrário do beisebol (que nunca empata), o
+hóquei de gelo tem mesmo um mercado de empate genuíno no tempo regulamentar (antes de
+prolongamento/shootout), por isso não precisa da mesma proteção que foi adicionada para
+beisebol em `orderMarketsWithPrimaryFirst()`.
 
 ### Ajustes de layout pedidos + correção de um bug real (eventos terminados presos na página)
 
