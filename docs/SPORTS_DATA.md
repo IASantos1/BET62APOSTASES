@@ -50,6 +50,14 @@ Factos confirmados por este exemplo (não suposição):
 - `rawName` em cada mercado/seleção já vem pronto a mostrar (ex: "Full Time Result", "Under",
   nome da equipa) — é por isso que `normalizeMarket()` em `pulsescore/client.ts` usa
   `rawName` diretamente como rótulo em vez de inventar tradução própria.
+- Existe também `GET /{bookmaker}/{sport}/leagues/{leagueName}/events` para pedir os eventos de
+  **uma liga específica pelo nome** (ex: `leagues/Premier%20League/events`), em vez de paginar
+  todas as ligas de um desporto. Implementado em `fetchLeagueEvents()` — só o pedido foi
+  confirmado, não a resposta, por isso o parsing é defensivo (aceita `{ events: [...] }`,
+  `{ league: { events: [...] } }`, ou um array direto). Útil como otimização futura para pedir
+  só um conjunto curado de ligas em vez de tudo, mas ainda não está ligado ao polling principal
+  em `hybridService.ts` — decidir a lista de ligas a priorizar por desporto é decisão de
+  produto, não algo para adivinhar aqui.
 
 ## ⚠️ Ainda por confirmar
 

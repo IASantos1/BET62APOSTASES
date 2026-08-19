@@ -22,6 +22,17 @@ import type { LiveEvent, LiveOdds, Sport } from "../types";
  *   - Each event carries a `live` boolean — that's what separates pré-jogo from ao vivo, not a
  *     separate endpoint or query flag (nothing in the sample suggests one, so we don't guess it).
  *
+ * A second endpoint was also confirmed (request only, response not seen):
+ *
+ *   GET https://api.pulsescore.net/api/10bet/soccer/leagues/{leagueName}/events
+ *
+ * Fetches events for one named league directly, instead of paginating every league for a
+ * sport — useful for polling a curated set of leagues cheaply. `leagueName` is the same
+ * string as `league.name` from the leagues-list response, URL-encoded (e.g. "Premier League"
+ * -> "Premier%20League"). The response shape wasn't provided, so `fetchLeagueEvents()` below
+ * parses defensively (accepts `{ events: [...] }`, `{ league: { events: [...] } }`, or a bare
+ * array) rather than assuming one exact shape — confirm and simplify once a real response is seen.
+ *
  * NEEDS VALIDATION — not covered by the sample, still assumptions:
  *   - The sport slug is only confirmed for football ("soccer"). Slugs below for the other 7
  *     sports are best-effort guesses; if wrong, that sport's fetch just comes back empty/404,
@@ -106,6 +117,42 @@ async function fetchLeaguesPage(sport: Sport, page: number, limit: number): Prom
     throw Errors.internal(`Pulsescore devolveu ${res.status} para o desporto "${sport}"`);
   }
   return res.json() as Promise<PulsescoreLeaguesResponse>;
+}
+
+async function fetchLeagueEventsRaw(sport: Sport, leagueName: string): Promise<unknown> {
+  assertConfigured();
+  const slug = SPORT_SLUGS[sport];
+  const url = `${env.PULSESCORE_REST_URL}/${env.PULSESCORE_BOOKMAKER}/${slug}/leagues/${encodeURIComponent(leagueName)}/events`;
+  const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    logger.warn({ status: res.status, sport, slug, leagueName, body: body.slice(0, 300) }, "Pulsescore: pedido de liga falhou");
+    throw Errors.internal(`Pulsescore devolveu ${res.status} para a liga "${leagueName}" (${sport})`);
+  }
+  return res.json();
+}
+
+/** Extracts a PulsescoreEvent[] out of whichever response shape the API actually returns. */
+function extractEvents(data: unknown): PulsescoreEvent[] {
+  if (Array.isArray(data)) return data as PulsescoreEvent[];
+  if (data && typeof data === "object") {
+    const obj = data as Record<string, unknown>;
+    if (Array.isArray(obj.events)) return obj.events as PulsescoreEvent[];
+    if (obj.league && typeof obj.league === "object" && Array.isArray((obj.league as Record<string, unknown>).events)) {
+      return (obj.league as Record<string, unknown>).events as PulsescoreEvent[];
+    }
+  }
+  logger.warn({ data }, "Pulsescore: forma de resposta de /leagues/{name}/events não reconhecida — a devolver vazio");
+  return [];
+}
+
+/**
+ * Fetches events for one named league directly (see the NEEDS VALIDATION note above the
+ * response shape parsing). Cheaper than fetchEvents() when only a handful of leagues matter.
+ */
+export async function fetchLeagueEvents(sport: Sport, leagueName: string): Promise<LiveEvent[]> {
+  const raw = await fetchLeagueEventsRaw(sport, leagueName);
+  return extractEvents(raw).map((evt) => normalizeEvent(evt, sport));
 }
 
 function normalizeMarket(m: PulsescoreMarket): LiveOdds {
