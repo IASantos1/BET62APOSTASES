@@ -58,6 +58,13 @@ Factos confirmados por este exemplo (não suposição):
   só um conjunto curado de ligas em vez de tudo, mas ainda não está ligado ao polling principal
   em `hybridService.ts` — decidir a lista de ligas a priorizar por desporto é decisão de
   produto, não algo para adivinhar aqui.
+- E mais dois: `GET /{bookmaker}/{sport}/events?page=&limit=` (lista plana de eventos, sem
+  passar pelas ligas — `fetchEventsFlat()`) e `GET /{bookmaker}/{sport}/events/{eventId}`
+  (**um evento específico** — `fetchEventById()`). Este último já está ligado ao frontend: ao
+  abrir o Match Tracker de um evento com `source: "pulsescore"`, `openMarket()` em `web/app.js`
+  chama `GET /api/sports/events/:id/refresh?sport=` para pedir dados frescos em vez de confiar
+  só na última leitura em cache — se falhar, fica com os dados em cache, sem quebrar a UI.
+  Também sem resposta confirmada, parsing defensivo (`extractSingleEvent()`).
 
 ## ⚠️ Ainda por confirmar
 

@@ -627,6 +627,21 @@ function openMarket(eventId, isLive) {
   currentMarketEvent._isLive = isLive;
   showPage("market");
   renderMarketPage();
+
+  // Eventos reais da Pulsescore: pede dados frescos em vez de confiar só na última leitura
+  // em cache (snapshot ao vivo ou lista de pré-jogo).
+  if (event.source === "pulsescore") {
+    Bet62Api.refreshEvent(eventId, event.sport)
+      .then((res) => {
+        if (pageHistory[pageHistory.length - 1] !== "market" || !currentMarketEvent || currentMarketEvent.id !== eventId) return;
+        currentMarketEvent = res.event;
+        currentMarketEvent._isLive = isLive;
+        renderMarketPage();
+      })
+      .catch(() => {
+        /* mantém os dados em cache se a atualização falhar */
+      });
+  }
 }
 
 function renderMarketPage() {

@@ -33,6 +33,18 @@ import type { LiveEvent, LiveOdds, Sport } from "../types";
  * parses defensively (accepts `{ events: [...] }`, `{ league: { events: [...] } }`, or a bare
  * array) rather than assuming one exact shape — confirm and simplify once a real response is seen.
  *
+ * Two more endpoints were confirmed (requests only, responses not seen):
+ *
+ *   GET https://api.pulsescore.net/api/10bet/soccer/events?page=1&limit=5
+ *   GET https://api.pulsescore.net/api/10bet/soccer/events/{eventId}
+ *
+ * The first is a flat, paginated list of events for a sport — no need to walk leagues to get
+ * one. The second fetches a single event by its numeric id directly, which is the interesting
+ * one: it's the natural way to refresh one event's odds/detail on demand (e.g. when a user
+ * opens the Match Tracker for it) instead of relying on the last bulk poll. Implemented as
+ * `fetchEventsFlat()` and `fetchEventById()` below, both parsed defensively for the same
+ * reason as fetchLeagueEvents() — no response body was provided for either yet.
+ *
  * NEEDS VALIDATION — not covered by the sample, still assumptions:
  *   - The sport slug is only confirmed for football ("soccer"). Slugs below for the other 7
  *     sports are best-effort guesses; if wrong, that sport's fetch just comes back empty/404,
@@ -153,6 +165,82 @@ function extractEvents(data: unknown): PulsescoreEvent[] {
 export async function fetchLeagueEvents(sport: Sport, leagueName: string): Promise<LiveEvent[]> {
   const raw = await fetchLeagueEventsRaw(sport, leagueName);
   return extractEvents(raw).map((evt) => normalizeEvent(evt, sport));
+}
+
+interface PulsescoreFlatEventsResponse {
+  total?: number;
+  page?: number;
+  limit?: number;
+  totalPages?: number;
+  hasNextPage?: boolean;
+  hasPrevPage?: boolean;
+  events?: PulsescoreEvent[];
+}
+
+async function fetchEventsFlatPage(sport: Sport, page: number, limit: number): Promise<PulsescoreFlatEventsResponse> {
+  assertConfigured();
+  const slug = SPORT_SLUGS[sport];
+  const url = `${env.PULSESCORE_REST_URL}/${env.PULSESCORE_BOOKMAKER}/${slug}/events?page=${page}&limit=${limit}`;
+  const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    logger.warn({ status: res.status, sport, slug, body: body.slice(0, 300) }, "Pulsescore: pedido de eventos falhou");
+    throw Errors.internal(`Pulsescore devolveu ${res.status} para os eventos de "${sport}"`);
+  }
+  return res.json() as Promise<PulsescoreFlatEventsResponse>;
+}
+
+/**
+ * Flat, paginated event list for a sport — an alternative to fetchEvents() that skips the
+ * leagues nesting. NEEDS VALIDATION: response shape assumed to mirror the leagues endpoint's
+ * pagination fields with an `events` array instead of `leagues`; parsed defensively via
+ * extractEvents() so a slightly different shape (or a bare array) still works.
+ */
+export async function fetchEventsFlat(sport: Sport, opts: { maxPages?: number; limit?: number } = {}): Promise<LiveEvent[]> {
+  const maxPages = opts.maxPages ?? 3;
+  const limit = opts.limit ?? 25;
+  const events: LiveEvent[] = [];
+
+  let page = 1;
+  while (page <= maxPages) {
+    const data = await fetchEventsFlatPage(sport, page, limit);
+    events.push(...extractEvents(data).map((evt) => normalizeEvent(evt, sport)));
+    if (!data.hasNextPage) break;
+    page += 1;
+  }
+
+  return events;
+}
+
+/** Extracts a single PulsescoreEvent out of whichever response shape /events/{id} returns. */
+function extractSingleEvent(data: unknown): PulsescoreEvent | null {
+  if (!data || typeof data !== "object") return null;
+  const obj = data as Record<string, unknown>;
+  if (typeof obj.eventId === "string") return obj as unknown as PulsescoreEvent;
+  if (obj.event && typeof obj.event === "object") return obj.event as PulsescoreEvent;
+  logger.warn({ data }, "Pulsescore: forma de resposta de /events/{id} não reconhecida");
+  return null;
+}
+
+/**
+ * Fetches a single event by its Pulsescore eventId — the natural way to refresh one event's
+ * odds on demand (e.g. when a user opens its Match Tracker) rather than waiting for the next
+ * bulk poll. Returns null if the event isn't found or the response shape wasn't recognized
+ * (NEEDS VALIDATION — no response body was provided for this endpoint yet).
+ */
+export async function fetchEventById(sport: Sport, eventId: string): Promise<LiveEvent | null> {
+  assertConfigured();
+  const slug = SPORT_SLUGS[sport];
+  const url = `${env.PULSESCORE_REST_URL}/${env.PULSESCORE_BOOKMAKER}/${slug}/events/${encodeURIComponent(eventId)}`;
+  const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    logger.warn({ status: res.status, sport, slug, eventId, body: body.slice(0, 300) }, "Pulsescore: pedido de evento único falhou");
+    throw Errors.internal(`Pulsescore devolveu ${res.status} para o evento "${eventId}" (${sport})`);
+  }
+  const raw = extractSingleEvent(await res.json());
+  return raw ? normalizeEvent(raw, sport) : null;
 }
 
 function normalizeMarket(m: PulsescoreMarket): LiveOdds {
