@@ -42,8 +42,13 @@ import type { LiveEvent, LiveOdds, Sport } from "../types";
  * one. The second fetches a single event by its numeric id directly, which is the interesting
  * one: it's the natural way to refresh one event's odds/detail on demand (e.g. when a user
  * opens the Match Tracker for it) instead of relying on the last bulk poll. Implemented as
- * `fetchEventsFlat()` and `fetchEventById()` below, both parsed defensively for the same
- * reason as fetchLeagueEvents() — no response body was provided for either yet.
+ * `fetchEventsFlat()` and `fetchEventById()` below.
+ *
+ * The flat /events response was later confirmed with a real body (850 total soccer events,
+ * page of 5 real matches, each with 5–17 markets depending on league popularity) — shape
+ * matches exactly what was assumed: `{ total, page, limit, totalPages, hasNextPage,
+ * hasPrevPage, events: [...PulsescoreEvent] }`. /events/{id} (single event) is still
+ * unconfirmed, parsed defensively the same way as fetchLeagueEvents().
  *
  * The same endpoints were then confirmed again under /10bet/tennis/..., /10bet/volleyball/...,
  * /10bet/mma/..., /10bet/ice-hockey/..., /10bet/basketball/... and /10bet/baseball/... — same
@@ -107,6 +112,35 @@ import type { LiveEvent, LiveOdds, Sport } from "../types";
  *     sample's `{canonicalOutcome, rawName, odds, isActive, selectionId}`). Since docs and a
  *     real captured response disagree, both response-shape assumptions are treated as
  *     unconfirmed and parsed defensively rather than picking one as authoritative.
+ *
+ * MIGRAÇÃO PARA "paddypower" — o utilizador comparou amostras reais de duas bookmakers e pediu
+ * a troca. Confirmado via `GET /paddypower/live-events?sport=soccer` e
+ * `GET /paddypower/live-events/events/{eventId}` (ambos com corpo real, vários jogos ao vivo):
+ *
+ *   - **Ao contrário de "10bet", o REST de `/live-events` da paddypower já traz placar,
+ *     cronómetro e estatísticas diretamente** — não é preciso WebSocket para isto. Cada evento
+ *     tem `matchClock: {minute, second, period}` (ex: `{minute:90, second:0, period:"2H"}`),
+ *     `score: {home, away}` (strings, ex: `{home:"1", away:"1"}` — formato DIFERENTE do
+ *     `score: "H-A"` string única do frame WebSocket documentado oficialmente) e
+ *     `statistics: {football: {home: {yellowCards, redCards, corners}, away: {...}}}`.
+ *   - Cada evento também tem um campo `country` (código ISO de 2 letras, ex: "CO", "GB", ou ""
+ *     para competições internacionais/qualificação, ex: "UEFA Champions League Qualifiers").
+ *   - Os `marketId` desta bookmaker vêm no formato `"927.396482091"` (com ponto) em vez do
+ *     inteiro simples da 10bet — não é usado para nada além de exibição, por isso não exige
+ *     alterações de tipo.
+ *   - Cobertura de mercados é bem mais rica (até 47 mercados por jogo vs. 5–17 na 10bet para os
+ *     mesmos jogos), com vários `canonicalMarket` novos (`ASIAN_HANDICAP`, `WIN_TO_NIL`,
+ *     `CORRECT_SCORE_COMBINATIONS`, `HALF_TIME_FULL_TIME`, `RESULT_BOTH_TEAMS_TO_SCORE`,
+ *     `WINNING_MARGIN`, `CORNERS_RACE_TO`, `PLAYER_CARDS`, `ANYTIME_GOALSCORER`, etc.) — nenhum
+ *     exige mudanças de código porque mercados/seleções nunca passaram por uma lista fixa.
+ *   - Uma amostra de `/{sport}/events` (não live-events) trouxe uma entrada promocional/lixo
+ *     ("Football Boosts", `away: ""`, `startTime` de 2017) misturada com jogos reais — filtrada
+ *     defensivamente em `extractEvents()` abaixo (descarta eventos sem `home`/`away`).
+ *   - `PULSESCORE_BOOKMAKER` mudou de "10bet" para "paddypower" (ver `env.ts`). Continua sem
+ *     confirmação se paddypower cobre basquete/hóquei de gelo/voleibol/MMA da mesma forma — só
+ *     futebol, ténis, basebol, esports e ténis de mesa foram vistos com eventos ao vivo reais
+ *     até agora (`/paddypower/live-events/sports`); Fórmula 1 mantém-se em `unibetau` via
+ *     `SPORT_BOOKMAKER_OVERRIDE`, já que não há evidência de que a paddypower a cubra.
  */
 
 export const SPORT_SLUGS: Record<Sport, string> = {
@@ -157,6 +191,26 @@ interface PulsescoreMarket {
   selections: PulsescoreSelection[];
   line?: number;
 }
+// CONFIRMED via real "paddypower" /live-events samples — absent on the earlier "10bet" samples.
+interface PulsescoreMatchClock {
+  minute: number;
+  second: number;
+  period: string; // e.g. "1H", "2H"
+}
+interface PulsescoreTeamStatistics {
+  yellowCards?: number;
+  redCards?: number;
+  corners?: number;
+}
+interface PulsescoreStatistics {
+  football?: { home: PulsescoreTeamStatistics; away: PulsescoreTeamStatistics };
+}
+// Score as separate string fields per side — CONFIRMED shape for paddypower's REST
+// /live-events, distinct from the official WS docs' single "H-A" string (see wsClient.ts).
+interface PulsescoreScore {
+  home: string;
+  away: string;
+}
 interface PulsescoreEvent {
   sport: string;
   league: string;
@@ -168,6 +222,10 @@ interface PulsescoreEvent {
   // basketball had no startTime at all) — only present on pré-jogo (live:false) events.
   startTime?: string;
   markets: PulsescoreMarket[];
+  country?: string; // ISO 2-letter code, or "" for international/qualifier competitions
+  matchClock?: PulsescoreMatchClock;
+  statistics?: PulsescoreStatistics;
+  score?: PulsescoreScore;
 }
 interface PulsescoreLeague {
   name: string;
@@ -216,18 +274,29 @@ async function fetchLeagueEventsRaw(sport: Sport, leagueName: string): Promise<u
   return res.json();
 }
 
+// Descarta entradas promocionais/lixo (ex: "Football Boosts", vistas numa amostra real de
+// /{sport}/events misturadas com jogos reais) — não são um confronto real, não têm `home`/`away`
+// preenchidos com nomes de equipas.
+function isRealMatch(e: PulsescoreEvent): boolean {
+  return typeof e.home === "string" && e.home.trim() !== "" && typeof e.away === "string" && e.away.trim() !== "";
+}
+
 /** Extracts a PulsescoreEvent[] out of whichever response shape the API actually returns. */
 function extractEvents(data: unknown): PulsescoreEvent[] {
-  if (Array.isArray(data)) return data as PulsescoreEvent[];
-  if (data && typeof data === "object") {
+  let events: PulsescoreEvent[] = [];
+  if (Array.isArray(data)) {
+    events = data as PulsescoreEvent[];
+  } else if (data && typeof data === "object") {
     const obj = data as Record<string, unknown>;
-    if (Array.isArray(obj.events)) return obj.events as PulsescoreEvent[];
-    if (obj.league && typeof obj.league === "object" && Array.isArray((obj.league as Record<string, unknown>).events)) {
-      return (obj.league as Record<string, unknown>).events as PulsescoreEvent[];
+    if (Array.isArray(obj.events)) {
+      events = obj.events as PulsescoreEvent[];
+    } else if (obj.league && typeof obj.league === "object" && Array.isArray((obj.league as Record<string, unknown>).events)) {
+      events = (obj.league as Record<string, unknown>).events as PulsescoreEvent[];
+    } else {
+      logger.warn({ data }, "Pulsescore: forma de resposta de /leagues/{name}/events não reconhecida — a devolver vazio");
     }
   }
-  logger.warn({ data }, "Pulsescore: forma de resposta de /leagues/{name}/events não reconhecida — a devolver vazio");
-  return [];
+  return events.filter(isRealMatch);
 }
 
 /**
@@ -264,9 +333,12 @@ async function fetchEventsFlatPage(sport: Sport, page: number, limit: number): P
 
 /**
  * Flat, paginated event list for a sport — an alternative to fetchEvents() that skips the
- * leagues nesting. NEEDS VALIDATION: response shape assumed to mirror the leagues endpoint's
- * pagination fields with an `events` array instead of `leagues`; parsed defensively via
- * extractEvents() so a slightly different shape (or a bare array) still works.
+ * leagues nesting. CONFIRMED via a real sample (GET /soccer/events?page=1&limit=5, 850 total
+ * events, 5 real matches with 5–17 markets each): response shape is exactly
+ * `{ total, page, limit, totalPages, hasNextPage, hasPrevPage, events: [...] }`, matching
+ * PulsescoreFlatEventsResponse/PulsescoreEvent as coded — no changes needed. The sample also
+ * surfaced canonicalMarket values not seen before (CORNERS_OVER_UNDER, CORRECT_SCORE), handled
+ * fine since markets are never filtered by a fixed whitelist.
  */
 export async function fetchEventsFlat(sport: Sport, opts: { maxPages?: number; limit?: number } = {}): Promise<LiveEvent[]> {
   const maxPages = opts.maxPages ?? 3;
@@ -428,6 +500,26 @@ export function orderMarketsWithPrimaryFirst<T extends { canonicalMarket?: strin
   return ordered;
 }
 
+// "H"/"A" score strings -> number, only when both sides parse cleanly — otherwise undefined
+// rather than a fabricated "0". CONFIRMED shape for paddypower: { home: "1", away: "1" }.
+function parsePulsescoreScore(score: PulsescoreScore | undefined): { homeScore?: number; awayScore?: number } {
+  if (!score) return {};
+  const h = Number(score.home);
+  const a = Number(score.away);
+  if (Number.isNaN(h) || Number.isNaN(a)) return {};
+  return { homeScore: h, awayScore: a };
+}
+
+function formatMatchClock(clock: PulsescoreMatchClock | undefined, fallback: string): string {
+  if (!clock || typeof clock.minute !== "number") return fallback;
+  return `${clock.minute}'`;
+}
+
+function mapStatistics(stats: PulsescoreStatistics | undefined) {
+  if (!stats?.football) return undefined;
+  return { home: stats.football.home ?? {}, away: stats.football.away ?? {} };
+}
+
 function normalizeEvent(e: PulsescoreEvent, sport: Sport): LiveEvent {
   const activeMarkets = orderMarketsWithPrimaryFirst(e.markets.filter((m) => m.isActive));
   return {
@@ -436,16 +528,19 @@ function normalizeEvent(e: PulsescoreEvent, sport: Sport): LiveEvent {
     league: e.league,
     home: e.home,
     away: e.away,
-    // CONFIRMED absent: real /live-events samples (soccer and basketball, both live:true)
-    // carry no score/clock field at all — this Pulsescore contract is odds-only, it doesn't
-    // report live score. Left undefined rather than a fabricated "0 - 0"; the frontend hides
-    // the score row when these are missing instead of showing a fake placeholder.
-    minuteOrPeriod: e.live ? "AO VIVO" : "",
+    // CONFIRMED presente para a bookmaker "paddypower" (matchClock/score/statistics no
+    // próprio REST /live-events) — indefinido se a bookmaker atual não os devolver (ex: a
+    // anterior "10bet"), caso em que o frontend esconde a linha de placar em vez de inventar
+    // um "0-0".
+    ...parsePulsescoreScore(e.score),
+    minuteOrPeriod: formatMatchClock(e.matchClock, e.live ? "AO VIVO" : ""),
     status: e.live ? "live" : "scheduled",
     odds: activeMarkets.map(normalizeMarket),
     updatedAt: new Date().toISOString(),
     source: "pulsescore",
     startTime: e.startTime,
+    country: e.country,
+    statistics: mapStatistics(e.statistics),
   };
 }
 
