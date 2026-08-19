@@ -1,4 +1,5 @@
 import { env } from "../../../config/env";
+import { logger } from "../../../lib/logger";
 import { fetchEvents } from "../pulsescore/client";
 import type { LiveEvent, Sport } from "../types";
 
@@ -13,8 +14,9 @@ export interface PrematchResult {
 /**
  * Pré-jogo real via Pulsescore (só eventos `live:false`), com cache curto em memória para não
  * disparar um pedido novo por cada utilizador que abrir a página Esportes ao mesmo tempo.
- * Sem PULSESCORE_API_KEY configurada, devolve `source: "unconfigured"` com lista vazia — o
- * frontend usa isso para saber que deve cair para os dados de demonstração estáticos.
+ * Sem PULSESCORE_API_KEY configurada, ou se o pedido falhar (provedor em baixo, rede bloqueada,
+ * chave inválida), devolve `source: "unconfigured"` com lista vazia — o frontend usa isso para
+ * saber que deve cair para os dados de demonstração estáticos, tal como acontece no feed ao vivo.
  */
 export async function getPrematchEvents(sport: Sport): Promise<PrematchResult> {
   if (!env.PULSESCORE_API_KEY) {
@@ -27,8 +29,13 @@ export async function getPrematchEvents(sport: Sport): Promise<PrematchResult> {
     return { events: cached.events, source: "pulsescore" };
   }
 
-  const all = await fetchEvents(sport, { maxPages: 2 });
-  const scheduled = all.filter((e) => e.status === "scheduled");
-  cache.set(cacheKey, { events: scheduled, fetchedAt: Date.now() });
-  return { events: scheduled, source: "pulsescore" };
+  try {
+    const all = await fetchEvents(sport, { maxPages: 2 });
+    const scheduled = all.filter((e) => e.status === "scheduled");
+    cache.set(cacheKey, { events: scheduled, fetchedAt: Date.now() });
+    return { events: scheduled, source: "pulsescore" };
+  } catch (err) {
+    logger.warn({ err, sport }, "Pulsescore: falha ao obter pré-jogo, a cair para dados de demonstração");
+    return { events: [], source: "unconfigured" };
+  }
 }

@@ -54,47 +54,88 @@ Factos confirmados por este exemplo (não suposição):
   **uma liga específica pelo nome** (ex: `leagues/Premier%20League/events`), em vez de paginar
   todas as ligas de um desporto. Implementado em `fetchLeagueEvents()` — só o pedido foi
   confirmado, não a resposta, por isso o parsing é defensivo (aceita `{ events: [...] }`,
-  `{ league: { events: [...] } }`, ou um array direto). Útil como otimização futura para pedir
-  só um conjunto curado de ligas em vez de tudo, mas ainda não está ligado ao polling principal
-  em `hybridService.ts` — decidir a lista de ligas a priorizar por desporto é decisão de
-  produto, não algo para adivinhar aqui.
+  `{ league: { events: [...] } }`, ou um array direto). Ainda não ligado ao polling principal —
+  decidir a lista de ligas a priorizar por desporto é decisão de produto.
 - E mais dois: `GET /{bookmaker}/{sport}/events?page=&limit=` (lista plana de eventos, sem
   passar pelas ligas — `fetchEventsFlat()`) e `GET /{bookmaker}/{sport}/events/{eventId}`
   (**um evento específico** — `fetchEventById()`). Este último já está ligado ao frontend: ao
   abrir o Match Tracker de um evento com `source: "pulsescore"`, `openMarket()` em `web/app.js`
   chama `GET /api/sports/events/:id/refresh?sport=` para pedir dados frescos em vez de confiar
   só na última leitura em cache — se falhar, fica com os dados em cache, sem quebrar a UI.
-  Também sem resposta confirmada, parsing defensivo (`extractSingleEvent()`).
+
+## ✅ Família `/live-events` — a primeira resposta real desde o exemplo inicial
+
+Existe uma família de endpoints **separada**, dedicada a eventos ao vivo, distinta da
+`/{sport}/leagues` e `/{sport}/events` acima:
+
+```
+GET /{bookmaker}/live-events/sports
+GET /{bookmaker}/live-events?page=&limit=&sport={slug}
+GET /{bookmaker}/live-events/events/{eventId}
+```
+
+`/live-events/sports` teve a **resposta confirmada** (a primeira desde o exemplo original de
+`leagues`):
+
+```json
+{
+  "total": 189,
+  "sports": [
+    { "name": "soccer", "eventCount": 26 },
+    { "name": "tennis", "eventCount": 72 },
+    { "name": "ice_hockey", "eventCount": 6 },
+    { "name": "basketball", "eventCount": 2 },
+    { "name": "baseball", "eventCount": 20 },
+    { "name": "volleyball", "eventCount": 2 },
+    { "name": "badminton", "eventCount": 5 },
+    { "name": "cricket", "eventCount": 9 },
+    { "name": "darts", "eventCount": 1 },
+    { "name": "esports", "eventCount": 25 },
+    { "name": "table_tennis", "eventCount": 21 }
+  ]
+}
+```
+
+Isto é o que `hybridService.ts` agora usa como primeiro passo de cada ciclo de polling: chama
+`/live-events/sports` (leve) para saber que desportos têm pelo menos um evento ao vivo agora, e
+só pede `/live-events?sport=` para esses — em vez de percorrer os 8 às cegas a cada 25s.
+`/live-events/events/{eventId}` não leva o desporto no caminho (ao contrário do
+`/{sport}/events/{id}` sport-scoped) — o desporto vem do próprio campo `sport` da resposta do
+evento. As respostas de `/live-events?sport=` e `/live-events/events/{id}` em si ainda não
+foram confirmadas, por isso `fetchLiveEvents()`/`fetchLiveEventById()` usam o mesmo parsing
+defensivo dos outros endpoints não confirmados.
+
+⚠️ **Correção importante**: esta resposta revelou que o slug correto do hóquei de gelo é
+`ice_hockey` (underscore) — **não** `ice-hockey` (hífen) como tinha sido marcado "confirmado"
+antes (esse "confirmado" só validava que o pedido tinha a forma certa, nunca a resposta). Já
+corrigido em `SPORT_SLUGS`.
+
+Também confirma que a lista de desportos com eventos ao vivo neste momento **não inclui MMA nem
+Fórmula 1** — o que não prova que não existam (MMA já está confirmado a existir via
+`leagues/UFC/events`; só significa que não há nenhum combate a decorrer agora), mas continua a
+não confirmar a Fórmula 1 de forma nenhuma.
 
 ## ⚠️ Ainda por confirmar
 
-1. **Slugs de desporto** — confirmados para 7 dos 8: futebol (`soccer`), ténis (`tennis`),
-   voleibol (`volleyball`), MMA (`mma`), hóquei de gelo (`ice-hockey`), basquete (`basketball`)
-   e beisebol (`baseball`) — mesmos endpoints repetidos com estes slugs, sempre a mesma forma.
-   Só falta a Fórmula 1 (`formula-1` em `pulsescore/client.ts`, constante `SPORT_SLUGS`), que
-   continua a ser estimativa, não confirmada. Se o slug estiver errado, esse desporto
-   simplesmente devolve vazio/404 — o código já trata isso por desporto (não derruba o ciclo
-   inteiro), mas os dados não aparecem até o slug certo ser confirmado.
-   > 💡 As amostras do MMA, basquete e beisebol para `leagues/{name}/events` usaram ligas reais
-   > ("UFC", "NBA", "CPBL") — ao contrário das do voleibol e do hóquei de gelo, que usaram o
-   > texto literal "league name" (o valor por defeito de um "Try it out" do Swagger/OpenAPI).
-   > Se for daí que estes `curl` vêm, clicar em "Execute" ali captura a resposta real, que é a
-   > única coisa que falta para confirmar isto por completo (odds ao vivo, campos extra, etc.)
-   > — nenhum endpoint além do primeiro exemplo de `leagues` teve a resposta confirmada.
+1. **Slug da Fórmula 1** — os outros 7 desportos já têm o slug confirmado: futebol (`soccer`),
+   ténis (`tennis`), voleibol (`volleyball`), MMA (`mma`), hóquei de gelo (`ice_hockey`),
+   basquete (`basketball`) e beisebol (`baseball`). Só falta a Fórmula 1 (`formula-1` em
+   `pulsescore/client.ts`, constante `SPORT_SLUGS`), que continua a ser estimativa. Se o slug
+   estiver errado, esse desporto simplesmente devolve vazio/404 — o código já trata isso por
+   desporto (não derruba o ciclo inteiro), mas os dados não aparecem até confirmar.
 2. **Fórmula 1 pode nem existir** nesta forma "liga → eventos casa/fora" — motorsport é o único
    dos 8 desportos que não encaixa claramente num modelo de dois competidores (todos os outros
    7, incluindo o MMA que também parecia arriscado, já foram confirmados). Confirmar no
    catálogo da Pulsescore se a Fórmula 1 está disponível e em que forma.
-3. **Payload de um evento `live: true`** — o exemplo fornecido só mostrou eventos `live: false`
-   (pré-jogo). Não se sabe se um evento ao vivo traz placar/cronómetro no mesmo payload ou
-   nesses mesmos campos. Por agora, `normalizeEvent()` usa `homeScore: 0, awayScore: 0,
-   minuteOrPeriod: "AO VIVO"` como placeholder para eventos ao vivo — **atualizar assim que
-   houver um exemplo real de evento `live: true`**.
+3. **Resposta de `/live-events?sport=` e `/live-events/events/{id}`** — só o pedido foi
+   confirmado; a forma exata da resposta (se tem `hasNextPage`, se o placar/cronómetro vêm
+   nestes payloads) continua por confirmar. `fetchLiveEvents()` usa `homeScore: 0, awayScore: 0,
+   minuteOrPeriod: "AO VIVO"` como placeholder até haver um exemplo real.
 4. **Casa de apostas (`bookmaker`)** — `10bet` foi a usada no exemplo (`PULSESCORE_BOOKMAKER`,
    por defeito `10bet`); pode haver outras disponíveis por desporto que dêem melhor cobertura.
-5. **Limites de taxa / custo por pedido** — o polling a cada 25s multiplicado por 8 desportos ×
-   até 2 páginas é um volume de pedidos que convém validar contra os limites do plano antes de
-   produção (ajustar `POLL_INTERVAL_MS` e `maxPages` em `hybridService.ts` se necessário).
+5. **Limites de taxa / custo por pedido** — mesmo com o `/live-events/sports` a poupar pedidos
+   desnecessários, convém validar o volume total contra os limites do plano antes de produção
+   (ajustar `POLL_INTERVAL_MS` e `maxPages` em `hybridService.ts` se necessário).
 
 ## Arquitetura
 
