@@ -368,6 +368,35 @@ Testado com Playwright: ordem Futebol→Ténis→Beisebol confirmada, grelha de 
 todos visíveis, placar à esquerda do nome nos cartões genéricos, e remoção de um evento do
 `liveEventsById` a refletir-se imediatamente na lista renderizada.
 
+### Beisebol migrado para "bet365" (placar real confirmado) + bug de caminho REST corrigido
+
+O utilizador enviou uma amostra real de `/bet365/live-events?sport=baseball` (ficheiro grande,
+lido com Python em vez do Read normal por exceder o limite) que confirma o que a paddypower nunca
+devolveu: `score: {home, away}` preenchido com valores reais (ex: `ARI Diamondbacks 1 - 2 BOS Red
+Sox`), não sempre "0"-"0". A forma dos dados (`moreInfo` com chaves `FI`/`NA`/`SS`/`TM`/`TS`/`TT`)
+é claramente o padrão interno da Bet365, distinto de tudo o resto visto neste projeto.
+
+- `SPORT_BOOKMAKER_OVERRIDE` (`pulsescore/client.ts`) ganhou `baseball: "bet365"` — mesmo
+  mecanismo já usado para `formula1: "unibetau"`.
+- **Bug real corrigido**: a versão REST desta bookmaker é versionada
+  (`/api/v3/bet365/...`, confirmado na documentação oficial e já tratado para o WebSocket em
+  `wsUrlFor()`), mas os 7 pontos onde o REST deste cliente constrói URLs (`fetchLeaguesPage`,
+  `fetchLeagueEventsRaw`, `fetchEventsFlatPage`, `fetchEventById`, `fetchLiveSportsWithEvents`,
+  `fetchLiveEventsPage`, `fetchLiveEventById`) ainda montavam `/api/{bookmaker}/...` sem essa
+  versão — nunca tinha sido testado porque nenhum sport usava bet365 no REST até agora. Novo
+  helper `bookmakerPathSegment()` resolve isto uma vez só, usado em todos os 7 sítios.
+- `hybridService.ts`: `baseball` passou a ser sempre incluído no ciclo de polling
+  (`live.add("baseball")`), tal como já acontecia com `formula1` — o resumo
+  `/live-events/sports` que decide que desportos vale a pena consultar continua a vir da
+  bookmaker por omissão (paddypower), que não é fiável para saber se a bet365 tem jogos de
+  beisebol ao vivo agora.
+- `selectionId` (em `PulsescoreSelection`) passou a opcional — a amostra da bet365 não o tem
+  (usa `moreInfo.ID` em vez disso), mas esse campo nunca foi lido por `normalizeMarket()`, por
+  isso não há impacto funcional, só uma correção de tipo.
+- **Sem `matchClock` nem `statistics`** nesta amostra (nem para innings) — só o placar. O
+  relógio deste desporto continua a cair no fallback "AO VIVO" (a vermelho, já implementado) até
+  surgir uma amostra com esse campo preenchido.
+
 ## ⚠️ Ainda por confirmar
 
 1. **Slug exato da Fórmula 1** dentro de `unibetau` — continua uma estimativa (`formula-1`).
