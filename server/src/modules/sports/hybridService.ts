@@ -1,42 +1,73 @@
 import { EventEmitter } from "events";
 import { env } from "../../config/env";
 import { logger } from "../../lib/logger";
-import { pulsescoreClient } from "./pulsescore/client";
+import { fetchEvents } from "./pulsescore/client";
 import { mockSportsFeed } from "./mockFeed";
 import { getFixtureStatistics } from "./apifootball/client";
-import type { LiveEvent, Sport } from "./types";
+import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
+
+const POLL_INTERVAL_MS = 25_000;
 
 /**
- * Sistema híbrido: Pulsescore fornece odds/resultados ao vivo via websocket (futebol, ténis,
- * basquete); API-Football enriquece com estatísticas detalhadas sob pedido (só futebol, que é
- * o que a API-Football cobre). Mantém um snapshot em memória e reemite atualizações para
- * quem estiver subscrito (o gateway websocket interno consome estes eventos).
+ * Sistema híbrido: Pulsescore fornece odds/resultados (REST, com polling — ver
+ * pulsescore/client.ts para o porquê de não ser websocket) para futebol, ténis, basquete,
+ * hóquei de gelo, beisebol, voleibol, Fórmula 1 e MMA; API-Football enriquece com
+ * estatísticas detalhadas sob pedido (só futebol). Mantém um snapshot em memória e reemite
+ * atualizações para quem estiver subscrito (o gateway websocket interno consome estes eventos).
+ *
+ * Cada ciclo de polling busca os 8 desportos e fica só com os eventos `live:true` — os
+ * `live:false` (pré-jogo) alimentam o endpoint /api/sports/prematch, não este feed ao vivo.
+ * Se nenhum desporto devolver eventos ao vivo reais (chave não configurada, provedor em baixo,
+ * ou fora de horário de jogos), cai automaticamente para o feed simulado.
  */
 class HybridSportsService extends EventEmitter {
   private events = new Map<string, LiveEvent>();
   private usingMock = false;
 
   start() {
+    mockSportsFeed.on("update", (evt) => {
+      if (this.usingMock) this.ingest(evt);
+    });
+
     if (env.PULSESCORE_API_KEY) {
-      pulsescoreClient.on("update", (evt) => this.ingest(evt));
-      pulsescoreClient.on("status", (status) => {
-        if (status === "unavailable" || status === "disconnected") {
-          this.maybeFallbackToMock();
-        }
-      });
-      pulsescoreClient.connect();
+      this.pollOnce();
+      setInterval(() => this.pollOnce(), POLL_INTERVAL_MS);
     } else {
-      this.maybeFallbackToMock();
+      this.enableMock();
     }
   }
 
-  private maybeFallbackToMock() {
+  private async pollOnce() {
+    let anyLive = false;
+    for (const sport of ALL_SPORTS) {
+      try {
+        const events = await fetchEvents(sport, { maxPages: 2 });
+        const liveEvents = events.filter((e) => e.status === "live");
+        if (liveEvents.length) anyLive = true;
+        for (const evt of liveEvents) this.ingest(evt);
+      } catch (err) {
+        logger.warn({ err, sport }, "Pulsescore: falha ao obter eventos ao vivo para este desporto");
+      }
+    }
+    if (anyLive) this.disableMock();
+    else this.enableMock();
+  }
+
+  private enableMock() {
     if (this.usingMock || !env.SPORTS_DATA_MOCK_FALLBACK) return;
+    logger.info("Sports: a usar feed simulado (sem eventos ao vivo reais da Pulsescore neste momento)");
     this.usingMock = true;
-    logger.info("Sports: a usar feed simulado (Pulsescore indisponível ou sem chave de API)");
-    mockSportsFeed.on("update", (evt) => this.ingest(evt));
+    for (const [id, evt] of this.events) if (evt.source === "pulsescore") this.events.delete(id);
     for (const evt of mockSportsFeed.snapshot()) this.ingest(evt);
     mockSportsFeed.start();
+  }
+
+  private disableMock() {
+    if (!this.usingMock) return;
+    logger.info("Sports: eventos ao vivo reais da Pulsescore disponíveis — a desligar o feed simulado");
+    this.usingMock = false;
+    mockSportsFeed.stop();
+    for (const [id, evt] of this.events) if (evt.source === "mock") this.events.delete(id);
   }
 
   private ingest(evt: LiveEvent) {

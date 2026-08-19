@@ -93,9 +93,31 @@ const PREMATCH_EVENTS = [
   { id: "pm:mma-1", sport: "mma", league: "UFC 310", home: "C. McGregor", away: "N. Diaz", kickoff: inHours(96) },
 ].map((e) => ({ ...e, homeScore: 0, awayScore: 0, odds: marketsFor(e.sport, 0, 0), status: "scheduled" }));
 
-function renderPrematchList() {
+const prematchEventsById = new Map();
+
+async function renderPrematchList() {
   const container = document.getElementById("prematch-list");
-  const events = PREMATCH_EVENTS.filter((e) => !selectedSport || e.sport === selectedSport);
+  const requestToken = ++renderPrematchList._token;
+  container.innerHTML = '<div class="empty-note">A carregar…</div>';
+
+  const sports = selectedSport ? [selectedSport] : SPORTS_META.map((s) => s.id);
+  const realEvents = [];
+  const results = await Promise.allSettled(sports.map((s) => Bet62Api.getPrematchEvents(s)));
+  if (requestToken !== renderPrematchList._token) return; // uma seleção mais recente já está a carregar
+
+  results.forEach((r) => {
+    if (r.status === "fulfilled" && r.value.source === "pulsescore") realEvents.push(...r.value.events);
+  });
+
+  // Para os desportos sem dados reais (Pulsescore não configurada ou sem jogos agendados),
+  // completa com os dados de demonstração estáticos para a navegação continuar testável.
+  const sportsWithRealData = new Set(realEvents.map((e) => e.sport));
+  const fallbackEvents = PREMATCH_EVENTS.filter((e) => (!selectedSport || e.sport === selectedSport) && !sportsWithRealData.has(e.sport));
+  const events = [...realEvents, ...fallbackEvents];
+
+  prematchEventsById.clear();
+  events.forEach((e) => prematchEventsById.set(e.id, e));
+
   if (!events.length) {
     container.innerHTML = '<div class="empty-note">Sem jogos agendados para este desporto neste momento</div>';
     return;
@@ -105,12 +127,13 @@ function renderPrematchList() {
     .map(
       (e) => `
       <div class="live-card" onclick="openMarket('${e.id}', false)">
-        <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.kickoff)}</span></div>
+        <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime || e.kickoff)}</span></div>
         <div class="lc-teams"><span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span></div>
       </div>`
     )
     .join("");
 }
+renderPrematchList._token = 0;
 function formatKickoff(d) {
   const date = new Date(d);
   const now = new Date();
@@ -598,7 +621,7 @@ function renderLiveEvents() {
 
 // ====================== MERCADOS + MATCH TRACKER ======================
 function openMarket(eventId, isLive) {
-  const event = isLive ? liveEventsById.get(eventId) : PREMATCH_EVENTS.find((e) => e.id === eventId);
+  const event = isLive ? liveEventsById.get(eventId) : prematchEventsById.get(eventId);
   if (!event) return;
   currentMarketEvent = event;
   currentMarketEvent._isLive = isLive;
@@ -625,7 +648,7 @@ function renderMatchTracker(e) {
     el.innerHTML = `
       <div class="mt-scheduled">
         <span class="status-badge status-pending">PRÉ-JOGO</span>
-        <div class="big" style="margin-top:10px">${formatKickoff(e.kickoff)}</div>
+        <div class="big" style="margin-top:10px">${formatKickoff(e.startTime || e.kickoff)}</div>
         <div style="color:var(--muted);font-size:.82rem;margin-top:6px">${e.home} vs ${e.away}</div>
       </div>`;
     return;

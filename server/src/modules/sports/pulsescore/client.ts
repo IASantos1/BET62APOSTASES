@@ -1,126 +1,158 @@
-import { EventEmitter } from "events";
-import WebSocket from "ws";
 import { env } from "../../../config/env";
 import { logger } from "../../../lib/logger";
-import { ALL_SPORTS, type LiveEvent, type Sport } from "../types";
+import { Errors } from "../../../lib/errors";
+import type { LiveEvent, LiveOdds, Sport } from "../types";
 
 /**
- * Pulsescore.com live websocket client — futebol, ténis, basquete, hóquei de gelo, beisebol,
- * voleibol, Fórmula 1 e MMA.
+ * Pulsescore REST client — odds aggregator, confirmed against a real sample request/response
+ * the user provided during this build:
  *
- * NOTA: o plano de 149€ mencionado inicialmente cobria 3 canais (futebol/ténis/basquete).
- * Cobrir os 8 desportos pedidos aqui pode exigir um plano superior ou canais adicionais —
- * confirmar com a Pulsescore antes de assumir que os 8 estão incluídos no mesmo preço.
+ *   GET https://api.pulsescore.net/api/10bet/soccer/leagues?page=1&limit=5
+ *   Headers: accept: * / *, x-secret: <secret>, Accept-Encoding: gzip
  *
- * NEEDS VALIDATION against Pulsescore's own docs: this environment's network egress proxy
- * blocks pulsescore.com, so the exact connection URL, auth handshake, subscription message
- * shape, and payload fields below are a best-effort integration contract, not confirmed API
- * behaviour. Before going live:
- *   1. Confirm the real WS endpoint + whether auth is a query param, a header (ws headers are
- *      supported by the `ws` package via the `options.headers` field used below), or an
- *      initial auth frame sent after connecting.
- *   2. Confirm the subscribe message format and the shape of update frames per sport.
- *   3. Confirm reconnect/heartbeat requirements (ping/pong interval, session resume tokens).
+ * Confirmed facts (from that sample, not guesswork):
+ *   - Base host is api.pulsescore.net (not .com as first assumed), REST — no websocket confirmed.
+ *   - Auth is the "x-secret" header, not a query param.
+ *   - Path shape is /{bookmaker}/{sport}/leagues — Pulsescore aggregates odds per upstream
+ *     bookmaker; "10bet" was the bookmaker in the sample. A different one may exist per sport.
+ *   - Paginated: ?page=&limit=, response has total/page/limit/totalPages/hasNextPage/hasPrevPage.
+ *   - Response: { leagues: [{ name, sport, events: [{ sport, league, eventId, home, away, live,
+ *     startTime, markets: [{ canonicalMarket, rawName, period, isActive, marketId, selections: [
+ *     { canonicalOutcome, rawName, odds, isActive, selectionId, line?, metadata? } ] }] }] }] }
+ *   - Each event carries a `live` boolean — that's what separates pré-jogo from ao vivo, not a
+ *     separate endpoint or query flag (nothing in the sample suggests one, so we don't guess it).
  *
- * The `normalize()` function is the single place that would need updating once the real
- * payload shape is confirmed — everything downstream consumes the normalized `LiveEvent` type.
+ * NEEDS VALIDATION — not covered by the sample, still assumptions:
+ *   - The sport slug is only confirmed for football ("soccer"). Slugs below for the other 7
+ *     sports are best-effort guesses; if wrong, that sport's fetch just comes back empty/404,
+ *     which fetchEvents() below swallows per-sport rather than failing the whole poll cycle.
+ *   - Whether Fórmula 1 / MMA exist at all under this bookmaker in this leagues/home-away shape
+ *     — motorsport in particular may not fit a two-team model the way this API is structured.
+ *   - What a `live:true` event's payload adds for score/clock — the sample only shows
+ *     `live:false` (pré-jogo) events, so homeScore/awayScore/minuteOrPeriod are best-effort
+ *     defaults for live events until a live sample is seen.
+ *   - Whether a websocket product exists at all for this account/plan — this client only
+ *     implements what was demonstrated (REST + polling).
  */
 
-const SPORTS: Sport[] = ALL_SPORTS;
-const RECONNECT_BASE_MS = 2000;
-const RECONNECT_MAX_MS = 30_000;
+const SPORT_SLUGS: Record<Sport, string> = {
+  football: "soccer", // CONFIRMED by the sample
+  tennis: "tennis",
+  basketball: "basketball",
+  ice_hockey: "ice-hockey",
+  baseball: "baseball",
+  volleyball: "volleyball",
+  formula1: "formula-1",
+  mma: "mma",
+};
 
-export declare interface PulsescoreClient {
-  on(event: "update", listener: (evt: LiveEvent) => void): this;
-  on(event: "status", listener: (status: "connected" | "disconnected" | "unavailable") => void): this;
+interface PulsescoreSelection {
+  canonicalOutcome: string;
+  rawName: string;
+  odds: number;
+  isActive: boolean;
+  selectionId: string;
+  line?: number;
+  metadata?: Record<string, unknown>;
+}
+interface PulsescoreMarket {
+  canonicalMarket: string;
+  rawName: string;
+  period: string;
+  isActive: boolean;
+  marketId: string;
+  selections: PulsescoreSelection[];
+  line?: number;
+}
+interface PulsescoreEvent {
+  sport: string;
+  league: string;
+  eventId: string;
+  home: string;
+  away: string;
+  live: boolean;
+  startTime: string;
+  markets: PulsescoreMarket[];
+}
+interface PulsescoreLeague {
+  name: string;
+  sport: string;
+  events: PulsescoreEvent[];
+}
+interface PulsescoreLeaguesResponse {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
+  leagues: PulsescoreLeague[];
 }
 
-export class PulsescoreClient extends EventEmitter {
-  private ws: WebSocket | null = null;
-  private reconnectAttempt = 0;
-  private closedByUser = false;
-
-  get isConfigured(): boolean {
-    return Boolean(env.PULSESCORE_API_KEY);
-  }
-
-  connect(): void {
-    if (!this.isConfigured) {
-      logger.warn("Pulsescore: PULSESCORE_API_KEY não definida — websocket desativado (usar fallback simulado)");
-      this.emit("status", "unavailable");
-      return;
-    }
-
-    this.closedByUser = false;
-    this.openSocket();
-  }
-
-  disconnect(): void {
-    this.closedByUser = true;
-    this.ws?.close();
-  }
-
-  private openSocket() {
-    const url = `${env.PULSESCORE_WS_URL}?apiKey=${encodeURIComponent(env.PULSESCORE_API_KEY)}`;
-    this.ws = new WebSocket(url);
-
-    this.ws.on("open", () => {
-      this.reconnectAttempt = 0;
-      this.emit("status", "connected");
-      logger.info("Pulsescore: websocket conectado");
-      this.ws?.send(JSON.stringify({ action: "subscribe", channels: SPORTS }));
-    });
-
-    this.ws.on("message", (raw) => {
-      try {
-        const payload = JSON.parse(raw.toString());
-        const event = normalize(payload);
-        if (event) this.emit("update", event);
-      } catch (err) {
-        logger.warn({ err }, "Pulsescore: falha ao processar mensagem");
-      }
-    });
-
-    this.ws.on("close", () => {
-      this.emit("status", "disconnected");
-      if (!this.closedByUser) this.scheduleReconnect();
-    });
-
-    this.ws.on("error", (err) => {
-      logger.error({ err }, "Pulsescore: erro no websocket");
-    });
-  }
-
-  private scheduleReconnect() {
-    const delay = Math.min(RECONNECT_BASE_MS * 2 ** this.reconnectAttempt, RECONNECT_MAX_MS);
-    this.reconnectAttempt += 1;
-    logger.info({ delay }, "Pulsescore: a tentar reconectar");
-    setTimeout(() => this.openSocket(), delay);
+function assertConfigured() {
+  if (!env.PULSESCORE_API_KEY) {
+    throw Errors.badRequest("Dados de desporto reais indisponíveis: PULSESCORE_API_KEY não configurada neste ambiente.");
   }
 }
 
-// NEEDS VALIDATION: placeholder mapping of an assumed Pulsescore payload shape to LiveEvent.
-function normalize(payload: any): LiveEvent | null {
-  if (!payload || typeof payload !== "object") return null;
-  const sport = payload.sport as Sport;
-  if (!SPORTS.includes(sport)) return null;
+async function fetchLeaguesPage(sport: Sport, page: number, limit: number): Promise<PulsescoreLeaguesResponse> {
+  assertConfigured();
+  const slug = SPORT_SLUGS[sport];
+  const url = `${env.PULSESCORE_REST_URL}/${env.PULSESCORE_BOOKMAKER}/${slug}/leagues?page=${page}&limit=${limit}`;
+  const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    logger.warn({ status: res.status, sport, slug, body: body.slice(0, 300) }, "Pulsescore: pedido falhou");
+    throw Errors.internal(`Pulsescore devolveu ${res.status} para o desporto "${sport}"`);
+  }
+  return res.json() as Promise<PulsescoreLeaguesResponse>;
+}
 
+function normalizeMarket(m: PulsescoreMarket): LiveOdds {
   return {
-    id: `pulsescore:${payload.matchId ?? payload.id}`,
-    sport,
-    league: payload.league ?? payload.competition ?? "—",
-    home: payload.home?.name ?? payload.homeTeam ?? "?",
-    away: payload.away?.name ?? payload.awayTeam ?? "?",
-    homeScore: Number(payload.home?.score ?? payload.homeScore ?? 0),
-    awayScore: Number(payload.away?.score ?? payload.awayScore ?? 0),
-    minuteOrPeriod: String(payload.clock ?? payload.period ?? ""),
-    status: payload.status === "finished" ? "finished" : payload.status === "live" ? "live" : "scheduled",
-    odds: Array.isArray(payload.odds)
-      ? payload.odds.map((m: any) => ({ market: m.market, selections: m.selections }))
-      : [],
-    updatedAt: new Date().toISOString(),
-    source: "pulsescore",
+    market: m.rawName,
+    selections: Object.fromEntries(m.selections.filter((s) => s.isActive).map((s) => [s.rawName, s.odds])),
   };
 }
 
-export const pulsescoreClient = new PulsescoreClient();
+function normalizeEvent(e: PulsescoreEvent, sport: Sport): LiveEvent {
+  return {
+    id: `pulsescore:${e.eventId}`,
+    sport,
+    league: e.league,
+    home: e.home,
+    away: e.away,
+    homeScore: 0, // NEEDS VALIDATION: not present in the confirmed (pré-jogo) sample
+    awayScore: 0,
+    minuteOrPeriod: e.live ? "AO VIVO" : "",
+    status: e.live ? "live" : "scheduled",
+    odds: e.markets.filter((m) => m.isActive).map(normalizeMarket),
+    updatedAt: new Date().toISOString(),
+    source: "pulsescore",
+    startTime: e.startTime,
+  };
+}
+
+/**
+ * Fetches up to `maxPages` pages of leagues for one sport and flattens them into normalized
+ * events. Errors and unknown sport slugs are the caller's problem to catch — this throws.
+ */
+export async function fetchEvents(sport: Sport, opts: { maxPages?: number; limit?: number } = {}): Promise<LiveEvent[]> {
+  const maxPages = opts.maxPages ?? 3;
+  const limit = opts.limit ?? 25;
+  const events: LiveEvent[] = [];
+
+  let page = 1;
+  while (page <= maxPages) {
+    const data = await fetchLeaguesPage(sport, page, limit);
+    for (const league of data.leagues) {
+      for (const evt of league.events) {
+        events.push(normalizeEvent(evt, sport));
+      }
+    }
+    if (!data.hasNextPage) break;
+    page += 1;
+  }
+
+  return events;
+}

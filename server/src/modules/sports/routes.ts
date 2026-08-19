@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { asyncHandler } from "../../middleware/errorHandler";
 import { hybridSportsService } from "./hybridService";
+import { getPrematchEvents } from "./prematch/service";
+import { ALL_SPORTS, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
 
 const router = Router();
@@ -10,6 +12,18 @@ router.get(
   asyncHandler(async (req, res) => {
     const sport = typeof req.query.sport === "string" ? (req.query.sport as any) : undefined;
     res.json({ events: hybridSportsService.snapshot(sport) });
+  })
+);
+
+router.get(
+  "/prematch",
+  asyncHandler(async (req, res) => {
+    const sport = req.query.sport;
+    if (typeof sport !== "string" || !ALL_SPORTS.includes(sport as Sport)) {
+      throw Errors.badRequest("Parâmetro sport em falta ou inválido");
+    }
+    const result = await getPrematchEvents(sport as Sport);
+    res.json(result);
   })
 );
 

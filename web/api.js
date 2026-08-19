@@ -134,5 +134,6 @@ const Bet62Api = (() => {
 
     // Sports
     getLiveEvents: (sport) => request(`/sports/events${sport ? `?sport=${sport}` : ""}`, { auth: false }),
+    getPrematchEvents: (sport) => request(`/sports/prematch?sport=${sport}`, { auth: false }),
   };
 })();
