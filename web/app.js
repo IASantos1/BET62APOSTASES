@@ -124,13 +124,19 @@ async function renderPrematchList() {
   }
   const icon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
   container.innerHTML = events
-    .map(
-      (e) => `
+    .map((e) => {
+      const odds = e.odds?.[0]?.selections;
+      return `
       <div class="live-card" onclick="openMarket('${e.id}', false)">
         <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime || e.kickoff)}</span></div>
         <div class="lc-teams"><span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span></div>
-      </div>`
-    )
+        ${
+          odds
+            ? `<div class="lc-odds">${Object.entries(odds).slice(0, 3).map(([k, v]) => `<div>${k}<br>${Number(v).toFixed(2)}</div>`).join("")}</div>`
+            : ""
+        }
+      </div>`;
+    })
     .join("");
 }
 renderPrematchList._token = 0;
