@@ -606,7 +606,7 @@ function renderLiveEvents() {
   container.innerHTML = events
     .map((e) => {
       const odds = e.odds?.[0]?.selections;
-      const showScore = e.sport !== "formula1";
+      const showScore = typeof e.homeScore === "number" && typeof e.awayScore === "number";
       return `
         <div class="live-card" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
           <div class="lc-top"><span>${sportIcon[e.sport] || ""} ${e.league}</span><span>${e.minuteOrPeriod}</span></div>
@@ -685,11 +685,12 @@ function renderMatchTracker(e) {
     return;
   }
 
+  const hasScore = typeof e.homeScore === "number" && typeof e.awayScore === "number";
   el.innerHTML = `
     <div class="mt-live"><span class="dot"></span> AO VIVO</div>
     <div class="mt-teams">
       <div class="mt-team">${e.home}</div>
-      <div class="mt-score">${e.homeScore} - ${e.awayScore}</div>
+      ${hasScore ? `<div class="mt-score">${e.homeScore} - ${e.awayScore}</div>` : '<div style="color:var(--muted);font-size:.85rem">vs</div>'}
       <div class="mt-team">${e.away}</div>
     </div>
     <div class="mt-period">${e.minuteOrPeriod}</div>`;

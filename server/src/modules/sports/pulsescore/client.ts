@@ -142,7 +142,9 @@ interface PulsescoreEvent {
   home: string;
   away: string;
   live: boolean;
-  startTime: string;
+  // CONFIRMED absent on live:true events (real /live-events samples for soccer and
+  // basketball had no startTime at all) — only present on pré-jogo (live:false) events.
+  startTime?: string;
   markets: PulsescoreMarket[];
 }
 interface PulsescoreLeague {
@@ -385,18 +387,35 @@ function normalizeMarket(m: PulsescoreMarket): LiveOdds {
   };
 }
 
+// "MATCH_RESULT" is the canonicalMarket value for the main 1X2/moneyline market — confirmed
+// from a real /leagues sample (soccer). Bookmaker market ordering is arbitrary otherwise (a
+// real sample had "Total Points Group 10 Points" as the very first market for an NBA game),
+// so without this the card's quick-odds preview (which just reads odds[0]) could show an
+// unrelated market. Moves MATCH_RESULT to the front when present; otherwise leaves order as-is.
+function orderMarketsWithPrimaryFirst(markets: PulsescoreMarket[]): PulsescoreMarket[] {
+  const primaryIdx = markets.findIndex((m) => m.canonicalMarket === "MATCH_RESULT");
+  if (primaryIdx <= 0) return markets;
+  const ordered = [...markets];
+  const [primary] = ordered.splice(primaryIdx, 1);
+  ordered.unshift(primary!);
+  return ordered;
+}
+
 function normalizeEvent(e: PulsescoreEvent, sport: Sport): LiveEvent {
+  const activeMarkets = orderMarketsWithPrimaryFirst(e.markets.filter((m) => m.isActive));
   return {
     id: `pulsescore:${e.eventId}`,
     sport,
     league: e.league,
     home: e.home,
     away: e.away,
-    homeScore: 0, // NEEDS VALIDATION: not present in the confirmed (pré-jogo) sample
-    awayScore: 0,
+    // CONFIRMED absent: real /live-events samples (soccer and basketball, both live:true)
+    // carry no score/clock field at all — this Pulsescore contract is odds-only, it doesn't
+    // report live score. Left undefined rather than a fabricated "0 - 0"; the frontend hides
+    // the score row when these are missing instead of showing a fake placeholder.
     minuteOrPeriod: e.live ? "AO VIVO" : "",
     status: e.live ? "live" : "scheduled",
-    odds: e.markets.filter((m) => m.isActive).map(normalizeMarket),
+    odds: activeMarkets.map(normalizeMarket),
     updatedAt: new Date().toISOString(),
     source: "pulsescore",
     startTime: e.startTime,
