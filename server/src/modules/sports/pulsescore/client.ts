@@ -164,13 +164,26 @@ export const SLUG_TO_SPORT: Partial<Record<string, Sport>> = Object.fromEntries(
 
 // CONFIRMED via a documentação oficial da Pulsescore ("Esportes válidos por casa de apostas"):
 // a 10Bet(CO.UK) não lista Fórmula 1 entre os desportos suportados, mas a Unibet AU lista — daí
-// a Fórmula 1 usar um bookmaker diferente de todos os outros 7 desportos (que ficam em 10bet).
+// a Fórmula 1 usar um bookmaker diferente de todos os outros desportos.
+// Beisebol mudou para "bet365": amostra real de /bet365/live-events?sport=baseball confirmou
+// score:{home,away} preenchido (ex: Diamondbacks 1-2 Red Sox) — a paddypower não devolve nada de
+// placar/relógio/estatísticas para beisebol (confirmado com dois pedidos reais, sempre vazio).
+// Sem matchClock nem statistics nesta amostra bet365 (nem sequer para innings) — só o placar.
 const SPORT_BOOKMAKER_OVERRIDE: Partial<Record<Sport, string>> = {
   formula1: "unibetau",
+  baseball: "bet365",
 };
 
 export function bookmakerFor(sport: Sport): string {
   return SPORT_BOOKMAKER_OVERRIDE[sport] ?? env.PULSESCORE_BOOKMAKER;
+}
+
+// Bet365 é a única bookmaker com caminho versionado (/api/v3/bet365/... em vez de
+// /api/{bookmaker}/...) — confirmado na documentação oficial e já tratado em wsClient.ts para o
+// WebSocket; em falta aqui no REST até a amostra real de beisebol expor o problema (os pedidos
+// para bet365 estavam a ir para /api/bet365/... em vez de /api/v3/bet365/...).
+function bookmakerPathSegment(bookmaker: string): string {
+  return bookmaker === "bet365" ? "v3/bet365" : bookmaker;
 }
 
 interface PulsescoreSelection {
@@ -178,7 +191,9 @@ interface PulsescoreSelection {
   rawName: string;
   odds: number;
   isActive: boolean;
-  selectionId: string;
+  // CONFIRMED ausente numa amostra real da bet365 (usa moreInfo.ID em vez disto) — opcional em
+  // vez de obrigatório; nunca foi lido por normalizeMarket() abaixo, por isso não afeta nada.
+  selectionId?: string;
   line?: number;
   metadata?: Record<string, unknown>;
 }
@@ -267,7 +282,7 @@ function assertConfigured() {
 async function fetchLeaguesPage(sport: Sport, page: number, limit: number): Promise<PulsescoreLeaguesResponse> {
   assertConfigured();
   const slug = SPORT_SLUGS[sport];
-  const url = `${env.PULSESCORE_REST_URL}/${bookmakerFor(sport)}/${slug}/leagues?page=${page}&limit=${limit}`;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(bookmakerFor(sport))}/${slug}/leagues?page=${page}&limit=${limit}`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -280,7 +295,7 @@ async function fetchLeaguesPage(sport: Sport, page: number, limit: number): Prom
 async function fetchLeagueEventsRaw(sport: Sport, leagueName: string): Promise<unknown> {
   assertConfigured();
   const slug = SPORT_SLUGS[sport];
-  const url = `${env.PULSESCORE_REST_URL}/${bookmakerFor(sport)}/${slug}/leagues/${encodeURIComponent(leagueName)}/events`;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(bookmakerFor(sport))}/${slug}/leagues/${encodeURIComponent(leagueName)}/events`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -337,7 +352,7 @@ interface PulsescoreFlatEventsResponse {
 async function fetchEventsFlatPage(sport: Sport, page: number, limit: number): Promise<PulsescoreFlatEventsResponse> {
   assertConfigured();
   const slug = SPORT_SLUGS[sport];
-  const url = `${env.PULSESCORE_REST_URL}/${bookmakerFor(sport)}/${slug}/events?page=${page}&limit=${limit}`;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(bookmakerFor(sport))}/${slug}/events?page=${page}&limit=${limit}`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -391,7 +406,7 @@ function extractSingleEvent(data: unknown): PulsescoreEvent | null {
 export async function fetchEventById(sport: Sport, eventId: string): Promise<LiveEvent | null> {
   assertConfigured();
   const slug = SPORT_SLUGS[sport];
-  const url = `${env.PULSESCORE_REST_URL}/${bookmakerFor(sport)}/${slug}/events/${encodeURIComponent(eventId)}`;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(bookmakerFor(sport))}/${slug}/events/${encodeURIComponent(eventId)}`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
   if (res.status === 404) return null;
   if (!res.ok) {
@@ -416,7 +431,7 @@ interface PulsescoreLiveSportsSummary {
  */
 export async function fetchLiveSportsWithEvents(): Promise<Sport[]> {
   assertConfigured();
-  const url = `${env.PULSESCORE_REST_URL}/${env.PULSESCORE_BOOKMAKER}/live-events/sports`;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(env.PULSESCORE_BOOKMAKER)}/live-events/sports`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -430,7 +445,7 @@ export async function fetchLiveSportsWithEvents(): Promise<Sport[]> {
 async function fetchLiveEventsPage(sport: Sport, page: number, limit: number): Promise<unknown> {
   assertConfigured();
   const slug = SPORT_SLUGS[sport];
-  const url = `${env.PULSESCORE_REST_URL}/${bookmakerFor(sport)}/live-events?page=${page}&limit=${limit}&sport=${slug}`;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(bookmakerFor(sport))}/live-events?page=${page}&limit=${limit}&sport=${slug}`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -472,7 +487,7 @@ export async function fetchLiveEvents(sport: Sport, opts: { maxPages?: number; l
  */
 export async function fetchLiveEventById(eventId: string): Promise<LiveEvent | null> {
   assertConfigured();
-  const url = `${env.PULSESCORE_REST_URL}/${env.PULSESCORE_BOOKMAKER}/live-events/events/${encodeURIComponent(eventId)}`;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(env.PULSESCORE_BOOKMAKER)}/live-events/events/${encodeURIComponent(eventId)}`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
   if (res.status === 404) return null;
   if (!res.ok) {
