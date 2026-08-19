@@ -838,7 +838,9 @@ function renderSetsCard(e, clockClass, oddsHtml, icon) {
 // jogador expulso no mesmo jogo acontece e cada um conta.
 function redCardsHtml(redCards) {
   const n = Number(redCards) || 0;
-  return n > 0 ? ` ${"🟥".repeat(n)}` : "";
+  // Retângulo fino em CSS em vez do emoji 🟥 (que é largo, um quadrado) — mais parecido com um
+  // cartão de futebol real.
+  return n > 0 ? ` ${'<span class="mini-red-card"></span>'.repeat(n)}` : "";
 }
 
 function renderGenericCard(e, clockClass, oddsHtml, icon) {
