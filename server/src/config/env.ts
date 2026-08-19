@@ -26,10 +26,13 @@ const envSchema = z.object({
   REVOLUT_PRIVATE_KEY: z.string().default(""), // JWT-signed client assertion key (PEM)
   REVOLUT_ACCOUNT_ID: z.string().default(""), // source account for payouts
 
-  // --- Pulsescore (live odds/scores websocket: football, tennis, basketball) ---
+  // --- Pulsescore (odds aggregator: REST, confirmed via a real example request/response) ---
+  // Auth is the "x-secret" HTTP header, not a query param — confirmed from a live sample call.
   PULSESCORE_API_KEY: z.string().default(""),
-  PULSESCORE_WS_URL: z.string().default("wss://stream.pulsescore.com/v1"),
-  PULSESCORE_REST_URL: z.string().default("https://api.pulsescore.com/v1"),
+  PULSESCORE_REST_URL: z.string().default("https://api.pulsescore.net/api"),
+  // Endpoint shape is /{bookmaker}/{sport}/leagues — Pulsescore aggregates odds per bookmaker
+  // source; "10bet" is the bookmaker confirmed in the sample. Change if a different source is preferred.
+  PULSESCORE_BOOKMAKER: z.string().default("10bet"),
 
   // --- API-Football (statistics) ---
   API_FOOTBALL_KEY: z.string().default(""),

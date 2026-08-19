@@ -32,10 +32,11 @@ export interface LiveEvent {
   away: string;
   homeScore: number;
   awayScore: number;
-  minuteOrPeriod: string; // "67'" for football, "Set 2" for tennis, "Q3" for basketball
+  minuteOrPeriod: string; // "67'" for football, "Set 2" for tennis, "Q3" for basketball; "" for scheduled events
   status: "scheduled" | "live" | "finished";
   odds: LiveOdds[];
   updatedAt: string; // ISO timestamp
   source: "pulsescore" | "mock";
   apiFootballFixtureId?: number; // present when a matching API-Football fixture id is known
+  startTime?: string; // ISO timestamp — kickoff time, present for scheduled (pré-jogo) events
 }
