@@ -46,18 +46,34 @@ interface WsMarket {
   rawName?: string;
   selections?: WsSelection[];
 }
+interface WsMatchClock {
+  minute?: number;
+  second?: number;
+  period?: string;
+}
+interface WsTeamStats {
+  yellowCards?: number;
+  redCards?: number;
+  corners?: number;
+}
 interface WsEvent {
   eventId: string;
   league: string;
   home: string;
   away: string;
-  // e.g. "1-0" — per the official docs' WS frame shape. NOTE: this single "H-A" string format is
-  // the WS contract; paddypower's REST /live-events uses a different shape ({home,away} strings
-  // — see PulsescoreScore in client.ts), so the two are parsed separately, not shared code.
-  score?: string;
+  // CRASHED PRODUCTION (2026-08-19): the official docs describe this as a single "H-A" string,
+  // but paddypower's real WS frames send the SAME {home, away} string-pair object shape as its
+  // REST /live-events (PulsescoreScore in client.ts) — `score.split is not a function` crashed
+  // the whole Node process because this field was typed/parsed as always a string. Doc vs. real
+  // sample disagreeing is a repeat of the pattern already seen elsewhere in this integration, so
+  // parseScore() below now accepts both shapes defensively instead of trusting either one.
+  score?: string | { home?: string | number; away?: string | number };
   live?: boolean;
   startTime?: string;
   markets?: WsMarket[];
+  country?: string;
+  matchClock?: WsMatchClock;
+  statistics?: { football?: { home?: WsTeamStats; away?: WsTeamStats } };
 }
 interface WsFrame {
   type?: string; // "connected" handshake frame
@@ -69,11 +85,27 @@ interface WsFrame {
   data?: WsEvent[];
 }
 
-function parseScore(score: string | undefined): { homeScore?: number; awayScore?: number } {
+// Accepts both the docs' "H-A" string AND the {home,away} object shape actually seen from
+// paddypower — never throws, whatever unexpected shape a frame carries (see WsEvent.score above).
+function parseScore(score: WsEvent["score"]): { homeScore?: number; awayScore?: number } {
   if (!score) return {};
-  const [h, a] = score.split("-").map((p) => Number(p.trim()));
-  if (h === undefined || a === undefined || Number.isNaN(h) || Number.isNaN(a)) return {};
-  return { homeScore: h, awayScore: a };
+  if (typeof score === "string") {
+    const [h, a] = score.split("-").map((p) => Number(p.trim()));
+    if (h === undefined || a === undefined || Number.isNaN(h) || Number.isNaN(a)) return {};
+    return { homeScore: h, awayScore: a };
+  }
+  if (typeof score === "object") {
+    const h = Number(score.home);
+    const a = Number(score.away);
+    if (Number.isNaN(h) || Number.isNaN(a)) return {};
+    return { homeScore: h, awayScore: a };
+  }
+  return {};
+}
+
+function formatWsMatchClock(clock: WsMatchClock | undefined, fallback: string): string {
+  if (!clock || typeof clock.minute !== "number") return fallback;
+  return `${clock.minute}'`;
 }
 
 function normalizeWsMarket(m: WsMarket): LiveOdds {
@@ -86,6 +118,7 @@ function normalizeWsMarket(m: WsMarket): LiveOdds {
 
 function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
   const markets = orderMarketsWithPrimaryFirst(e.markets ?? []);
+  const football = e.statistics?.football;
   return {
     id: `pulsescore:${e.eventId}`,
     sport,
@@ -93,12 +126,14 @@ function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
     home: e.home,
     away: e.away,
     ...parseScore(e.score),
-    minuteOrPeriod: e.live === false ? "" : "AO VIVO",
+    minuteOrPeriod: formatWsMatchClock(e.matchClock, e.live === false ? "" : "AO VIVO"),
     status: e.live === false ? "scheduled" : "live",
     odds: markets.map(normalizeWsMarket),
     updatedAt: new Date().toISOString(),
     source: "pulsescore",
     startTime: e.startTime,
+    country: e.country,
+    statistics: football ? { home: football.home ?? {}, away: football.away ?? {} } : undefined,
   };
 }
 
@@ -154,20 +189,22 @@ class PulsescoreWsManager extends EventEmitter {
     }
     this.sockets.set(sport, ws);
 
+    // Tudo dentro de um só try/catch, não só o JSON.parse: um frame com uma forma inesperada
+    // (ex: o "score" que crashou a produção — ver nota em WsEvent acima) nunca deve derrubar o
+    // processo Node inteiro. Um erro aqui fica só a saltar este frame, com aviso no log.
     ws.on("message", (raw) => {
-      let frame: WsFrame;
       try {
-        frame = JSON.parse(raw.toString());
-      } catch {
-        return;
+        const frame = JSON.parse(raw.toString()) as WsFrame;
+        if (frame.type === "connected") {
+          logger.info({ sport, bookmaker: frame.bookmaker, plan: frame.plan }, "Pulsescore WS: ligado");
+          return;
+        }
+        if (!frame.data) return;
+        const events = frame.data.filter((e) => e && e.home && e.away).map((e) => normalizeWsEvent(e, sport));
+        this.emit("snapshot", { sport, events });
+      } catch (err) {
+        logger.warn({ err, sport }, "Pulsescore WS: frame com forma inesperada, a ignorar este frame");
       }
-      if (frame.type === "connected") {
-        logger.info({ sport, bookmaker: frame.bookmaker, plan: frame.plan }, "Pulsescore WS: ligado");
-        return;
-      }
-      if (!frame.data) return;
-      const events = frame.data.map((e) => normalizeWsEvent(e, sport));
-      this.emit("snapshot", { sport, events });
     });
 
     ws.on("close", (code) => {
