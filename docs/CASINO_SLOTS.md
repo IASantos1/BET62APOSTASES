@@ -78,6 +78,36 @@ da doc chegar.
     real do backend enquanto o endpoint de lançamento não estiver confirmado, em vez de um
     alerta genérico "não implementado".
 
+### Corrigido: imagens dos jogos não carregavam em produção
+
+O utilizador confirmou em produção (Railway) que os jogos apareciam na grelha mas sem imagem.
+Investigado: `api.playxspin.com` (domínio das imagens do catálogo) dá **timeout de ligação** na
+porta 443 — testado tanto a partir deste ambiente de build (bloqueado pelo proxy do sandbox,
+como seria de esperar) como, mais importante, **a partir da própria Console da Railway**
+(`curl -sv https://api.playxspin.com/` → `Connection timed out after 10002 milliseconds`,
+confirmado pelo utilizador). Como a Railway tem rede normal (já provou alcançar a Pulsescore sem
+problemas), isto indica que o domínio de imagens do provedor não aceita ligações do IP da
+Railway — provavelmente falta autorizar esse IP junto do Cassino Gold Palace (o mesmo
+mecanismo, aliás, que provavelmente também bloqueia o endpoint de lançamento de jogo).
+
+**Correção** (`server/src/modules/casino/imageProxy.ts` + rota `GET /api/casino/image/:gameCode`
+em `routes.ts`): em vez do frontend carregar `<img src="https://api.playxspin.com/...">`
+diretamente (dependência direta do browser do jogador nesse domínio), passa a carregar de
+`/api/casino/image/{game_code}`, servido pelo próprio backend. O backend tenta buscar a imagem
+real do provedor (timeout de 5s); se conseguir, serve-a com cache de 6h; se falhar (como agora),
+gera e serve um placeholder SVG determinístico — cores e iniciais derivadas do nome do jogo,
+sempre as mesmas para o mesmo jogo — com cache curto de 2min, para tentar de novo a imagem real
+em breve (ex: assim que o IP for autorizado) sem martelar o provedor a cada carregamento de
+página. Nunca devolve 404 nem deixa o `<img>` com ícone partido.
+
+Frontend (`web/app.js`, fila de destaques e grelha do Cassino): trocado `g.game_image` por
+`${window.BET62_CONFIG.API_BASE}/casino/image/${g.game_code}`.
+
+Testado localmente: placeholder gerado corretamente (confirmado com Playwright — cores
+consistentes por jogo, iniciais + nome legíveis), cache de falha confirmado (segundo pedido ao
+mesmo jogo instantâneo, ~8ms). Assim que o IP da Railway for autorizado pelo provedor, as
+imagens reais passam a aparecer sozinhas, sem precisar de mais nenhuma alteração de código.
+
 ## Testado nesta build
 
 - ✅ Servidor local com Postgres real: `GET /api/casino/games` (490 jogos), `.../highlighted`
