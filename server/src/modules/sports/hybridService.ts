@@ -76,11 +76,18 @@ class HybridSportsService extends EventEmitter {
 
   /** Substitui todos os eventos de um desporto de uma vez — usado tanto pelo polling REST
    * (um desporto por chamada) como por cada frame do WebSocket (todos os eventos ao vivo
-   * desse desporto naquele instante). */
+   * desse desporto naquele instante). Um evento que desaparece de um snapshot (jogo terminado,
+   * ou já não devolvido pela Pulsescore por qualquer razão) tem de ser removido tão depressa
+   * quanto o próximo ciclo de polling/frame WS — sem isto o gateway (ver websocket/gateway.ts)
+   * nunca avisava o frontend, que ficava com o jogo preso na página Ao Vivo indefinidamente.
+   */
   private applySportSnapshot(sport: Sport, events: LiveEvent[]) {
     const incomingIds = new Set(events.map((e) => e.id));
     for (const [id, evt] of this.events) {
-      if (evt.sport === sport && !incomingIds.has(id)) this.events.delete(id);
+      if (evt.sport === sport && !incomingIds.has(id)) {
+        this.events.delete(id);
+        this.emit("remove", id);
+      }
     }
     for (const evt of events) this.ingest(evt);
   }

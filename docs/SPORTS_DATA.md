@@ -332,6 +332,42 @@ esports e ténis de mesa no momento da amostra — os outros desportos podem sim
 jogos a decorrer agora, ou podem não ser suportados por esta bookmaker. Fórmula 1 mantém-se em
 `unibetau` via `SPORT_BOOKMAKER_OVERRIDE` (sem evidência de cobertura pela paddypower).
 
+### Ajustes de layout pedidos + correção de um bug real (eventos terminados presos na página)
+
+Confirmado com uma amostra real de `/paddypower/live-events?sport=baseball` e `.../events/{id}`
+que o beisebol, ao contrário do futebol/ténis, **não devolve `matchClock`/`score`/`statistics`
+nenhum** neste momento (nem sequer no endpoint de evento único) — o utilizador mostrou uma
+captura de outra bookmaker com um placar por entrada (linescore) como referência de layout
+desejável, mas isso fica para quando tivermos uma amostra real confirmada com esses campos; não
+foi inventado nada para o beisebol.
+
+Quatro pedidos de UI implementados em `web/app.js`/`index.html`:
+
+1. **Placar antes do nome nos cartões genéricos** (futebol, basquete, hóquei, beisebol, MMA, F1):
+   `renderGenericCard()` agora põe `event-row-score` antes de `event-team` (via `order:-1` CSS,
+   classe `.score-left`) — só o ténis/voleibol (`renderSetsCard()`, cartão "por sets") mantém o
+   placar do lado direito, como pedido explicitamente.
+2. **Grelha de sets sempre visível** (ténis/voleibol): `renderSetsCard()` deixou de mostrar só o
+   último set (`sets.home[sets.home.length-1]`) e passou a desenhar uma coluna por set jogado
+   (`S1 S2 S3...`), fixas — o placar do 1º set não desaparece quando o 2º começa. O indicador de
+   set atual no canto superior direito (`Sn`, derivado de `matchClock.period`) continua a servir
+   de estado "ao vivo", separado da grelha histórica.
+3. **Ordem fixa dos desportos na página Ao Vivo**: `SPORT_ORDER` em `web/app.js` (reaproveita o
+   índice de `SPORTS_META`) ordena a lista antes de desenhar — Futebol primeiro, Ténis segundo,
+   Basquete terceiro, resto abaixo — independentemente da ordem de chegada dos snapshots.
+4. **Bug real corrigido: jogos terminados nunca desapareciam da página Ao Vivo sem reload.**
+   `hybridService.ts` já removia eventos do seu `Map` interno quando saíam de um snapshot
+   (`applySportSnapshot()`), mas nunca emitia nada a avisar — o gateway WebSocket
+   (`websocket/gateway.ts`) só reencaminhava `{type:"update"}` para eventos que continuavam a
+   existir, nunca um aviso de remoção. `hybridService` passou a emitir `"remove"` com o `id`, o
+   gateway reencaminha `{type:"remove", id}`, e `web/app.js` remove esse id de `liveEventsById`
+   assim que o frame chega (e marca `_finished` se for o evento aberto no Match Tracker, mostrando
+   um estado "ENCERRADO" em vez de ficar preso a mostrar dados obsoletos).
+
+Testado com Playwright: ordem Futebol→Ténis→Beisebol confirmada, grelha de sets com S1/S2/S3
+todos visíveis, placar à esquerda do nome nos cartões genéricos, e remoção de um evento do
+`liveEventsById` a refletir-se imediatamente na lista renderizada.
+
 ## ⚠️ Ainda por confirmar
 
 1. **Slug exato da Fórmula 1** dentro de `unibetau` — continua uma estimativa (`formula-1`).

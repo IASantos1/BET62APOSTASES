@@ -51,6 +51,17 @@ export function attachSportsWebsocketGateway(httpServer: HttpServer) {
     }
   });
 
+  // Jogo terminado (ou já não devolvido pela Pulsescore) — avisa os clientes para o tirarem da
+  // página Ao Vivo imediatamente, sem esperar por um reload. Manda a todos os clientes ligados
+  // (não sabemos a que desporto o id removido pertencia sem o guardar à parte, e o frontend só
+  // faz um `delete` que é inofensivo se o id nem sequer existir no lado dele).
+  hybridSportsService.on("remove", (id: string) => {
+    const frame = JSON.stringify({ type: "remove", id });
+    for (const client of clients) {
+      if (client.socket.readyState === WebSocket.OPEN) client.socket.send(frame);
+    }
+  });
+
   logger.info("Gateway websocket de desporto ativo em /ws/live");
   return wss;
 }
