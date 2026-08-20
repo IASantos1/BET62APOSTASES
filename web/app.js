@@ -1080,7 +1080,6 @@ function renderMarketPage() {
   document.getElementById("market-title").textContent = `${e.home} vs ${e.away}`;
   renderMatchTracker(e);
   renderMarketGroups(e);
-  renderBetslipPanel();
 }
 
 function renderMatchTracker(e) {
