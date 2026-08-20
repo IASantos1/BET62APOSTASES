@@ -43,6 +43,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 .balance-pill{background:var(--surface2);border:1px solid var(--border);padding:6px 12px;border-radius:20px;font-size:.85rem;font-weight:700;color:var(--gold);font-variant-numeric:tabular-nums}
 .add-btn{width:34px;height:34px;border-radius:50%;background:var(--green);border:none;color:#fff;font-size:1.2rem;display:flex;align-items:center;justify-content:center;cursor:pointer}
 .avatar-btn{width:34px;height:34px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:1.1rem;cursor:pointer;color:var(--text)}
+.login-btn{background:var(--red);color:#fff;border:none;padding:8px 18px;border-radius:20px;font-size:.85rem;font-weight:700;cursor:pointer}
 .top-nav{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;flex:1;justify-content:center}
 .top-nav::-webkit-scrollbar{display:none}
 .top-nav-item{padding:8px 14px;border-radius:20px;font-size:.78rem;font-weight:600;color:var(--muted);white-space:nowrap;cursor:pointer;display:flex;align-items:center;gap:5px}
@@ -282,9 +283,10 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
         <div class="top-nav-item" data-page="promocao" onclick="showPage('promocao')"><i class="fas fa-gift"></i> PROMOÇÃO</div>
     </div>
     <div class="header-right">
-        <div class="balance-pill" id="balance-display">€ 0.00</div>
-        <button class="add-btn" onclick="openDeposit()">+</button>
-        <button class="avatar-btn" id="btn-avatar" onclick="showPage('profile')">👤</button>
+        <button class="login-btn hidden" id="btn-header-login" onclick="openAuth('login')">Entrar</button>
+        <div class="balance-pill hidden" id="balance-display">€ 0.00</div>
+        <button class="add-btn hidden" id="btn-deposit" onclick="openDeposit()">+</button>
+        <button class="avatar-btn hidden" id="btn-avatar" onclick="showPage('profile')">👤</button>
     </div>
 </header>
 
