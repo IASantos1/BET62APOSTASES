@@ -621,6 +621,26 @@ verdadeira sem o ser.
   no Railway) antes de confiar 100% nele.
 - ⛔ Estatísticas via API-Football — não testável sem chave de API.
 
+## Filtros de mercado (página de Mercados)
+
+`web/app.js::MARKET_FILTER_CATEGORIES` — barra de chips ("Todos", "Resultado", "Mais/Menos",
+"Handicap"...) entre o cabeçalho do evento e a lista de mercados, uma configuração por
+desporto (futebol, basquetebol, ténis, hóquei, voleibol; os restantes desportos não têm barra
+de filtros, pedido explícito do utilizador foi só para estes cinco).
+
+⚠️ **Heurística, não uma lista fechada confirmada**: cada categoria reconhece o mercado por
+palavra-chave no nome bruto que a Pulsescore envia (`group.market`, tipicamente em inglês —
+"Match Odds", "Total Goals Over/Under", "Both Teams to Score"...), porque este projeto não tem
+uma lista exaustiva de todos os nomes de mercado que a Pulsescore pode mandar por
+desporto/liga/bookmaker (ao contrário de H2H/predictions/standings da API-Football, que foram
+confirmados contra amostras reais coladas pelo utilizador antes de implementar). Cada mercado
+cai numa única categoria (a primeira, pela ordem da lista, cujo padrão bater —
+`classifyMarket()`); sem nenhuma bater, cai no balde "Especiais" no futebol (só aí, pedido
+explícito) ou fica sem categoria nos outros desportos (só visível em "Todos"). **NEEDS
+VALIDATION**: confirmar os padrões contra nomes de mercado reais de cada desporto assim que
+houver amostras (a mesma metodologia já usada no resto do projeto) — um nome de mercado muito
+fora do comum pode cair no filtro errado ou não bater em nenhum.
+
 ## Antes de produção
 
 1. Confirmar o slug/bookmaker da Fórmula 1 (ver "Ainda por confirmar" acima).

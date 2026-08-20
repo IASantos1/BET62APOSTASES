@@ -249,6 +249,44 @@ function closeDrawers() {
   document.getElementById("drawer-overlay").classList.remove("open");
 }
 
+// Esqueleto de carregamento — mostra N cartões placeholder (mesma forma do .live-card real,
+// ver CSS .skeleton-card) em vez de um "A carregar…" em texto simples, para o utilizador ver
+// desde logo a forma da lista que está prestes a aparecer (percepção de carregamento rápido).
+function skeletonCardsHtml(count) {
+  const card = `
+    <div class="skeleton-card">
+      <div class="sk-top"><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
+      <div class="skeleton-line sk-team"></div>
+      <div class="skeleton-line sk-team" style="width:40%"></div>
+      <div class="sk-odds"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
+    </div>`;
+  return card.repeat(count);
+}
+
+// Carregamento por bloco: em vez de um único innerHTML gigante (trava o main thread quando a
+// lista é grande, ex: "Todos" os desportos em Pré-jogo pode juntar dezenas de jogos vindos de 8
+// pedidos em paralelo), insere os cartões em fatias sucessivas via requestAnimationFrame — o
+// utilizador vê a lista aparecer em blocos em vez de tudo de uma vez ao fim do carregamento
+// inteiro. htmlArray é um array de strings HTML, uma por cartão (não uma string já unida).
+function renderInBlocks(container, htmlArray, blockSize = 12) {
+  container.innerHTML = "";
+  if (!htmlArray.length) return;
+  let i = 0;
+  const token = (container._renderToken = (container._renderToken || 0) + 1);
+  function paintNext() {
+    if (container._renderToken !== token) return; // uma renderização mais recente já assumiu este contentor
+    const slice = htmlArray.slice(i, i + blockSize);
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = slice.join("");
+    const frag = document.createDocumentFragment();
+    while (wrapper.firstChild) frag.appendChild(wrapper.firstChild);
+    container.appendChild(frag);
+    i += blockSize;
+    if (i < htmlArray.length) requestAnimationFrame(paintNext);
+  }
+  paintNext();
+}
+
 const prematchEventsById = new Map();
 
 function clearLeagueFilter() {
@@ -260,7 +298,7 @@ function clearLeagueFilter() {
 async function renderPrematchList() {
   const container = document.getElementById("prematch-list");
   const requestToken = ++renderPrematchList._token;
-  container.innerHTML = '<div class="empty-note">A carregar…</div>';
+  container.innerHTML = skeletonCardsHtml(6);
 
   const badge = document.getElementById("league-filter-badge");
   if (badge) {
@@ -290,16 +328,15 @@ async function renderPrematchList() {
     return;
   }
   const icon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
-  container.innerHTML = events
-    .map((e) => {
-      return `
+  const cardsHtml = events.map(
+    (e) => `
       <div class="live-card" onclick="openMarket('${e.id}', false)">
         <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime)}</span></div>
         <div class="lc-teams"><span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span></div>
         ${quickOddsHtml(e, e.odds?.[0], false)}
-      </div>`;
-    })
-    .join("");
+      </div>`
+  );
+  renderInBlocks(container, cardsHtml);
 }
 renderPrematchList._token = 0;
 function formatKickoff(d) {
@@ -316,6 +353,7 @@ let currentBalance = null;
 let pageHistory = ["destaques"];
 let selectedDepositMethod = "STRIPE_CARD";
 let liveSocket = null;
+let liveSnapshotReceived = false; // true assim que o 1º frame "snapshot" do WS chega — distingue "ainda a carregar" (esqueleto) de "carregou e está mesmo vazio", ver renderLiveEvents()
 const liveEventsById = new Map();
 let currentMarketEvent = null;
 const betslipSelections = new Map(); // key -> { eventId, market, selection, odd }
@@ -396,7 +434,7 @@ function showPage(page) {
   document.getElementById("btn-back").classList.toggle("hidden", !showBack);
 
   if (page === "profile") loadProfile();
-  if (page === "aovivo") { renderSportSubnav(); ensureLiveSocket(); }
+  if (page === "aovivo") { renderSportSubnav(); renderLiveEvents(); ensureLiveSocket(); }
   if (page === "esportes") { renderSportSubnav(); renderPrematchList(); }
   if (page === "casino") renderCasinoPage();
   if (page === "destaques") renderDestaquesCasinoRow();
@@ -927,6 +965,7 @@ function ensureLiveSocket() {
   liveSocket.onmessage = (msg) => {
     const data = JSON.parse(msg.data);
     if (data.type === "snapshot") {
+      liveSnapshotReceived = true;
       liveEventsById.clear();
       data.events.forEach((e) => liveEventsById.set(e.id, e));
     } else if (data.type === "update") {
@@ -1032,24 +1071,27 @@ const SPORT_ORDER = Object.fromEntries(SPORTS_META.map((s, i) => [s.id, i]));
 
 function renderLiveEvents() {
   const container = document.getElementById("live-list");
+  if (!container) return;
   const events = [...liveEventsById.values()]
     .filter((e) => !selectedSport || e.sport === selectedSport)
     .sort((a, b) => (SPORT_ORDER[a.sport] ?? 99) - (SPORT_ORDER[b.sport] ?? 99));
   if (!events.length) {
-    container.innerHTML = '<div class="empty-note">Sem eventos ao vivo para este desporto neste momento</div>';
+    // Antes do primeiro snapshot do WebSocket, "sem eventos" ainda não é verdade — é só que
+    // ainda não chegou nada; mostra o esqueleto em vez de afirmar (por breves instantes,
+    // erradamente) que não há jogos ao vivo.
+    container.innerHTML = liveSnapshotReceived ? '<div class="empty-note">Sem eventos ao vivo para este desporto neste momento</div>' : skeletonCardsHtml(4);
     return;
   }
   const sportIcon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
-  container.innerHTML = events
-    .map((e) => {
-      const clockClass = isClockMissing(e) ? "clock-missing" : "";
-      const icon = sportIcon[e.sport] || "";
-      const oddsHtml = quickOddsHtml(e, e.odds?.[0], true);
+  const cardsHtml = events.map((e) => {
+    const clockClass = isClockMissing(e) ? "clock-missing" : "";
+    const icon = sportIcon[e.sport] || "";
+    const oddsHtml = quickOddsHtml(e, e.odds?.[0], true);
 
-      if (e.statistics?.sets) return renderSetsCard(e, clockClass, oddsHtml, icon);
-      return renderGenericCard(e, clockClass, oddsHtml, icon);
-    })
-    .join("");
+    if (e.statistics?.sets) return renderSetsCard(e, clockClass, oddsHtml, icon);
+    return renderGenericCard(e, clockClass, oddsHtml, icon);
+  });
+  renderInBlocks(container, cardsHtml);
 }
 
 // ====================== MERCADOS + MATCH TRACKER ======================
@@ -1058,6 +1100,7 @@ function openMarket(eventId, isLive) {
   if (!event) return;
   currentMarketEvent = event;
   currentMarketEvent._isLive = isLive;
+  selectedMarketFilter = null; // volta a "Todos" a cada novo evento aberto
   showPage("market");
   renderMarketPage();
 
@@ -1095,6 +1138,7 @@ function renderMarketPage() {
   document.getElementById("market-league").textContent = `${sportMeta ? sportMeta.icon + " " : ""}${e.league}`;
   document.getElementById("market-title").textContent = `${e.home} vs ${e.away}`;
   renderMatchTracker(e);
+  renderMarketFilterBar(e);
   renderMarketGroups(e);
 }
 
@@ -1370,21 +1414,143 @@ async function renderStandings(e) {
   }
 }
 
+// Filtros de mercado por desporto (barra de chips entre o cabeçalho e a lista de mercados, ver
+// #market-filter-bar). Cada categoria é reconhecida por palavras-chave no NOME BRUTO do
+// mercado tal como a Pulsescore o envia (group.market, tipicamente em inglês — "Match Odds",
+// "Total Goals", "Both Teams to Score", etc., ver docs/SPORTS_DATA.md para amostras reais
+// confirmadas). Sem uma lista fechada de todos os nomes que a Pulsescore pode mandar para cada
+// desporto/liga, a classificação é por palavra-chave (heurística), não por igualdade exata —
+// mais robusta a pequenas variações de texto entre bookmakers/desportos do que uma lista fixa,
+// mas pode não cobrir um nome de mercado muito invulgar (esse cai fora de todas as categorias
+// específicas e só aparece em "Todos"). A ORDEM de cada lista importa: a primeira categoria
+// cujo teste bater é a escolhida (ex: "1st Half Corners" fica em "1º Tempo", não em
+// "Escanteios" — mercados de uma parte específica agrupam-se todos juntos, como nos sites de
+// apostas de referência).
+const MARKET_FILTER_CATEGORIES = {
+  football: [
+    { label: "1º Tempo", test: (m) => /1st half|first half|half.?time|\bht\b/i.test(m) && !/2nd|second/i.test(m) },
+    { label: "2º Tempo", test: (m) => /2nd half|second half/i.test(m) },
+    { label: "Escanteios", test: (m) => /corner/i.test(m) },
+    { label: "Cartões", test: (m) => /\bcard|booking/i.test(m) },
+    { label: "Ambas Marcam", test: (m) => /both teams to score|\bbtts\b|both to score/i.test(m) },
+    { label: "Placar Exato", test: (m) => /correct score|exact score/i.test(m) },
+    { label: "Handicap", test: (m) => /handicap|spread|asian/i.test(m) },
+    { label: "Mais/Menos", test: (m) => /over\/?under|total goals|\bo\/u\b/i.test(m) },
+    { label: "Resultado", test: (m) => /match odds|\b1x2\b|to win|winner|double chance|draw no bet|full time result|3.?way/i.test(m) },
+  ],
+  basketball: [
+    { label: "1º Quarto", test: (m) => /1st quarter|first quarter|\bq1\b/i.test(m) },
+    { label: "1º Tempo", test: (m) => /1st half|first half/i.test(m) },
+    { label: "Resultado por quarto", test: (m) => /quarter.*(result|winner)|winning quarter/i.test(m) },
+    { label: "Margem de vitória", test: (m) => /winning margin|margin of victory/i.test(m) },
+    { label: "Total da equipa", test: (m) => /team total/i.test(m) },
+    { label: "Handicap", test: (m) => /handicap|spread/i.test(m) },
+    { label: "Mais/Menos pontos", test: (m) => /over\/?under|total points/i.test(m) },
+    { label: "Pontos exatos", test: (m) => /correct score|exact (score|points)/i.test(m) },
+    { label: "Vencedor", test: (m) => /money.?line|to win|match winner|winner\b/i.test(m) },
+  ],
+  tennis: [
+    { label: "Primeiro set", test: (m) => /1st set|first set/i.test(m) },
+    { label: "Tie-break — Sim/Não", test: (m) => /tie.?break/i.test(m) },
+    { label: "Handicap de games", test: (m) => /game handicap|games handicap/i.test(m) },
+    { label: "Mais/Menos games", test: (m) => /total games|games? over\/?under/i.test(m) },
+    { label: "Handicap de sets", test: (m) => /set handicap|sets handicap/i.test(m) },
+    { label: "Resultado exato em sets", test: (m) => /correct score|exact score|set score/i.test(m) },
+    { label: "Vencedor do set", test: (m) => /set\s*\d*\s*winner|to win (the )?set/i.test(m) },
+    { label: "Vencedor do jogo", test: (m) => /match winner|to win the match|money.?line/i.test(m) },
+  ],
+  ice_hockey: [
+    { label: "Resultado após 1º período", test: (m) => /1st period|first period/i.test(m) },
+    { label: "Total por período", test: (m) => /period.*total|total.*period/i.test(m) },
+    { label: "Dupla Chance", test: (m) => /double chance/i.test(m) },
+    { label: "Ambas marcam", test: (m) => /both teams to score|\bbtts\b/i.test(m) },
+    { label: "Placar exato", test: (m) => /correct score|exact score/i.test(m) },
+    { label: "Handicap", test: (m) => /handicap|puck line/i.test(m) },
+    { label: "Mais/Menos golos", test: (m) => /over\/?under|total goals/i.test(m) },
+    { label: "Vencedor", test: (m) => /match odds|\b1x2\b|to win|winner|money.?line/i.test(m) },
+  ],
+  volleyball: [
+    { label: "Handicap de sets", test: (m) => /set handicap|sets handicap/i.test(m) },
+    { label: "Handicap de pontos", test: (m) => /point handicap|points handicap/i.test(m) },
+    { label: "Total de sets", test: (m) => /total sets/i.test(m) },
+    { label: "Mais/Menos pontos", test: (m) => /total points|over\/?under/i.test(m) },
+    { label: "Resultado exato em sets", test: (m) => /correct score|exact score|set score/i.test(m) },
+    { label: "Vencedor do set", test: (m) => /set\s*\d*\s*winner|to win (the )?set/i.test(m) },
+    { label: "Vencedor", test: (m) => /match winner|to win|money.?line/i.test(m) },
+  ],
+};
+// Futebol é o único com um balde "resto" explícito (pedido do utilizador) — os outros desportos
+// não têm, um mercado que não bata em nenhuma categoria só aparece em "Todos".
+const FOOTBALL_CATCHALL_LABEL = "Especiais";
+
+let selectedMarketFilter = null; // null = "Todos"
+
+function renderMarketFilterBar(e) {
+  const el = document.getElementById("market-filter-bar");
+  if (!el) return;
+  const categories = MARKET_FILTER_CATEGORIES[e.sport];
+  if (!categories || !e.odds || !e.odds.length) {
+    el.innerHTML = "";
+    return;
+  }
+  const labels = ["Todos", ...categories.map((c) => c.label)];
+  if (e.sport === "football") labels.push(FOOTBALL_CATCHALL_LABEL);
+  el.innerHTML = labels
+    .map((label) => `<div class="mf-chip ${(selectedMarketFilter ?? "Todos") === label ? "active" : ""}" onclick='selectMarketFilter(${JSON.stringify(label)})'>${label}</div>`)
+    .join("");
+}
+function selectMarketFilter(label) {
+  selectedMarketFilter = label === "Todos" ? null : label;
+  renderMarketFilterBar(currentMarketEvent);
+  renderMarketGroups(currentMarketEvent);
+}
+// Classifica um mercado numa ÚNICA categoria (a primeira, pela ordem da lista, cujo teste
+// bata — ver comentário em MARKET_FILTER_CATEGORIES) em vez de testar cada categoria de forma
+// independente: "1st Half Corners" bate tanto em "1º Tempo" como em "Escanteios" se testado
+// separadamente, o que faria o mesmo mercado aparecer em dois filtros diferentes — errado para
+// uma barra de chips onde cada mercado deve ter um único sítio. Sem categoria batida, cai no
+// balde "Especiais" do futebol; nos restantes desportos (sem balde definido) fica sem
+// categoria (null) — só visível em "Todos".
+function classifyMarket(sport, marketName) {
+  const categories = MARKET_FILTER_CATEGORIES[sport];
+  if (!categories) return null;
+  const match = categories.find((c) => c.test(marketName));
+  if (match) return match.label;
+  return sport === "football" ? FOOTBALL_CATCHALL_LABEL : null;
+}
+// Devolve só os grupos de mercado que pertencem à categoria escolhida (ou todos, sem filtro
+// selecionado).
+function filterMarketGroups(e) {
+  if (!selectedMarketFilter) return e.odds;
+  if (!MARKET_FILTER_CATEGORIES[e.sport]) return e.odds;
+  return e.odds.filter((g) => classifyMarket(e.sport, g.market) === selectedMarketFilter);
+}
+
 function renderMarketGroups(e) {
   const el = document.getElementById("market-groups");
   if (!e.odds || !e.odds.length) {
     el.innerHTML = '<div class="empty-note">Sem mercados disponíveis para este evento</div>';
     return;
   }
+  // Mercado principal antes de filtrar (ver comparação `group === primaryMarket` abaixo) — o
+  // filtro de categoria (barra de chips) pode escolher um subconjunto onde o mercado principal
+  // real nem sequer aparece, ou deixa de ser o primeiro; precisa de continuar a ser identificado
+  // pelo mercado em si, não pela posição dentro da lista já filtrada.
+  const primaryMarket = e.odds[0];
+  const groups = filterMarketGroups(e);
+  if (!groups.length) {
+    el.innerHTML = '<div class="empty-note">Sem mercados nesta categoria</div>';
+    return;
+  }
   const isLive = e._isLive || e.status === "live";
-  el.innerHTML = e.odds
-    .map((group, idx) => {
+  el.innerHTML = groups
+    .map((group) => {
       // Mercado principal (1X2/moneyline, sempre o primeiro — ver orderMarketsWithPrimaryFirst
       // no backend) totalmente suspenso: em vez de 3 caixas "Suspenso" repetidas lado a lado,
       // mostra-se um único botão a cobrir a linha toda. O rótulo do mercado (group.market) pode
       // vir "Match Odds", "Grande Chance" ou até "Revisão VAR" consoante o bookmaker/desporto —
-      // por isso a decisão usa a posição (idx===0), não o texto do nome.
-      if (idx === 0 && !group.isActive) {
+      // por isso a decisão compara o próprio grupo, não o texto do nome.
+      if (group === primaryMarket && !group.isActive) {
         return `<div class="market-group"><h4>${group.market}</h4><div class="selection-row">
           <div class="selection-btn suspended"><span class="sel-odd">Suspenso</span></div>
         </div></div>`;
