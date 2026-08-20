@@ -115,27 +115,63 @@ export interface ApiFootballFixtureSearchResponse {
   }>;
 }
 
+export interface FixtureIdMatch {
+  fixtureId: number;
+  kickoffISO: string;
+  invertedHomeAway: boolean; // true = a API-Football tem a casa/fora trocada em relação ao pedido
+}
+
 /**
- * Resolve o fixture_id do jogo entre duas equipas (por id) numa data. Melhor esforço: pesquisa
- * os jogos da equipa da casa nessa data exata (segundo sinal de confirmação, além do id da
- * equipa) e filtra pelo adversário certo. Sem resultado -> null, nunca inventa um id. Se houver
- * mais do que um (ex: taça a dobrar com a liga no mesmo dia — raro), regista um aviso e usa o
- * primeiro, por não haver mais nenhum dado (ex: hora exata) para desempatar com confiança.
+ * Resolve o fixture da API-Football entre duas equipas (por id) numa data. Melhor esforço:
+ * pesquisa os jogos da equipa da casa nessa data exata (segundo sinal de confirmação, além do
+ * id da equipa) e filtra pelo adversário certo — incluindo a ordem invertida (a Pulsescore e a
+ * API-Football podem discordar em qual das duas é "casa"; nunca se corrige o mandante/visitante
+ * da Pulsescore por causa disto, ela continua a ser a fonte principal do evento — só se regista
+ * que a inversão aconteceu, para auditoria). Sem resultado -> null, nunca inventa um id.
+ *
+ * Se houver mais do que um candidato (ex: taça a dobrar com a liga no mesmo dia — raro), e
+ * `expectedKickoffISO` for dado, escolhe o mais próximo desse horário (comparação em UTC via
+ * `Date`, nunca por comparação de strings) em vez de assumir sempre o primeiro — sem custo
+ * extra de pedidos, a data de cada candidato já vem nesta mesma resposta.
  */
-export async function findFixtureId(homeTeamId: number, awayTeamId: number, dateISO: string): Promise<number | null> {
+export async function findFixtureId(homeTeamId: number, awayTeamId: number, dateISO: string, expectedKickoffISO?: string): Promise<FixtureIdMatch | null> {
   const res = await apiFootballFetch<ApiFootballFixtureSearchResponse>("/fixtures", { team: homeTeamId, date: dateISO });
-  const matches = res.response.filter(
-    (f) =>
-      (f.teams.home.id === homeTeamId && f.teams.away.id === awayTeamId) ||
-      (f.teams.home.id === awayTeamId && f.teams.away.id === homeTeamId)
-  );
-  if (matches.length > 1) {
+  const matches = res.response
+    .map((f) => {
+      if (f.teams.home.id === homeTeamId && f.teams.away.id === awayTeamId) return { f, invertedHomeAway: false };
+      if (f.teams.home.id === awayTeamId && f.teams.away.id === homeTeamId) return { f, invertedHomeAway: true };
+      return null;
+    })
+    .filter((m): m is { f: ApiFootballFixtureSearchResponse["response"][number]; invertedHomeAway: boolean } => m !== null);
+
+  if (!matches.length) return null;
+
+  let best = matches[0]!;
+  if (matches.length > 1 && expectedKickoffISO) {
+    const expected = new Date(expectedKickoffISO).getTime();
+    let bestDiffMs = Math.abs(new Date(best.f.fixture.date).getTime() - expected);
+    for (const m of matches.slice(1)) {
+      const diffMs = Math.abs(new Date(m.f.fixture.date).getTime() - expected);
+      if (diffMs < bestDiffMs) {
+        best = m;
+        bestDiffMs = diffMs;
+      }
+    }
+    logger.info(
+      { homeTeamId, awayTeamId, dateISO, count: matches.length, chosenFixtureId: best.f.fixture.id, diffMinutes: Math.round(bestDiffMs / 60000) },
+      "API-Football: mais do que um fixture para as mesmas equipas na mesma data — escolhido o mais próximo do horário esperado"
+    );
+  } else if (matches.length > 1) {
     logger.warn(
       { homeTeamId, awayTeamId, dateISO, count: matches.length },
-      "API-Football: mais do que um fixture encontrado para as mesmas equipas na mesma data — a usar o primeiro"
+      "API-Football: mais do que um fixture encontrado para as mesmas equipas na mesma data (sem horário esperado para desempatar) — a usar o primeiro"
     );
   }
-  return matches[0]?.fixture.id ?? null;
+  if (best.invertedHomeAway) {
+    logger.info({ homeTeamId, awayTeamId, fixtureId: best.f.fixture.id }, "API-Football: casa/fora invertidos em relação à Pulsescore — mandante da Pulsescore mantido");
+  }
+
+  return { fixtureId: best.f.fixture.id, kickoffISO: best.f.fixture.date, invertedHomeAway: best.invertedHomeAway };
 }
 
 export interface ApiFootballH2HResponse {

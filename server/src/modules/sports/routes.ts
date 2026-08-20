@@ -6,6 +6,7 @@ import { getTodayCompetitions } from "./competitions/service";
 import { fetchEventById } from "./pulsescore/client";
 import { getHeadToHead, getPredictions, getStandings, type HeadToHeadMatch } from "./apifootball/client";
 import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent } from "./mapping/service";
+import { getUnifiedMatchData } from "./unified/service";
 import { ALL_SPORTS, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
 
@@ -50,6 +51,20 @@ router.get(
     const event = await fetchEventById(sport as Sport, rawId);
     if (!event) throw Errors.notFound("Evento não encontrado na Pulsescore");
     res.json({ event });
+  })
+);
+
+// Endpoint unificado (docs/UNIFIED_MATCH_DATA.md) — placar/estado/relógio/cartões/cantos da
+// Pulsescore (fonte principal) combinados com as estatísticas complementares da API-Football
+// (posse, remates, faltas, passes...) num único objeto, com a fonte de cada campo explícita.
+// Mesmo :id usado nos outros endpoints (o próprio LiveEvent.id já funciona como o "internal
+// match id" da BET62 — ver nota em unified/types.ts).
+router.get(
+  "/matches/:id/live",
+  asyncHandler(async (req, res) => {
+    const data = await getUnifiedMatchData(req.params.id);
+    if (!data) throw Errors.notFound("Partida não encontrada");
+    res.json(data);
   })
 );
 
