@@ -2,7 +2,7 @@ import { EventEmitter } from "events";
 import WebSocket from "ws";
 import { env } from "../../../config/env";
 import { logger } from "../../../lib/logger";
-import type { LiveEvent, LiveOdds, Sport } from "../types";
+import type { LiveEvent, LiveOdds, LiveSelection, Sport } from "../types";
 import { SPORT_SLUGS, bookmakerFor, orderMarketsWithPrimaryFirst, fetchLiveSportsWithEvents } from "./client";
 
 /**
@@ -135,12 +135,18 @@ function formatWsMatchClock(clock: WsMatchClock | undefined, fallback: string): 
   return fallback;
 }
 
+// Mantém as seleções inativas em vez de as descartar (ver LiveSelection em types.ts) — mesma
+// lógica do REST em client.ts, para o frontend as mostrar suspensas em vez de desaparecerem.
 function normalizeWsMarket(m: WsMarket): LiveOdds {
   const selections = (m.selections ?? [])
-    .filter((s) => s.isActive !== false)
-    .map((s): [string, number] => [s.rawName ?? s.name ?? "?", Number(s.odds ?? s.decimal ?? NaN)])
-    .filter(([, odd]) => !Number.isNaN(odd));
-  return { market: m.rawName ?? m.canonicalMarket ?? "Mercado", selections: Object.fromEntries(selections) };
+    .map((s): [string, LiveSelection] | null => {
+      const odd = Number(s.odds ?? s.decimal ?? NaN);
+      if (Number.isNaN(odd)) return null;
+      return [s.rawName ?? s.name ?? "?", { odd, isActive: s.isActive !== false }];
+    })
+    .filter((entry): entry is [string, LiveSelection] => entry !== null);
+  const isActive = selections.length === 0 || selections.some(([, sel]) => sel.isActive);
+  return { market: m.rawName ?? m.canonicalMarket ?? "Mercado", isActive, selections: Object.fromEntries(selections) };
 }
 
 function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
