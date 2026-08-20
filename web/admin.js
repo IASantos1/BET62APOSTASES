@@ -118,6 +118,24 @@ const AdminApi = (() => {
 
     getSettings: () => request("/admin/settings"),
     updateSettings: (patch) => request("/admin/settings", { method: "PATCH", body: patch }),
+
+    listTeamMappings: (qs) => request(`/admin/mapping/teams?${qs}`),
+    correctTeamMapping: (id, apiFootballTeamId, apiFootballName) =>
+      request(`/admin/mapping/teams/${id}`, { method: "PATCH", body: { apiFootballTeamId, apiFootballName } }),
+    resetTeamMapping: (id) => request(`/admin/mapping/teams/${id}`, { method: "DELETE" }),
+
+    listLeagueMappings: (qs) => request(`/admin/mapping/leagues?${qs}`),
+    correctLeagueMapping: (id, apiFootballLeagueId, apiFootballName, season) =>
+      request(`/admin/mapping/leagues/${id}`, { method: "PATCH", body: { apiFootballLeagueId, apiFootballName, season } }),
+    resetLeagueMapping: (id) => request(`/admin/mapping/leagues/${id}`, { method: "DELETE" }),
+
+    listFixtureMappings: (qs) => request(`/admin/mapping/fixtures?${qs}`),
+    correctFixtureMapping: (id, apiFootballFixtureId) => request(`/admin/mapping/fixtures/${id}`, { method: "PATCH", body: { apiFootballFixtureId } }),
+    resetFixtureMapping: (id) => request(`/admin/mapping/fixtures/${id}`, { method: "DELETE" }),
+
+    listMappingAliases: () => request("/admin/mapping/aliases"),
+    createMappingAlias: (alias, canonicalName, sport) => request("/admin/mapping/aliases", { method: "POST", body: { alias, canonicalName, sport } }),
+    deleteMappingAlias: (id) => request(`/admin/mapping/aliases/${id}`, { method: "DELETE" }),
   };
 })();
 
@@ -193,6 +211,9 @@ const AdminApp = (() => {
     casinoGames: { page: 1, limit: 24, total: 0, search: "", category: "" },
     casinoTxCursor: null,
     auditCursor: null,
+    mappingTeams: { page: 1, limit: 20, total: 0, search: "", maxConfidence: "" },
+    mappingLeagues: { page: 1, limit: 20, total: 0, search: "", maxConfidence: "" },
+    mappingFixtures: { page: 1, limit: 20, total: 0, maxConfidence: "", unlinkedOnly: false },
   };
 
   // --- Auth ---
@@ -256,6 +277,11 @@ const AdminApp = (() => {
       const wd = await AdminApi.listWithdrawals("status=REQUESTED&limit=1");
       setBadge("badge-withdrawals", wd.total);
     } catch {}
+    try {
+      // Abaixo do limiar de ligação automática (70, ver fixtureMatcher.ts) — fila de revisão.
+      const fx = await AdminApi.listFixtureMappings("maxConfidence=69&limit=1");
+      setBadge("badge-mapping", fx.total);
+    } catch {}
   }
   function setBadge(id, count) {
     const el = document.getElementById(id);
@@ -274,7 +300,8 @@ const AdminApp = (() => {
 
   const SECTION_TITLES = {
     dashboard: "Dashboard", users: "Utilizadores", kyc: "Verificação KYC", withdrawals: "Levantamentos",
-    deposits: "Depósitos", responsible: "Jogo Responsável", casino: "Cassino", audit: "Audit Log", settings: "Definições",
+    deposits: "Depósitos", responsible: "Jogo Responsável", casino: "Cassino", mapping: "Mapeamento Pulsescore ↔ API-Football",
+    audit: "Audit Log", settings: "Definições",
   };
   function showSection(name) {
     state.section = name;
@@ -290,6 +317,7 @@ const AdminApp = (() => {
       deposits: () => loadDeposits(1),
       responsible: loadResponsible,
       casino: () => loadCasinoGames(1),
+      mapping: () => loadMappingTeams(1),
       audit: () => loadAudit(true),
       settings: loadSettings,
     };
@@ -843,6 +871,345 @@ const AdminApp = (() => {
     }
   }
 
+  // --- Mapeamento Pulsescore <-> API-Football (docs/TEAM_MAPPING.md) ---
+  // Sub-abas: Equipas / Ligas / Fixtures (fila de revisão, confiança < 70 — ver
+  // fixtureMatcher.ts::MIN_CONFIDENCE_TO_LINK) / Aliases (dicionário editável sem deploy).
+
+  let mappingTab = "teams";
+  function setMappingTab(tab) {
+    mappingTab = tab;
+    const loaders = { teams: () => loadMappingTeams(1), leagues: () => loadMappingLeagues(1), fixtures: () => loadMappingFixtures(1), aliases: loadMappingAliases };
+    loaders[tab]();
+  }
+
+  function confidenceBadge(n) {
+    const cls = n >= 70 ? "ok" : n >= 40 ? "warn" : "bad";
+    return `<span class="badge ${cls}">${n}%</span>`;
+  }
+
+  function mappingTabsHtml() {
+    return `<div class="toolbar">
+      ${["teams", "leagues", "fixtures", "aliases"]
+        .map(
+          (t) =>
+            `<button class="btn small ${mappingTab === t ? "" : "outline"}" onclick="AdminApp.setMappingTab('${t}')">${
+              { teams: "Equipas", leagues: "Ligas", fixtures: "Fixtures", aliases: "Aliases" }[t]
+            }</button>`
+        )
+        .join("")}
+    </div>`;
+  }
+
+  async function loadMappingTeams(page) {
+    mappingTab = "teams";
+    state.mappingTeams.page = page;
+    const search = document.getElementById("mapping-teams-search")?.value ?? state.mappingTeams.search;
+    const maxConfidence = document.getElementById("mapping-teams-maxconf")?.value ?? state.mappingTeams.maxConfidence;
+    state.mappingTeams.search = search;
+    state.mappingTeams.maxConfidence = maxConfidence;
+    const qs = new URLSearchParams({ page, limit: state.mappingTeams.limit });
+    if (search) qs.set("search", search);
+    if (maxConfidence !== "") qs.set("maxConfidence", maxConfidence);
+    const data = await AdminApi.listTeamMappings(qs.toString());
+    state.mappingTeams.total = data.total;
+    renderMappingTeams(data.mappings);
+  }
+
+  function renderMappingTeams(rows) {
+    const el = document.getElementById("section-mapping");
+    el.innerHTML = `<div class="panel">
+      ${mappingTabsHtml()}
+      <div class="toolbar">
+        <input id="mapping-teams-search" type="text" placeholder="Pesquisar nome" value="${esc(state.mappingTeams.search)}" onkeydown="if(event.key==='Enter') AdminApp.loadMappingTeams(1)">
+        <select id="mapping-teams-maxconf" onchange="AdminApp.loadMappingTeams(1)">
+          <option value="" ${state.mappingTeams.maxConfidence === "" ? "selected" : ""}>Todas as confianças</option>
+          <option value="69" ${state.mappingTeams.maxConfidence === "69" ? "selected" : ""}>Só fila de revisão (&lt;70%)</option>
+        </select>
+        <button class="btn small" onclick="AdminApp.loadMappingTeams(1)">Filtrar</button>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Pulsescore</th><th>API-Football</th><th>Confiança</th><th>Método</th><th></th></tr></thead>
+        <tbody>${
+          rows.length
+            ? rows
+                .map(
+                  (m) => `<tr>
+              <td>${esc(m.pulsescoreName)}<br><span style="color:var(--muted);font-size:.75rem">${esc(m.sport)}</span></td>
+              <td>${m.apiFootballName ? `${esc(m.apiFootballName)} <span class="mono" style="color:var(--muted)">#${m.apiFootballTeamId}</span>` : '<span class="badge muted">sem correspondência</span>'}</td>
+              <td>${confidenceBadge(m.confidence)}</td>
+              <td>${badge(m.mappingMethod)}${m.verified ? " ✔" : ""}</td>
+              <td><div class="btn-row">
+                <button class="btn small outline" onclick='AdminApp.openCorrectTeam(${JSON.stringify(m.id)}, ${JSON.stringify(m.pulsescoreName)})'>Corrigir</button>
+                <button class="btn small outline" onclick='AdminApp.resetMapping("team", ${JSON.stringify(m.id)})'>Reset</button>
+              </div></td>
+            </tr>`
+                )
+                .join("")
+            : `<tr><td colspan="5" class="empty-note">Nenhum mapping encontrado</td></tr>`
+        }</tbody>
+      </table></div>
+      ${pagerHtml(state.mappingTeams, "total", "AdminApp.loadMappingTeams")}
+    </div>`;
+  }
+
+  function openCorrectTeam(id, pulsescoreName) {
+    openModal(
+      `Corrigir: ${esc(pulsescoreName)}`,
+      `
+      <div class="field"><label>ID da equipa na API-Football</label><input id="correct-team-id" type="number" placeholder="Ex: 33"></div>
+      <div class="field"><label>Nome oficial na API-Football</label><input id="correct-team-name" type="text" placeholder="Ex: Manchester United"></div>
+      <div class="field-hint" style="margin-bottom:10px">A correção manual fica marcada como verificada e nunca é substituída automaticamente.</div>
+      <div class="btn-row">
+        <button class="btn green" onclick='AdminApp.submitCorrectTeam(${JSON.stringify(id)}, this)'>Guardar</button>
+        <button class="btn outline" onclick="AdminApp.closeModal()">Cancelar</button>
+      </div>`
+    );
+  }
+  async function submitCorrectTeam(id, btn) {
+    const teamId = Number(document.getElementById("correct-team-id").value);
+    const name = document.getElementById("correct-team-name").value.trim();
+    if (!teamId || !name) return toast("Indica o id e o nome da equipa", "error");
+    await withBusyButton(btn, async () => {
+      try {
+        await AdminApi.correctTeamMapping(id, teamId, name);
+        toast("Mapping corrigido");
+        closeModal();
+        loadMappingTeams(state.mappingTeams.page);
+      } catch (err) {
+        toast(err.message || "Erro ao corrigir mapping", "error");
+      }
+    });
+  }
+
+  async function resetMapping(kind, id) {
+    if (!confirm("Apagar este mapping? A próxima vez que aparecer, o sistema tenta resolvê-lo outra vez do zero.")) return;
+    try {
+      if (kind === "team") await AdminApi.resetTeamMapping(id);
+      else if (kind === "league") await AdminApi.resetLeagueMapping(id);
+      else await AdminApi.resetFixtureMapping(id);
+      toast("Mapping reiniciado");
+      setMappingTab(mappingTab);
+    } catch (err) {
+      toast(err.message || "Erro ao reiniciar mapping", "error");
+    }
+  }
+
+  async function loadMappingLeagues(page) {
+    mappingTab = "leagues";
+    state.mappingLeagues.page = page;
+    const search = document.getElementById("mapping-leagues-search")?.value ?? state.mappingLeagues.search;
+    state.mappingLeagues.search = search;
+    const qs = new URLSearchParams({ page, limit: state.mappingLeagues.limit });
+    if (search) qs.set("search", search);
+    const data = await AdminApi.listLeagueMappings(qs.toString());
+    state.mappingLeagues.total = data.total;
+    renderMappingLeagues(data.mappings);
+  }
+
+  function renderMappingLeagues(rows) {
+    const el = document.getElementById("section-mapping");
+    el.innerHTML = `<div class="panel">
+      ${mappingTabsHtml()}
+      <div class="toolbar">
+        <input id="mapping-leagues-search" type="text" placeholder="Pesquisar nome" value="${esc(state.mappingLeagues.search)}" onkeydown="if(event.key==='Enter') AdminApp.loadMappingLeagues(1)">
+        <button class="btn small" onclick="AdminApp.loadMappingLeagues(1)">Filtrar</button>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Pulsescore</th><th>API-Football</th><th>Época</th><th>Confiança</th><th>Método</th><th></th></tr></thead>
+        <tbody>${
+          rows.length
+            ? rows
+                .map(
+                  (m) => `<tr>
+              <td>${esc(m.pulsescoreName)}</td>
+              <td>${m.apiFootballName ? `${esc(m.apiFootballName)} <span class="mono" style="color:var(--muted)">#${m.apiFootballLeagueId}</span>` : '<span class="badge muted">sem correspondência</span>'}</td>
+              <td class="mono">${m.season ?? "—"}</td>
+              <td>${confidenceBadge(m.confidence)}</td>
+              <td>${badge(m.mappingMethod)}${m.verified ? " ✔" : ""}</td>
+              <td><div class="btn-row">
+                <button class="btn small outline" onclick='AdminApp.openCorrectLeague(${JSON.stringify(m.id)}, ${JSON.stringify(m.pulsescoreName)})'>Corrigir</button>
+                <button class="btn small outline" onclick='AdminApp.resetMapping("league", ${JSON.stringify(m.id)})'>Reset</button>
+              </div></td>
+            </tr>`
+                )
+                .join("")
+            : `<tr><td colspan="6" class="empty-note">Nenhum mapping encontrado</td></tr>`
+        }</tbody>
+      </table></div>
+      ${pagerHtml(state.mappingLeagues, "total", "AdminApp.loadMappingLeagues")}
+    </div>`;
+  }
+
+  function openCorrectLeague(id, pulsescoreName) {
+    openModal(
+      `Corrigir: ${esc(pulsescoreName)}`,
+      `
+      <div class="field"><label>ID da liga na API-Football</label><input id="correct-league-id" type="number" placeholder="Ex: 3"></div>
+      <div class="field"><label>Nome oficial na API-Football</label><input id="correct-league-name" type="text" placeholder="Ex: UEFA Europa League"></div>
+      <div class="field"><label>Época</label><input id="correct-league-season" type="number" placeholder="Ex: 2026"></div>
+      <div class="btn-row">
+        <button class="btn green" onclick='AdminApp.submitCorrectLeague(${JSON.stringify(id)}, this)'>Guardar</button>
+        <button class="btn outline" onclick="AdminApp.closeModal()">Cancelar</button>
+      </div>`
+    );
+  }
+  async function submitCorrectLeague(id, btn) {
+    const leagueId = Number(document.getElementById("correct-league-id").value);
+    const name = document.getElementById("correct-league-name").value.trim();
+    const season = Number(document.getElementById("correct-league-season").value);
+    if (!leagueId || !name || !season) return toast("Indica o id, o nome e a época da liga", "error");
+    await withBusyButton(btn, async () => {
+      try {
+        await AdminApi.correctLeagueMapping(id, leagueId, name, season);
+        toast("Mapping corrigido");
+        closeModal();
+        loadMappingLeagues(state.mappingLeagues.page);
+      } catch (err) {
+        toast(err.message || "Erro ao corrigir mapping", "error");
+      }
+    });
+  }
+
+  async function loadMappingFixtures(page) {
+    mappingTab = "fixtures";
+    state.mappingFixtures.page = page;
+    const maxConfidence = document.getElementById("mapping-fixtures-maxconf")?.value ?? state.mappingFixtures.maxConfidence;
+    state.mappingFixtures.maxConfidence = maxConfidence;
+    const qs = new URLSearchParams({ page, limit: state.mappingFixtures.limit });
+    if (maxConfidence !== "") qs.set("maxConfidence", maxConfidence);
+    const data = await AdminApi.listFixtureMappings(qs.toString());
+    state.mappingFixtures.total = data.total;
+    renderMappingFixtures(data.mappings);
+  }
+
+  function renderMappingFixtures(rows) {
+    const el = document.getElementById("section-mapping");
+    el.innerHTML = `<div class="panel">
+      ${mappingTabsHtml()}
+      <div class="toolbar">
+        <select id="mapping-fixtures-maxconf" onchange="AdminApp.loadMappingFixtures(1)">
+          <option value="" ${state.mappingFixtures.maxConfidence === "" ? "selected" : ""}>Todas as confianças</option>
+          <option value="69" ${state.mappingFixtures.maxConfidence === "69" ? "selected" : ""}>Só fila de revisão (&lt;70%)</option>
+        </select>
+        <button class="btn small" onclick="AdminApp.loadMappingFixtures(1)">Filtrar</button>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Evento Pulsescore</th><th>Fixture API-Football</th><th>Confiança</th><th>Método</th><th>Motivo</th><th></th></tr></thead>
+        <tbody>${
+          rows.length
+            ? rows
+                .map(
+                  (m) => `<tr>
+              <td class="mono" style="font-size:.78rem">${esc(m.pulsescoreEventKey)}<br>${esc(m.homeTeamMapping?.pulsescoreName || "?")} vs ${esc(m.awayTeamMapping?.pulsescoreName || "?")}</td>
+              <td>${m.apiFootballFixtureId ? `<span class="mono">#${m.apiFootballFixtureId}</span>` : '<span class="badge muted">não ligado</span>'}</td>
+              <td>${confidenceBadge(m.confidence)}</td>
+              <td>${badge(m.mappingMethod)}${m.verified ? " ✔" : ""}</td>
+              <td style="max-width:240px;overflow-wrap:anywhere;font-size:.75rem;color:var(--muted)">${esc(m.reason || "")}</td>
+              <td><div class="btn-row">
+                <button class="btn small outline" onclick='AdminApp.openCorrectFixture(${JSON.stringify(m.id)})'>Corrigir</button>
+                <button class="btn small outline" onclick='AdminApp.resetMapping("fixture", ${JSON.stringify(m.id)})'>Reset</button>
+              </div></td>
+            </tr>`
+                )
+                .join("")
+            : `<tr><td colspan="6" class="empty-note">Nenhum mapping encontrado</td></tr>`
+        }</tbody>
+      </table></div>
+      ${pagerHtml(state.mappingFixtures, "total", "AdminApp.loadMappingFixtures")}
+    </div>`;
+  }
+
+  function openCorrectFixture(id) {
+    openModal(
+      "Corrigir fixture",
+      `
+      <div class="field"><label>ID do fixture na API-Football</label><input id="correct-fixture-id" type="number" placeholder="Ex: 1234567"></div>
+      <div class="btn-row">
+        <button class="btn green" onclick='AdminApp.submitCorrectFixture(${JSON.stringify(id)}, this)'>Guardar</button>
+        <button class="btn outline" onclick="AdminApp.closeModal()">Cancelar</button>
+      </div>`
+    );
+  }
+  async function submitCorrectFixture(id, btn) {
+    const fixtureId = Number(document.getElementById("correct-fixture-id").value);
+    if (!fixtureId) return toast("Indica o id do fixture", "error");
+    await withBusyButton(btn, async () => {
+      try {
+        await AdminApi.correctFixtureMapping(id, fixtureId);
+        toast("Fixture corrigido");
+        closeModal();
+        loadMappingFixtures(state.mappingFixtures.page);
+        refreshBadges();
+      } catch (err) {
+        toast(err.message || "Erro ao corrigir fixture", "error");
+      }
+    });
+  }
+
+  async function loadMappingAliases() {
+    mappingTab = "aliases";
+    const rows = await AdminApi.listMappingAliases();
+    renderMappingAliases(rows);
+  }
+
+  function renderMappingAliases(rows) {
+    const el = document.getElementById("section-mapping");
+    el.innerHTML = `<div class="panel">
+      ${mappingTabsHtml()}
+      <div class="section-title">Novo alias</div>
+      <div class="detail-grid">
+        <div class="field"><label>Alias (como aparece na Pulsescore)</label><input id="new-alias-name" type="text" placeholder="Ex: Man Utd"></div>
+        <div class="field"><label>Nome canónico (usado para pesquisar na API-Football)</label><input id="new-alias-canonical" type="text" placeholder="Ex: Manchester United"></div>
+        <div class="field"><label>Desporto</label><input id="new-alias-sport" type="text" value="football"></div>
+      </div>
+      <button class="btn" onclick="AdminApp.submitCreateAlias(this)">Adicionar alias</button>
+
+      <div class="section-title">Aliases existentes (${rows.length})</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Alias</th><th>Nome canónico</th><th>Desporto</th><th></th></tr></thead>
+        <tbody>${
+          rows.length
+            ? rows
+                .map(
+                  (a) => `<tr>
+              <td>${esc(a.alias)}</td>
+              <td>${esc(a.canonicalName)}</td>
+              <td>${esc(a.sport)}</td>
+              <td><button class="btn small outline" onclick='AdminApp.deleteAlias(${JSON.stringify(a.id)})'>Remover</button></td>
+            </tr>`
+                )
+                .join("")
+            : `<tr><td colspan="4" class="empty-note">Sem aliases</td></tr>`
+        }</tbody>
+      </table></div>
+    </div>`;
+  }
+
+  async function submitCreateAlias(btn) {
+    const alias = document.getElementById("new-alias-name").value.trim();
+    const canonical = document.getElementById("new-alias-canonical").value.trim();
+    const sport = document.getElementById("new-alias-sport").value.trim() || "football";
+    if (!alias || !canonical) return toast("Indica o alias e o nome canónico", "error");
+    await withBusyButton(btn, async () => {
+      try {
+        await AdminApi.createMappingAlias(alias, canonical, sport);
+        toast("Alias adicionado");
+        loadMappingAliases();
+      } catch (err) {
+        toast(err.message || "Erro ao adicionar alias", "error");
+      }
+    });
+  }
+  async function deleteAlias(id) {
+    try {
+      await AdminApi.deleteMappingAlias(id);
+      toast("Alias removido");
+      loadMappingAliases();
+    } catch (err) {
+      toast(err.message || "Erro ao remover alias", "error");
+    }
+  }
+
   // --- Audit log ---
 
   async function loadAudit(reset) {
@@ -944,6 +1311,10 @@ const AdminApp = (() => {
     loadWithdrawals, approveWithdrawal, openRejectWithdrawal, submitRejectWithdrawal,
     loadDeposits,
     setCasinoTab, loadCasinoGames, loadCasinoTx, toggleGame,
+    setMappingTab, loadMappingTeams, openCorrectTeam, submitCorrectTeam,
+    loadMappingLeagues, openCorrectLeague, submitCorrectLeague,
+    loadMappingFixtures, openCorrectFixture, submitCorrectFixture, resetMapping,
+    loadMappingAliases, submitCreateAlias, deleteAlias,
     loadAudit,
     saveSettings,
   };

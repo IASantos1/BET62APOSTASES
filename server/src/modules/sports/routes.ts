@@ -4,7 +4,8 @@ import { hybridSportsService } from "./hybridService";
 import { getPrematchEvents } from "./prematch/service";
 import { getTodayCompetitions } from "./competitions/service";
 import { fetchEventById } from "./pulsescore/client";
-import { getHeadToHeadByTeamNames, resolveFixtureIdByTeamNames, getPredictions, getStandingsByLeagueName } from "./apifootball/client";
+import { getHeadToHead, getPredictions, getStandings, type HeadToHeadMatch } from "./apifootball/client";
+import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent } from "./mapping/service";
 import { ALL_SPORTS, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
 
@@ -61,21 +62,31 @@ router.get(
   })
 );
 
-// Confrontos diretos (H2H) via API-Football, resolvendo as equipas por nome — ver
-// getHeadToHeadByTeamNames() para as limitações (melhor esforço, sem mapeamento confirmado de
-// id de equipa entre a Pulsescore e a API-Football).
+// Confrontos diretos (H2H) via API-Football — resolve as duas equipas através do motor de
+// mapeamento persistente (mapping/service.ts::resolveTeamsForEvent, ver docs/TEAM_MAPPING.md),
+// não por pesquisa de nome direta a cada pedido.
 router.get(
   "/events/:id/h2h",
   asyncHandler(async (req, res) => {
     const event = hybridSportsService.getById(req.params.id);
     if (!event) throw Errors.notFound("Evento não encontrado");
-    const matches = await getHeadToHeadByTeamNames(event.home, event.away);
+    const teams = await resolveTeamsForEvent(event);
+    if (!teams) return res.json({ matches: [] });
+    const data = await getHeadToHead(teams.homeTeamId, teams.awayTeamId, { last: 5 });
+    const matches: HeadToHeadMatch[] = data.response.map((f) => ({
+      date: f.fixture.date,
+      homeTeam: f.teams.home.name,
+      awayTeam: f.teams.away.name,
+      homeGoals: f.goals.home,
+      awayGoals: f.goals.away,
+      competition: f.league.name,
+    }));
     res.json({ matches });
   })
 );
 
 // Previsão real da API-Football (percent home/draw/away + conselho) — só futebol. Resolve o
-// fixture_id pelas equipas (melhor esforço, ver resolveFixtureIdByTeamNames). Sem fixture
+// fixture pelo motor de mapeamento (mapping/service.ts::resolveFixtureForEvent). Sem fixture
 // encontrado -> predictions: null, para o frontend cair no cálculo pelas odds em vez de erro.
 router.get(
   "/events/:id/predictions",
@@ -83,24 +94,41 @@ router.get(
     const event = hybridSportsService.getById(req.params.id);
     if (!event) throw Errors.notFound("Evento não encontrado");
     if (event.sport !== "football") return res.json({ predictions: null });
-    const fixtureId = await resolveFixtureIdByTeamNames(event.home, event.away, event.startTime?.slice(0, 10));
-    if (!fixtureId) return res.json({ predictions: null });
-    const data = await getPredictions(fixtureId);
+    const resolved = await resolveFixtureForEvent(event);
+    if (!resolved) return res.json({ predictions: null });
+    const data = await getPredictions(resolved.fixtureId);
     const p = data.response[0]?.predictions;
     res.json({ predictions: p ? { winnerName: p.winner?.name ?? null, advice: p.advice, percent: p.percent } : null });
   })
 );
 
-// Classificação da liga do evento — só futebol. Resolve a liga pelo nome (ver
-// getStandingsByLeagueName), melhor esforço tal como o resto da integração API-Football.
+// Classificação da liga do evento — só futebol. Resolve a liga pelo motor de mapeamento
+// (mapping/service.ts::resolveLeagueForEvent) em vez de pesquisar o nome a cada pedido.
 router.get(
   "/events/:id/standings",
   asyncHandler(async (req, res) => {
     const event = hybridSportsService.getById(req.params.id);
     if (!event) throw Errors.notFound("Evento não encontrado");
     if (event.sport !== "football") return res.json({ standings: [] });
-    const standings = await getStandingsByLeagueName(event.league);
-    res.json({ standings });
+    const league = await resolveLeagueForEvent(event);
+    if (!league) return res.json({ standings: [] });
+    const data = await getStandings(league.leagueId, league.season);
+    const table = data.response[0]?.league.standings[0] ?? [];
+    res.json({
+      standings: table.map((r) => ({
+        rank: r.rank,
+        team: r.team.name,
+        points: r.points,
+        played: r.all.played,
+        win: r.all.win,
+        draw: r.all.draw,
+        lose: r.all.lose,
+        goalsFor: r.all.goals.for,
+        goalsAgainst: r.all.goals.against,
+        goalsDiff: r.goalsDiff,
+        form: r.form,
+      })),
+    });
   })
 );
 

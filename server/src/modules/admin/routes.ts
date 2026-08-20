@@ -24,6 +24,18 @@ import {
   listAuditLogs,
   getSettings,
   updateSettings,
+  listTeamMappings,
+  correctTeamMapping,
+  resetTeamMapping,
+  listLeagueMappings,
+  correctLeagueMapping,
+  resetLeagueMapping,
+  listFixtureMappings,
+  correctFixtureMapping,
+  resetFixtureMapping,
+  listMappingAliases,
+  createMappingAlias,
+  deleteMappingAlias,
 } from "./service";
 
 function requireParamId(id: string | undefined): string {
@@ -220,6 +232,107 @@ router.patch(
   ),
   asyncHandler(async (req: AuthedRequest, res) => {
     res.json(await updateSettings(req.body, req.user!.id));
+  })
+);
+
+// --- Mapeamento Pulsescore <-> API-Football (docs/TEAM_MAPPING.md) ---
+
+router.get(
+  "/mapping/teams",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const search = typeof req.query.search === "string" ? req.query.search : undefined;
+    const sport = typeof req.query.sport === "string" ? req.query.sport : undefined;
+    const maxConfidence = req.query.maxConfidence ? Number(req.query.maxConfidence) : undefined;
+    res.json(await listTeamMappings({ search, sport, maxConfidence, ...pageQuery(req) }));
+  })
+);
+
+router.patch(
+  "/mapping/teams/:id",
+  validateBody(z.object({ apiFootballTeamId: z.number().int().positive(), apiFootballName: z.string().min(1) })),
+  asyncHandler(async (req: AuthedRequest, res) => {
+    res.json(await correctTeamMapping(requireParamId(req.params.id), req.body.apiFootballTeamId, req.body.apiFootballName, req.user!.id));
+  })
+);
+
+router.delete(
+  "/mapping/teams/:id",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    await resetTeamMapping(requireParamId(req.params.id), req.user!.id);
+    res.status(204).end();
+  })
+);
+
+router.get(
+  "/mapping/leagues",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const search = typeof req.query.search === "string" ? req.query.search : undefined;
+    const sport = typeof req.query.sport === "string" ? req.query.sport : undefined;
+    const maxConfidence = req.query.maxConfidence ? Number(req.query.maxConfidence) : undefined;
+    res.json(await listLeagueMappings({ search, sport, maxConfidence, ...pageQuery(req) }));
+  })
+);
+
+router.patch(
+  "/mapping/leagues/:id",
+  validateBody(z.object({ apiFootballLeagueId: z.number().int().positive(), apiFootballName: z.string().min(1), season: z.number().int() })),
+  asyncHandler(async (req: AuthedRequest, res) => {
+    res.json(await correctLeagueMapping(requireParamId(req.params.id), req.body.apiFootballLeagueId, req.body.apiFootballName, req.body.season, req.user!.id));
+  })
+);
+
+router.delete(
+  "/mapping/leagues/:id",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    await resetLeagueMapping(requireParamId(req.params.id), req.user!.id);
+    res.status(204).end();
+  })
+);
+
+router.get(
+  "/mapping/fixtures",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const maxConfidence = req.query.maxConfidence ? Number(req.query.maxConfidence) : undefined;
+    const unlinkedOnly = req.query.unlinkedOnly === "true";
+    res.json(await listFixtureMappings({ maxConfidence, unlinkedOnly, ...pageQuery(req) }));
+  })
+);
+
+router.patch(
+  "/mapping/fixtures/:id",
+  validateBody(z.object({ apiFootballFixtureId: z.number().int().positive() })),
+  asyncHandler(async (req: AuthedRequest, res) => {
+    res.json(await correctFixtureMapping(requireParamId(req.params.id), req.body.apiFootballFixtureId, req.user!.id));
+  })
+);
+
+router.delete(
+  "/mapping/fixtures/:id",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    await resetFixtureMapping(requireParamId(req.params.id), req.user!.id);
+    res.status(204).end();
+  })
+);
+
+router.get(
+  "/mapping/aliases",
+  asyncHandler(async (_req, res) => res.json(await listMappingAliases()))
+);
+
+router.post(
+  "/mapping/aliases",
+  validateBody(z.object({ alias: z.string().min(1).max(120), canonicalName: z.string().min(1).max(120), sport: z.string().min(1).max(30).default("football") })),
+  asyncHandler(async (req: AuthedRequest, res) => {
+    await createMappingAlias(req.body.alias, req.body.canonicalName, req.body.sport, req.user!.id);
+    res.status(201).json(await listMappingAliases());
+  })
+);
+
+router.delete(
+  "/mapping/aliases/:id",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    await deleteMappingAlias(requireParamId(req.params.id), req.user!.id);
+    res.status(204).end();
   })
 );
 

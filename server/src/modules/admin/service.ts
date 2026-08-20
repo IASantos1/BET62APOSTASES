@@ -3,6 +3,7 @@ import { prisma } from "../../lib/prisma";
 import { Errors } from "../../lib/errors";
 import { applyLedgerMovement } from "../wallet/service";
 import { listGames as listCatalogGames, findGame } from "../casino/catalog";
+import { addAlias as addTeamAlias, removeAlias as removeTeamAlias, listAliases as listTeamAliases } from "../sports/mapping/aliasStore";
 
 function paginate(page?: number, limit?: number) {
   const take = Math.min(Math.max(limit ?? 20, 1), 100);
@@ -436,4 +437,130 @@ export async function getMaintenanceMode(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ============ MAPEAMENTO PULSESCORE <-> API-FOOTBALL ============
+// Ver server/src/modules/sports/mapping/ e docs/TEAM_MAPPING.md para o motor que preenche estas
+// tabelas automaticamente. Esta secção só dá ao admin visibilidade (sobretudo sobre os
+// mappings de baixa confiança, que o motor guarda mas nunca liga sozinho) e correção manual
+// (spec: "POST /api/admin/team-mapping" — a correção manual tem sempre prioridade sobre o
+// automático, marcando mappingMethod=MANUAL e verified=true, que o motor nunca sobrescreve).
+
+export async function listTeamMappings(opts: { search?: string; maxConfidence?: number; verifiedOnly?: boolean; sport?: string; page?: number; limit?: number }) {
+  const { take, skip, page } = paginate(opts.page, opts.limit);
+  const where: Prisma.TeamMappingWhereInput = {
+    ...(opts.sport ? { sport: opts.sport } : {}),
+    ...(opts.verifiedOnly ? { verified: true } : {}),
+    ...(opts.maxConfidence !== undefined ? { confidence: { lte: opts.maxConfidence } } : {}),
+    ...(opts.search
+      ? {
+          OR: [
+            { pulsescoreName: { contains: opts.search, mode: "insensitive" } },
+            { apiFootballName: { contains: opts.search, mode: "insensitive" } },
+          ],
+        }
+      : {}),
+  };
+  const [total, mappings] = await Promise.all([
+    prisma.teamMapping.count({ where }),
+    prisma.teamMapping.findMany({ where, orderBy: [{ confidence: "asc" }, { createdAt: "desc" }], take, skip }),
+  ]);
+  return { total, page, limit: take, mappings };
+}
+
+export async function correctTeamMapping(id: string, apiFootballTeamId: number, apiFootballName: string, adminId: string) {
+  const updated = await prisma.teamMapping.update({
+    where: { id },
+    data: { apiFootballTeamId, apiFootballName, mappingMethod: "MANUAL", verified: true, confidence: 100 },
+  });
+  await prisma.auditLog.create({ data: { userId: adminId, action: "ADMIN_TEAM_MAPPING_CORRECTED", metadata: { teamMappingId: id, apiFootballTeamId, apiFootballName } } });
+  return updated;
+}
+
+// Apaga o mapping (não só desliga) — a próxima vez que este nome aparecer, o motor volta a
+// tentar resolvê-lo do zero em vez de ficar preso a um resultado antigo (ex: se a API-Football
+// entretanto passou a cobrir uma equipa que antes não tinha).
+export async function resetTeamMapping(id: string, adminId: string) {
+  await prisma.teamMapping.delete({ where: { id } });
+  await prisma.auditLog.create({ data: { userId: adminId, action: "ADMIN_TEAM_MAPPING_RESET", metadata: { teamMappingId: id } } });
+}
+
+export async function listLeagueMappings(opts: { search?: string; maxConfidence?: number; sport?: string; page?: number; limit?: number }) {
+  const { take, skip, page } = paginate(opts.page, opts.limit);
+  const where: Prisma.LeagueMappingWhereInput = {
+    ...(opts.sport ? { sport: opts.sport } : {}),
+    ...(opts.maxConfidence !== undefined ? { confidence: { lte: opts.maxConfidence } } : {}),
+    ...(opts.search
+      ? { OR: [{ pulsescoreName: { contains: opts.search, mode: "insensitive" } }, { apiFootballName: { contains: opts.search, mode: "insensitive" } }] }
+      : {}),
+  };
+  const [total, mappings] = await Promise.all([
+    prisma.leagueMapping.count({ where }),
+    prisma.leagueMapping.findMany({ where, orderBy: [{ confidence: "asc" }, { createdAt: "desc" }], take, skip }),
+  ]);
+  return { total, page, limit: take, mappings };
+}
+
+export async function correctLeagueMapping(id: string, apiFootballLeagueId: number, apiFootballName: string, season: number, adminId: string) {
+  const updated = await prisma.leagueMapping.update({
+    where: { id },
+    data: { apiFootballLeagueId, apiFootballName, season, mappingMethod: "MANUAL", verified: true, confidence: 100 },
+  });
+  await prisma.auditLog.create({ data: { userId: adminId, action: "ADMIN_LEAGUE_MAPPING_CORRECTED", metadata: { leagueMappingId: id, apiFootballLeagueId, apiFootballName, season } } });
+  return updated;
+}
+
+export async function resetLeagueMapping(id: string, adminId: string) {
+  await prisma.leagueMapping.delete({ where: { id } });
+  await prisma.auditLog.create({ data: { userId: adminId, action: "ADMIN_LEAGUE_MAPPING_RESET", metadata: { leagueMappingId: id } } });
+}
+
+export async function listFixtureMappings(opts: { maxConfidence?: number; unlinkedOnly?: boolean; page?: number; limit?: number }) {
+  const { take, skip, page } = paginate(opts.page, opts.limit);
+  const where: Prisma.FixtureMappingWhereInput = {
+    ...(opts.maxConfidence !== undefined ? { confidence: { lte: opts.maxConfidence } } : {}),
+    ...(opts.unlinkedOnly ? { apiFootballFixtureId: null } : {}),
+  };
+  const [total, mappings] = await Promise.all([
+    prisma.fixtureMapping.count({ where }),
+    prisma.fixtureMapping.findMany({
+      where,
+      orderBy: [{ confidence: "asc" }, { createdAt: "desc" }],
+      take,
+      skip,
+      include: { homeTeamMapping: true, awayTeamMapping: true, leagueMapping: true },
+    }),
+  ]);
+  return { total, page, limit: take, mappings };
+}
+
+export async function correctFixtureMapping(id: string, apiFootballFixtureId: number, adminId: string) {
+  const updated = await prisma.fixtureMapping.update({
+    where: { id },
+    data: { apiFootballFixtureId, mappingMethod: "MANUAL", verified: true, confidence: 100 },
+  });
+  await prisma.auditLog.create({ data: { userId: adminId, action: "ADMIN_FIXTURE_MAPPING_CORRECTED", metadata: { fixtureMappingId: id, apiFootballFixtureId } } });
+  return updated;
+}
+
+// Apaga o mapping do evento — a próxima vez que a UI pedir estatísticas/H2H/previsões deste
+// mesmo evento Pulsescore, o motor volta a tentar associá-lo do zero (útil quando as equipas
+// entretanto foram corrigidas/re-resolvidas e o fixture antigo ficou desatualizado).
+export async function resetFixtureMapping(id: string, adminId: string) {
+  await prisma.fixtureMapping.delete({ where: { id } });
+  await prisma.auditLog.create({ data: { userId: adminId, action: "ADMIN_FIXTURE_MAPPING_RESET", metadata: { fixtureMappingId: id } } });
+}
+
+export async function listMappingAliases() {
+  return listTeamAliases();
+}
+
+export async function createMappingAlias(alias: string, canonicalName: string, sport: string, adminId: string) {
+  await addTeamAlias(alias, canonicalName, sport);
+  await prisma.auditLog.create({ data: { userId: adminId, action: "ADMIN_TEAM_ALIAS_CREATED", metadata: { alias, canonicalName, sport } } });
+}
+
+export async function deleteMappingAlias(id: string, adminId: string) {
+  await removeTeamAlias(id);
+  await prisma.auditLog.create({ data: { userId: adminId, action: "ADMIN_TEAM_ALIAS_DELETED", metadata: { aliasId: id } } });
 }
