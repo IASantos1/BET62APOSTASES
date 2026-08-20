@@ -2,6 +2,7 @@ import { prisma } from "../../lib/prisma";
 import { Errors, AppError } from "../../lib/errors";
 import { applyLedgerMovement } from "../wallet/service";
 import { findGame } from "./catalog";
+import { createOrGetProviderUser, getGameLaunchUrl } from "./apiClient";
 
 export interface CasinoCallbackData {
   gplay_id: string;
@@ -17,19 +18,42 @@ export interface CasinoCallbackData {
   call_id?: string;
 }
 
-// Códigos de resultado citados na doc do provedor ("0, 1, 1001 — Consulte Códigos de
-// Resultado") sem a tabela de significados em si. 0 = sucesso está confirmado pelo exemplo de
-// resposta dado; 1 = erro genérico e 1001 = transação já processada são a leitura padrão deste
-// tipo de contrato de casino seamless — NÃO confirmado com uma resposta real de erro do
-// provedor, apenas assumido por convenção do setor até vermos uma amostra real.
+// Tabela real de códigos de resultado, confirmada no Swagger da Agent API
+// (agent.goldslotpalase.com/swagger/v4/swagger.json, secção "API Response Codes") — substitui
+// os valores só assumidos anteriormente (1 não é "erro genérico", é UNDER_MAINTENANCE; 1001 não
+// é "já processado", é INTERNAL_SERVER_ERROR). Não há um código dedicado a "transação já
+// processada" na tabela — uma entrega repetida de callback devolve OK(0) com o saldo atual, tal
+// como um pedido novo bem sucedido, que é o comportamento idempotente esperado.
 export const CasinoResult = {
   OK: 0,
-  ERROR: 1,
-  ALREADY_PROCESSED: 1001,
+  UNDER_MAINTENANCE: 1,
+  INTERNAL_SERVER_ERROR: 1001,
+  VALIDATION_ERROR: 1002,
+  TOKEN_INVALID: 1009,
+  USER_NOT_FOUND: 2002,
+  GAME_NOT_FOUND: 2003,
+  BALANCE_NOT_ENOUGH: 2006,
 } as const;
 
+// A Agent API só aceita `name` alfanumérico (^[_a-zA-Z0-9]+$) ao criar um utilizador do lado do
+// provedor — o nosso UUID interno tem hífens, por isso nunca é usado em bruto. Em vez disso,
+// removemos os hífens e prefixamos com "u" (garante que começa por letra). É reversível: o
+// `account` que vem nos callbacks do provedor é exatamente este valor, por isso
+// userIdFromAccount() desfaz a transformação para encontrar a carteira certa.
+export function accountForUser(userId: string): string {
+  return `u${userId.replace(/-/g, "")}`;
+}
+
+function userIdFromAccount(account: string): string | null {
+  if (!/^u[0-9a-f]{32}$/i.test(account)) return null;
+  const hex = account.slice(1);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function getWalletByAccount(account: string) {
-  return prisma.wallet.findUnique({ where: { userId: account } });
+  const userId = userIdFromAccount(account);
+  if (!userId) return Promise.resolve(null);
+  return prisma.wallet.findUnique({ where: { userId } });
 }
 
 /**
@@ -40,11 +64,11 @@ export async function handleWinCallback(data: CasinoCallbackData) {
   const existing = await prisma.casinoTransaction.findUnique({ where: { transGuid: data.trans_guid } });
   if (existing) {
     const wallet = await prisma.wallet.findUniqueOrThrow({ where: { id: existing.walletId } });
-    return { result: CasinoResult.ALREADY_PROCESSED, status: "OK", data: { balance: wallet.balance } };
+    return { result: CasinoResult.OK, status: "OK", data: { balance: wallet.balance } };
   }
 
   const wallet = await getWalletByAccount(data.account);
-  if (!wallet) return { result: CasinoResult.ERROR, status: "ACCOUNT_NOT_FOUND", data: {} };
+  if (!wallet) return { result: CasinoResult.USER_NOT_FOUND, status: "USER_NOT_FOUND", data: {} };
 
   // "BonusCall(32) em vez de Win(2)" — a doc não dá um campo explícito para isto no callback,
   // por isso usa-se a presença de call_id (id da chamada de bónus) como sinal.
@@ -96,16 +120,16 @@ export async function handleCancelCallback(data: CasinoCallbackData) {
   const existingCancel = await prisma.casinoTransaction.findUnique({ where: { transGuid: data.trans_guid } });
   if (existingCancel) {
     const wallet = await prisma.wallet.findUniqueOrThrow({ where: { id: existingCancel.walletId } });
-    return { result: CasinoResult.ALREADY_PROCESSED, status: "OK", data: { balance: wallet.balance } };
+    return { result: CasinoResult.OK, status: "OK", data: { balance: wallet.balance } };
   }
 
-  if (!data.cancel_trans_guid) return { result: CasinoResult.ERROR, status: "MISSING_CANCEL_TRANS_GUID", data: {} };
+  if (!data.cancel_trans_guid) return { result: CasinoResult.VALIDATION_ERROR, status: "MISSING_CANCEL_TRANS_GUID", data: {} };
 
   const original = await prisma.casinoTransaction.findUnique({ where: { transGuid: data.cancel_trans_guid } });
-  if (!original) return { result: CasinoResult.ERROR, status: "ORIGINAL_TRANSACTION_NOT_FOUND", data: {} };
+  if (!original) return { result: CasinoResult.VALIDATION_ERROR, status: "ORIGINAL_TRANSACTION_NOT_FOUND", data: {} };
 
   const wallet = await getWalletByAccount(data.account);
-  if (!wallet) return { result: CasinoResult.ERROR, status: "ACCOUNT_NOT_FOUND", data: {} };
+  if (!wallet) return { result: CasinoResult.USER_NOT_FOUND, status: "USER_NOT_FOUND", data: {} };
 
   // Um WIN estornado debita o que foi creditado; um BET estornado (ainda não suportado, ver
   // nota acima) devolveria o que foi debitado — mantido pronto para quando esse callback existir.
@@ -151,10 +175,10 @@ export async function handleCancelCallback(data: CasinoCallbackData) {
 /** Callback "status": consulta o estado de uma transação sem alterar nada. */
 export async function handleStatusCallback(account: string, transGuid: string) {
   const wallet = await getWalletByAccount(account);
-  if (!wallet) return { result: CasinoResult.ERROR, status: "ACCOUNT_NOT_FOUND", data: {} };
+  if (!wallet) return { result: CasinoResult.USER_NOT_FOUND, status: "USER_NOT_FOUND", data: {} };
 
   const tx = await prisma.casinoTransaction.findUnique({ where: { transGuid } });
-  if (!tx) return { result: CasinoResult.ERROR, status: "NOT_FOUND", data: { account, trans_guid: transGuid } };
+  if (!tx) return { result: CasinoResult.VALIDATION_ERROR, status: "NOT_FOUND", data: { account, trans_guid: transGuid } };
 
   return { result: CasinoResult.OK, status: "OK", data: { account, trans_guid: transGuid, trans_status: "OK" } };
 }
@@ -164,22 +188,20 @@ export async function handleStatusCallback(account: string, transGuid: string) {
  * este contrato de callback espera, em vez de deixar escapar o formato HTTP genérico de erro.
  */
 export function toCallbackErrorResponse(err: unknown) {
-  if (err instanceof AppError) return { result: CasinoResult.ERROR, status: err.code, data: {} };
-  return { result: CasinoResult.ERROR, status: "INTERNAL_ERROR", data: {} };
+  if (err instanceof AppError) return { result: CasinoResult.INTERNAL_SERVER_ERROR, status: err.code, data: {} };
+  return { result: CasinoResult.INTERNAL_SERVER_ERROR, status: "INTERNAL_ERROR", data: {} };
 }
 
 /**
- * Pedido de lançamento de um jogo — NÃO confirmado: a documentação recebida só cobre os
- * callbacks Win/Cancel/Status (o provedor a chamar-nos), não o endpoint para NÓS pedirmos uma
- * sessão/URL de jogo ao provedor (base URL + credenciais de agente). Falha de propósito com uma
- * mensagem clara em vez de inventar uma chamada HTTP para um endpoint que nunca foi confirmado.
+ * Pedido de lançamento de um jogo — confirmado via Swagger real
+ * (agent.goldslotpalase.com/swagger/v4/swagger.json): `POST /v4/user/create` para obter o
+ * `user_code` do jogador no sistema do provedor (idempotente — cria só se ainda não existir),
+ * depois `POST /v4/game/game-url` para o URL de lançamento (válido 10min, uso único).
  */
-export async function requestGameLaunch(gameCode: string) {
+export async function requestGameLaunch(userId: string, gameCode: string): Promise<string> {
   const game = findGame(gameCode);
   if (!game) throw Errors.notFound("Jogo não encontrado no catálogo");
 
-  throw Errors.badRequest(
-    "Lançamento de jogo ainda não disponível: falta confirmar o endpoint real de sessão/URL de jogo do Cassino Gold Palace (base URL e credenciais de agente). Os callbacks Win/Cancel/Status já estão prontos para quando esse endpoint for confirmado.",
-    { game_code: game.game_code, game_name: game.game_name }
-  );
+  const { userCode } = await createOrGetProviderUser(accountForUser(userId));
+  return getGameLaunchUrl({ userCode, providerId: game.provider_id, gameSymbol: game.game_code });
 }

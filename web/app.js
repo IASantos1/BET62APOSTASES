@@ -831,9 +831,15 @@ renderCasinoPage._token = 0;
 
 async function playGame(gameCode, gameName) {
   if (!Bet62Api.isAuthenticated()) return openAuth("login");
+  // Abre a aba já no clique (síncrono) para não ser bloqueada como pop-up — só lhe muda o
+  // destino depois de recebermos o game_url real do provedor.
+  const win = window.open("", "_blank");
   try {
-    await Bet62Api.launchCasinoGame(gameCode);
+    const { game_url } = await Bet62Api.launchCasinoGame(gameCode);
+    if (win) win.location.href = game_url;
+    else window.open(game_url, "_blank");
   } catch (err) {
+    if (win) win.close();
     alert("🎰 " + (gameName || gameCode) + "\n\n" + (err.message || "Não foi possível abrir o jogo."));
   }
 }

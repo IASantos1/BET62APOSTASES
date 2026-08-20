@@ -2,9 +2,10 @@ import { Router } from "express";
 import { env } from "../../config/env";
 import { Errors } from "../../lib/errors";
 import { asyncHandler } from "../../middleware/errorHandler";
-import { requireAuth, type AuthedRequest } from "../../middleware/auth";
+import { requireAuth, requireRole, type AuthedRequest } from "../../middleware/auth";
 import { listGames, listHighlightedGames } from "./catalog";
 import { getGameImage } from "./imageProxy";
+import { getAgentInfo } from "./apiClient";
 import {
   handleWinCallback,
   handleCancelCallback,
@@ -55,8 +56,20 @@ router.post(
   asyncHandler(async (req: AuthedRequest, res) => {
     const gameCode = typeof req.body?.game_code === "string" ? req.body.game_code : undefined;
     if (!gameCode) throw Errors.badRequest("game_code em falta");
-    const result = await requestGameLaunch(gameCode);
-    res.json(result);
+    const gameUrl = await requestGameLaunch(req.user!.id, gameCode);
+    res.json({ game_url: gameUrl });
+  })
+);
+
+// Diagnóstico: devolve o `client_ip` (como o provedor vê o nosso IP de saída) e a `whitelist`
+// configurada do lado deles — útil para confirmar se o IP da Railway já está autorizado, sem
+// precisar de correr curls manuais na Console.
+router.get(
+  "/agent-info",
+  requireAuth,
+  requireRole("SUPPORT", "ADMIN"),
+  asyncHandler(async (_req, res) => {
+    res.json(await getAgentInfo());
   })
 );
 
