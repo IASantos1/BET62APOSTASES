@@ -51,9 +51,12 @@ export interface LiveEvent {
   // CONFIRMED presentes para eventos reais da bookmaker "paddypower" (matchClock/score/
   // statistics no próprio REST /live-events — ver pulsescore/client.ts). A bookmaker anterior
   // ("10bet") não os devolvia; se o bookmaker mudar de novo para uma sem estes campos, ficam
-  // undefined e o frontend esconde a linha de placar (nunca inventa "0-0").
-  homeScore?: number;
-  awayScore?: number;
+  // undefined e o frontend esconde a linha de placar (nunca inventa "0-0"). Tipo `string` além
+  // de `number` porque no ténis os pontos do jogo atual nem sempre são numéricos (ex: "AD" em
+  // vantagem) — passado tal como o provedor envia, em vez de descartado por não converter para
+  // número (bug real: "40"/"15" apareciam bem, "AD" fazia o placar inteiro desaparecer).
+  homeScore?: number | string;
+  awayScore?: number | string;
   minuteOrPeriod: string; // "67'" for football, "Set 2" for tennis, "Q3" for basketball; "" for scheduled events
   status: "scheduled" | "live" | "finished";
   odds: LiveOdds[];

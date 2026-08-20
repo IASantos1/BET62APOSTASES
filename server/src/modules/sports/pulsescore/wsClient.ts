@@ -92,7 +92,10 @@ interface WsFrame {
 
 // Accepts both the docs' "H-A" string AND the {home,away} object shape actually seen from
 // paddypower — never throws, whatever unexpected shape a frame carries (see WsEvent.score above).
-function parseScore(score: WsEvent["score"]): { homeScore?: number; awayScore?: number } {
+// No ténis, os pontos do jogo atual nem sempre são numéricos (ex: "AD" em vantagem) — nesse caso
+// (só possível na forma {home,away}, a única confirmada com dados reais de ténis) passa-se a
+// string tal como veio, em vez de descartar o placar inteiro.
+function parseScore(score: WsEvent["score"]): { homeScore?: number | string; awayScore?: number | string } {
   if (!score) return {};
   if (typeof score === "string") {
     const [h, a] = score.split("-").map((p) => Number(p.trim()));
@@ -100,9 +103,10 @@ function parseScore(score: WsEvent["score"]): { homeScore?: number; awayScore?: 
     return { homeScore: h, awayScore: a };
   }
   if (typeof score === "object") {
+    if (score.home == null || score.away == null) return {};
     const h = Number(score.home);
     const a = Number(score.away);
-    if (Number.isNaN(h) || Number.isNaN(a)) return {};
+    if (Number.isNaN(h) || Number.isNaN(a)) return { homeScore: score.home, awayScore: score.away };
     return { homeScore: h, awayScore: a };
   }
   return {};

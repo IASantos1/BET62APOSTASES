@@ -551,13 +551,15 @@ export function orderMarketsWithPrimaryFirst<T extends { canonicalMarket?: strin
   return withoutTie.length ? [...withoutTie, ...withTie] : markets;
 }
 
-// "H"/"A" score strings -> number, only when both sides parse cleanly — otherwise undefined
-// rather than a fabricated "0". CONFIRMED shape for paddypower: { home: "1", away: "1" }.
-function parsePulsescoreScore(score: PulsescoreScore | undefined): { homeScore?: number; awayScore?: number } {
-  if (!score) return {};
+// "H"/"A" score strings -> number when both sides parse cleanly (futebol, basquetebol, etc.).
+// CONFIRMED shape for paddypower: { home: "1", away: "1" }. No ténis, os pontos do jogo atual
+// nem sempre são numéricos (ex: "AD" em vantagem) — nesse caso passa-se a string tal como veio,
+// em vez de descartar o placar inteiro (bug real: "40"/"15" apareciam, "AD" fazia desaparecer).
+function parsePulsescoreScore(score: PulsescoreScore | undefined): { homeScore?: number | string; awayScore?: number | string } {
+  if (!score || score.home == null || score.away == null) return {};
   const h = Number(score.home);
   const a = Number(score.away);
-  if (Number.isNaN(h) || Number.isNaN(a)) return {};
+  if (Number.isNaN(h) || Number.isNaN(a)) return { homeScore: score.home, awayScore: score.away };
   return { homeScore: h, awayScore: a };
 }
 
