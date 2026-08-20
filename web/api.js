@@ -139,6 +139,12 @@ const Bet62Api = (() => {
     getPrematchEvents: (sport) => request(`/sports/prematch?sport=${sport}`, { auth: false }),
     refreshEvent: (eventId, sport) => request(`/sports/events/${encodeURIComponent(eventId)}/refresh?sport=${sport}`, { auth: false }),
     getCompetitions: () => request("/sports/competitions", { auth: false }),
+    // Placar/estado/cartões/cantos da Pulsescore + estatísticas complementares da API-Football
+    // (posse, remates, faltas, passes...) num único objeto, cada campo com a sua fonte
+    // explícita — ver docs/UNIFIED_MATCH_DATA.md. Não usado ainda pelo Match Tracker (que já
+    // atualiza score/relógio ao vivo via WebSocket, mais rápido do que um pedido REST desta
+    // API conseguiria); disponível para quem precisar de um só pedido com tudo já combinado.
+    getUnifiedMatch: (eventId) => request(`/sports/matches/${encodeURIComponent(eventId)}/live`, { auth: false }),
     getH2H: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/h2h`, { auth: false }),
     getPredictions: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/predictions`, { auth: false }),
     getTeamStats: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/stats`, { auth: false }),

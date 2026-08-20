@@ -4,9 +4,11 @@ import { logger } from "../../../lib/logger";
 import type { LiveEvent } from "../types";
 import { findTeamMapping } from "./teamMatcher";
 import { findLeagueMapping } from "./leagueMatcher";
-import { findFixtureId } from "../apifootball/client";
+import { findFixtureId, type FixtureIdMatch } from "../apifootball/client";
 
 const MIN_CONFIDENCE_TO_LINK = 70;
+// ±10 minutos (spec) — comparado sempre via Date/UTC (findFixtureId), nunca por string.
+const KICKOFF_TOLERANCE_MS = 10 * 60 * 1000;
 
 export interface FixtureMatchResult {
   apiFootballFixtureId: number | null;
@@ -49,31 +51,36 @@ export async function findFixtureMapping(event: LiveEvent): Promise<FixtureMatch
     findLeagueMapping(event.league, event.sport, event.country),
   ]);
 
-  let apiFootballFixtureId: number | null = null;
+  let fixtureMatch: FixtureIdMatch | null = null;
   if (home.apiFootballTeamId && away.apiFootballTeamId) {
-    // A data (dia, não hora exata) já é o segundo sinal de confirmação além dos dois ids de
-    // equipa — não se pede também o fixture exato da API-Football só para comparar o horário
-    // ±10min (spec secção 10): seria mais uma chamada à API por evento para um ganho marginal,
-    // já que as mesmas duas equipas jogarem entre si duas vezes no mesmo dia é excecional.
     const dateISO = (event.startTime ?? new Date().toISOString()).slice(0, 10);
     try {
-      apiFootballFixtureId = await findFixtureId(home.apiFootballTeamId, away.apiFootballTeamId, dateISO);
+      fixtureMatch = await findFixtureId(home.apiFootballTeamId, away.apiFootballTeamId, dateISO, event.startTime);
     } catch (err) {
       logger.warn({ err, eventId: event.id }, "[MATCHING] fixture: falha ao pesquisar fixture por equipas/data");
     }
   }
 
+  const kickoffDiffMs =
+    fixtureMatch && event.startTime ? Math.abs(new Date(fixtureMatch.kickoffISO).getTime() - new Date(event.startTime).getTime()) : null;
+  const kickoffWithinTolerance = kickoffDiffMs === null ? null : kickoffDiffMs <= KICKOFF_TOLERANCE_MS;
+
   const teamsConfidence = Math.min(home.confidence, away.confidence);
   const anyManual = home.mappingMethod === "MANUAL" || away.mappingMethod === "MANUAL";
   let confidence = teamsConfidence;
-  if (apiFootballFixtureId) confidence = Math.min(100, confidence + 10);
+  if (fixtureMatch) confidence = Math.min(100, confidence + 10);
   else confidence = Math.max(0, confidence - 20);
   if (league.apiFootballLeagueId) confidence = Math.min(100, confidence + 3);
+  // Fixture encontrado (mesmas equipas, mesmo dia) mas o horário exato foge à tolerância de
+  // ±10min é um sinal de alerta (pode ser outro jogo dessas equipas nesse dia — raro mas
+  // possível, ex: taça a dobrar com a liga) sem chegar a anular a correspondência.
+  if (kickoffWithinTolerance === false) confidence = Math.max(0, confidence - 10);
+  else if (kickoffWithinTolerance === true) confidence = Math.min(100, confidence + 2);
   confidence = Math.max(0, Math.min(100, confidence));
 
-  const method: MappingMethod = anyManual ? "MANUAL" : teamsConfidence >= 97 && apiFootballFixtureId ? "NORMALIZED" : "SIMILARITY";
-  const linked = confidence >= MIN_CONFIDENCE_TO_LINK && Boolean(apiFootballFixtureId);
-  const reason = `home=${home.mappingMethod}(${home.confidence}) away=${away.mappingMethod}(${away.confidence}) league=${league.mappingMethod}(${league.confidence}) fixtureFound=${Boolean(apiFootballFixtureId)}`;
+  const method: MappingMethod = anyManual ? "MANUAL" : teamsConfidence >= 97 && fixtureMatch ? "NORMALIZED" : "SIMILARITY";
+  const linked = confidence >= MIN_CONFIDENCE_TO_LINK && Boolean(fixtureMatch);
+  const reason = `home=${home.mappingMethod}(${home.confidence}) away=${away.mappingMethod}(${away.confidence}) league=${league.mappingMethod}(${league.confidence}) fixtureFound=${Boolean(fixtureMatch)}${fixtureMatch?.invertedHomeAway ? " invertedHomeAway" : ""}${kickoffDiffMs !== null ? ` kickoffDiffMin=${Math.round(kickoffDiffMs / 60000)}` : ""}`;
 
   logger.info(
     {
@@ -84,7 +91,9 @@ export async function findFixtureMapping(event: LiveEvent): Promise<FixtureMatch
       homeTeamId: home.apiFootballTeamId,
       awayTeamId: away.apiFootballTeamId,
       leagueId: league.apiFootballLeagueId,
-      apiFootballFixtureId,
+      apiFootballFixtureId: fixtureMatch?.fixtureId ?? null,
+      invertedHomeAway: fixtureMatch?.invertedHomeAway ?? false,
+      kickoffDiffMinutes: kickoffDiffMs === null ? null : Math.round(kickoffDiffMs / 60000),
       confidence,
       method,
       linked,
@@ -96,11 +105,12 @@ export async function findFixtureMapping(event: LiveEvent): Promise<FixtureMatch
     where: { pulsescoreEventKey: event.id },
     create: {
       pulsescoreEventKey: event.id,
-      apiFootballFixtureId: linked ? apiFootballFixtureId : null,
+      apiFootballFixtureId: linked ? fixtureMatch!.fixtureId : null,
       homeTeamMappingId: home.id || null,
       awayTeamMappingId: away.id || null,
       leagueMappingId: league.id || null,
       kickoffPulsescore: event.startTime ? new Date(event.startTime) : null,
+      kickoffApiFootball: fixtureMatch ? new Date(fixtureMatch.kickoffISO) : null,
       confidence,
       mappingMethod: method,
       verified: false,
