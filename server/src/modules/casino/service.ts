@@ -18,21 +18,24 @@ export interface CasinoCallbackData {
   call_id?: string;
 }
 
-// Tabela real de códigos de resultado, confirmada no Swagger da Agent API
-// (agent.goldslotpalase.com/swagger/v4/swagger.json, secção "API Response Codes") — substitui
-// os valores só assumidos anteriormente (1 não é "erro genérico", é UNDER_MAINTENANCE; 1001 não
-// é "já processado", é INTERNAL_SERVER_ERROR). Não há um código dedicado a "transação já
-// processada" na tabela — uma entrega repetida de callback devolve OK(0) com o saldo atual, tal
-// como um pedido novo bem sucedido, que é o comportamento idempotente esperado.
+// Códigos de resultado do CALLBACK (não confundir com os códigos da Agent API de saída em
+// apiClient.ts) — confirmados pelo exemplo de implementação PHP oficial do provedor colado pelo
+// utilizador: o `result` de erro é literalmente o número do item de `check` que falhou (21 =
+// utilizador não encontrado, 22 = utilizador inativo, 31 = saldo insuficiente, 41 = trans_guid
+// já processado, 42 = trans_guid inexistente, 43 = cancel_trans_guid inexistente), 100 = token
+// de callback inválido, 99 = erro genérico ao processar. Importante: ao contrário do que se
+// assumia antes, um `trans_guid` repetido em bet/win/cancel é tratado como ERRO (41), não como
+// sucesso idempotente — replicado aqui fielmente a partir da amostra oficial.
 export const CasinoResult = {
   OK: 0,
-  UNDER_MAINTENANCE: 1,
-  INTERNAL_SERVER_ERROR: 1001,
-  VALIDATION_ERROR: 1002,
-  TOKEN_INVALID: 1009,
-  USER_NOT_FOUND: 2002,
-  GAME_NOT_FOUND: 2003,
-  BALANCE_NOT_ENOUGH: 2006,
+  USER_NOT_FOUND: 21,
+  USER_INACTIVE: 22,
+  BALANCE_NOT_ENOUGH: 31,
+  ALREADY_PROCESSED: 41,
+  TRANS_NOT_FOUND: 42,
+  CANCEL_TARGET_NOT_FOUND: 43,
+  BAD_TOKEN: 100,
+  PROCESSING_ERROR: 99,
 } as const;
 
 // A Agent API só aceita `name` alfanumérico (^[_a-zA-Z0-9]+$) ao criar um utilizador do lado do
@@ -50,10 +53,19 @@ function userIdFromAccount(account: string): string | null {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function getWalletByAccount(account: string) {
+async function getWalletWithUserByAccount(account: string) {
   const userId = userIdFromAccount(account);
-  if (!userId) return Promise.resolve(null);
-  return prisma.wallet.findUnique({ where: { userId } });
+  if (!userId) return null;
+  const wallet = await prisma.wallet.findUnique({ where: { userId }, include: { user: true } });
+  if (!wallet) return null;
+  const { user, ...walletFields } = wallet;
+  return { wallet: walletFields, user };
+}
+
+/** Já cancelada anteriormente? (equivalente ao `sort == 'CANCEL'` da amostra PHP oficial, mas
+ * sem mutar a transação original — o nosso log de CasinoTransaction é imutável). */
+function findCancelOf(transGuid: string) {
+  return prisma.casinoTransaction.findFirst({ where: { cancelOfTransGuid: transGuid, type: "CANCEL" } });
 }
 
 /**
@@ -62,37 +74,37 @@ function getWalletByAccount(account: string) {
  * painel de agente — se isto não responder, o pedido de `game-url` falha com "CALLBACK_ERROR".
  */
 export async function handleAuthenticateCallback(account: string) {
-  const wallet = await getWalletByAccount(account);
-  if (!wallet) return { result: CasinoResult.USER_NOT_FOUND, status: "USER_NOT_FOUND", data: {} };
-  return { result: CasinoResult.OK, status: "OK", data: { account, balance: wallet.balance } };
+  const found = await getWalletWithUserByAccount(account);
+  if (!found) return { result: CasinoResult.USER_NOT_FOUND, status: "ERROR", data: {} };
+  if (found.user.status !== "ACTIVE") return { result: CasinoResult.USER_INACTIVE, status: "ERROR", data: {} };
+  return { result: CasinoResult.OK, status: "OK", data: { account, balance: found.wallet.balance } };
 }
 
 /** Callback "balance": confirmação do saldo atual, sem alterar nada. */
 export async function handleBalanceCallback(account: string) {
-  const wallet = await getWalletByAccount(account);
-  if (!wallet) return { result: CasinoResult.USER_NOT_FOUND, status: "USER_NOT_FOUND", data: {} };
-  return { result: CasinoResult.OK, status: "OK", data: { balance: wallet.balance } };
+  const found = await getWalletWithUserByAccount(account);
+  if (!found) return { result: CasinoResult.USER_NOT_FOUND, status: "ERROR", data: {} };
+  if (found.user.status !== "ACTIVE") return { result: CasinoResult.USER_INACTIVE, status: "ERROR", data: {} };
+  return { result: CasinoResult.OK, status: "OK", data: { balance: found.wallet.balance } };
 }
 
 /**
- * Callback "bet": debita o valor apostado na carteira do jogador. Idempotente por `trans_guid`,
- * e devolve BALANCE_NOT_ENOUGH (em vez de deixar o erro genérico escapar) quando o saldo não
- * chega — o provedor pede a validação "31: saldo" antes de aceitar a aposta.
+ * Callback "bet": debita o valor apostado na carteira do jogador. Um `trans_guid` repetido é
+ * ERRO (41, "já processado"), não sucesso idempotente — conforme a amostra oficial. Saldo
+ * insuficiente devolve 31 (BALANCE_NOT_ENOUGH) em vez de deixar escapar um erro genérico.
  */
 export async function handleBetCallback(data: CasinoCallbackData) {
-  const existing = await prisma.casinoTransaction.findUnique({ where: { transGuid: data.trans_guid } });
-  if (existing) {
-    const wallet = await prisma.wallet.findUniqueOrThrow({ where: { id: existing.walletId } });
-    return { result: CasinoResult.OK, status: "OK", data: { balance: wallet.balance } };
-  }
+  const found = await getWalletWithUserByAccount(data.account);
+  if (!found) return { result: CasinoResult.USER_NOT_FOUND, status: "ERROR", data: {} };
+  if (found.user.status !== "ACTIVE") return { result: CasinoResult.USER_INACTIVE, status: "ERROR", data: {} };
 
-  const wallet = await getWalletByAccount(data.account);
-  if (!wallet) return { result: CasinoResult.USER_NOT_FOUND, status: "USER_NOT_FOUND", data: {} };
+  const existing = await prisma.casinoTransaction.findUnique({ where: { transGuid: data.trans_guid } });
+  if (existing) return { result: CasinoResult.ALREADY_PROCESSED, status: "ERROR", data: { balance: found.wallet.balance } };
 
   let entry, updated;
   try {
     ({ entry, wallet: updated } = await applyLedgerMovement({
-      walletId: wallet.id,
+      walletId: found.wallet.id,
       type: "BET_PLACED",
       amount: -data.amount,
       referenceType: "casino_slot",
@@ -106,13 +118,13 @@ export async function handleBetCallback(data: CasinoCallbackData) {
       },
     }));
   } catch (err) {
-    if (err instanceof AppError) return { result: CasinoResult.BALANCE_NOT_ENOUGH, status: "BALANCE_NOT_ENOUGH", data: {} };
+    if (err instanceof AppError) return { result: CasinoResult.BALANCE_NOT_ENOUGH, status: "ERROR", data: { balance: found.wallet.balance } };
     throw err;
   }
 
   await prisma.casinoTransaction.create({
     data: {
-      walletId: wallet.id,
+      walletId: found.wallet.id,
       transGuid: data.trans_guid,
       type: "BET",
       gplayId: data.gplay_id,
@@ -130,25 +142,23 @@ export async function handleBetCallback(data: CasinoCallbackData) {
 }
 
 /**
- * Callback "win": credita o prémio na carteira do jogador. Idempotente por `trans_guid` — uma
- * entrega repetida do mesmo trans_guid não é reaplicada, devolve o saldo atual tal como está.
+ * Callback "win": credita o prémio na carteira do jogador. Um `trans_guid` repetido é ERRO (41),
+ * não sucesso idempotente.
  */
 export async function handleWinCallback(data: CasinoCallbackData) {
-  const existing = await prisma.casinoTransaction.findUnique({ where: { transGuid: data.trans_guid } });
-  if (existing) {
-    const wallet = await prisma.wallet.findUniqueOrThrow({ where: { id: existing.walletId } });
-    return { result: CasinoResult.OK, status: "OK", data: { balance: wallet.balance } };
-  }
+  const found = await getWalletWithUserByAccount(data.account);
+  if (!found) return { result: CasinoResult.USER_NOT_FOUND, status: "ERROR", data: {} };
+  if (found.user.status !== "ACTIVE") return { result: CasinoResult.USER_INACTIVE, status: "ERROR", data: {} };
 
-  const wallet = await getWalletByAccount(data.account);
-  if (!wallet) return { result: CasinoResult.USER_NOT_FOUND, status: "USER_NOT_FOUND", data: {} };
+  const existing = await prisma.casinoTransaction.findUnique({ where: { transGuid: data.trans_guid } });
+  if (existing) return { result: CasinoResult.ALREADY_PROCESSED, status: "ERROR", data: { balance: found.wallet.balance } };
 
   // "BonusCall(32) em vez de Win(2)" — a doc não dá um campo explícito para isto no callback,
   // por isso usa-se a presença de call_id (id da chamada de bónus) como sinal.
   const isBonusCall = !!data.call_id && data.call_id !== "0";
 
   const { entry, wallet: updated } = await applyLedgerMovement({
-    walletId: wallet.id,
+    walletId: found.wallet.id,
     type: "BET_WON",
     amount: data.amount,
     referenceType: "casino_slot",
@@ -165,7 +175,7 @@ export async function handleWinCallback(data: CasinoCallbackData) {
 
   await prisma.casinoTransaction.create({
     data: {
-      walletId: wallet.id,
+      walletId: found.wallet.id,
       transGuid: data.trans_guid,
       type: isBonusCall ? "BONUS_CALL_WIN" : "WIN",
       gplayId: data.gplay_id,
@@ -185,31 +195,32 @@ export async function handleWinCallback(data: CasinoCallbackData) {
 
 /**
  * Callback "cancel": estorna uma transação anterior identificada por `cancel_trans_guid` — tanto
- * um BET (devolve o valor apostado) como um WIN (retira o prémio creditado). Cancelar um
- * trans_guid desconhecido devolve erro em vez de inventar um estorno.
+ * um BET (devolve o valor apostado) como um WIN (retira o prémio creditado). Um `trans_guid`
+ * repetido (do próprio "cancel") é ERRO (41); um `cancel_trans_guid` já estornado antes devolve
+ * OK com o saldo atual sem reaplicar (equivalente ao guard `sort != 'CANCEL'` da amostra
+ * oficial). `cancel_trans_guid` inexistente é ERRO (43).
  */
 export async function handleCancelCallback(data: CasinoCallbackData) {
-  const existingCancel = await prisma.casinoTransaction.findUnique({ where: { transGuid: data.trans_guid } });
-  if (existingCancel) {
-    const wallet = await prisma.wallet.findUniqueOrThrow({ where: { id: existingCancel.walletId } });
-    return { result: CasinoResult.OK, status: "OK", data: { balance: wallet.balance } };
-  }
+  const found = await getWalletWithUserByAccount(data.account);
+  if (!found) return { result: CasinoResult.USER_NOT_FOUND, status: "ERROR", data: {} };
+  if (found.user.status !== "ACTIVE") return { result: CasinoResult.USER_INACTIVE, status: "ERROR", data: {} };
 
-  if (!data.cancel_trans_guid) return { result: CasinoResult.VALIDATION_ERROR, status: "MISSING_CANCEL_TRANS_GUID", data: {} };
+  const existing = await prisma.casinoTransaction.findUnique({ where: { transGuid: data.trans_guid } });
+  if (existing) return { result: CasinoResult.ALREADY_PROCESSED, status: "ERROR", data: { balance: found.wallet.balance } };
+
+  if (!data.cancel_trans_guid) return { result: CasinoResult.CANCEL_TARGET_NOT_FOUND, status: "ERROR", data: { balance: found.wallet.balance } };
 
   const original = await prisma.casinoTransaction.findUnique({ where: { transGuid: data.cancel_trans_guid } });
-  if (!original) return { result: CasinoResult.VALIDATION_ERROR, status: "ORIGINAL_TRANSACTION_NOT_FOUND", data: {} };
+  if (!original) return { result: CasinoResult.CANCEL_TARGET_NOT_FOUND, status: "ERROR", data: { balance: found.wallet.balance } };
 
-  const wallet = await getWalletByAccount(data.account);
-  if (!wallet) return { result: CasinoResult.USER_NOT_FOUND, status: "USER_NOT_FOUND", data: {} };
+  const alreadyCancelled = await findCancelOf(data.cancel_trans_guid);
+  if (alreadyCancelled) return { result: CasinoResult.OK, status: "OK", data: { balance: found.wallet.balance } };
 
-  // Um WIN estornado debita o que foi creditado; um BET estornado (ainda não suportado, ver
-  // nota acima) devolveria o que foi debitado — mantido pronto para quando esse callback existir.
   const isCredit = original.type === "WIN" || original.type === "BONUS_CALL_WIN";
   const reversalAmount = isCredit ? -original.amount.toNumber() : original.amount.toNumber();
 
   const { entry, wallet: updated } = await applyLedgerMovement({
-    walletId: wallet.id,
+    walletId: found.wallet.id,
     type: "BET_REFUND",
     amount: reversalAmount,
     referenceType: "casino_slot",
@@ -226,7 +237,7 @@ export async function handleCancelCallback(data: CasinoCallbackData) {
 
   await prisma.casinoTransaction.create({
     data: {
-      walletId: wallet.id,
+      walletId: found.wallet.id,
       transGuid: data.trans_guid,
       cancelOfTransGuid: data.cancel_trans_guid,
       type: "CANCEL",
@@ -246,22 +257,29 @@ export async function handleCancelCallback(data: CasinoCallbackData) {
 
 /** Callback "status": consulta o estado de uma transação sem alterar nada. */
 export async function handleStatusCallback(account: string, transGuid: string) {
-  const wallet = await getWalletByAccount(account);
-  if (!wallet) return { result: CasinoResult.USER_NOT_FOUND, status: "USER_NOT_FOUND", data: {} };
+  const found = await getWalletWithUserByAccount(account);
+  if (!found) return { result: CasinoResult.USER_NOT_FOUND, status: "ERROR", data: {} };
 
   const tx = await prisma.casinoTransaction.findUnique({ where: { transGuid } });
-  if (!tx) return { result: CasinoResult.VALIDATION_ERROR, status: "NOT_FOUND", data: { account, trans_guid: transGuid } };
+  if (!tx) return { result: CasinoResult.TRANS_NOT_FOUND, status: "ERROR", data: {} };
 
-  return { result: CasinoResult.OK, status: "OK", data: { account, trans_guid: transGuid, trans_status: "OK" } };
+  const cancelled = await findCancelOf(transGuid);
+  return {
+    result: CasinoResult.OK,
+    status: "OK",
+    data: { account, trans_guid: transGuid, trans_status: cancelled ? "CANCELED" : "OK" },
+  };
 }
 
 /**
- * Traduz um AppError (ex: saldo insuficiente ao estornar) para a forma {result,status,data} que
- * este contrato de callback espera, em vez de deixar escapar o formato HTTP genérico de erro.
+ * Traduz um AppError (ex: Callback-Token inválido) para a forma {result,status,data} que este
+ * contrato de callback espera, em vez de deixar escapar o formato HTTP genérico de erro.
  */
 export function toCallbackErrorResponse(err: unknown) {
-  if (err instanceof AppError) return { result: CasinoResult.INTERNAL_SERVER_ERROR, status: err.code, data: {} };
-  return { result: CasinoResult.INTERNAL_SERVER_ERROR, status: "INTERNAL_ERROR", data: {} };
+  if (err instanceof AppError && err.code === "UNAUTHORIZED") {
+    return { result: CasinoResult.BAD_TOKEN, status: "ERROR", data: {} };
+  }
+  return { result: CasinoResult.PROCESSING_ERROR, status: "ERROR", data: {} };
 }
 
 /**

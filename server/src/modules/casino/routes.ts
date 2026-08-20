@@ -15,6 +15,7 @@ import {
   handleStatusCallback,
   toCallbackErrorResponse,
   requestGameLaunch,
+  CasinoResult,
   type CasinoCallbackData,
 } from "./service";
 
@@ -119,7 +120,7 @@ async function dispatchCasinoCallback(command: string, data: CasinoCallbackData 
     case "status":
       return handleStatusCallback(data.account ?? "", data.trans_guid);
     default:
-      return { result: 1002, status: "UNKNOWN_COMMAND", data: {} };
+      return { result: CasinoResult.PROCESSING_ERROR, status: "ERROR", data: {} };
   }
 }
 
