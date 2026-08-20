@@ -4,12 +4,14 @@ import { env } from "./config/env";
 import { logger } from "./lib/logger";
 import { attachSportsWebsocketGateway } from "./modules/sports/websocket/gateway";
 import { hybridSportsService } from "./modules/sports/hybridService";
+import { seedDefaultAliases } from "./modules/sports/mapping/aliasStore";
 
 const app = createApp();
 const server = http.createServer(app);
 
 attachSportsWebsocketGateway(server);
 hybridSportsService.start();
+seedDefaultAliases().catch((err) => logger.warn({ err }, "Mapping: falha ao semear aliases por omissão"));
 
 server.listen(env.PORT, () => {
   logger.info(`Bet62 API a correr em http://localhost:${env.PORT} (${env.NODE_ENV})`);

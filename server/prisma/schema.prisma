@@ -345,3 +345,108 @@ model PlatformSetting {
   updatedByUserId String?
   updatedAt       DateTime @updatedAt
 }
+
+// ============ MAPEAMENTO PULSESCORE <-> API-FOOTBALL ============
+// Antes desta tabela, cada pedido de estatísticas/H2H/previsões/classificação repetia a
+// pesquisa por nome na API-Football do zero (apifootball/client.ts::searchTeam/searchLeague) —
+// nunca guardava o resultado, por isso o mesmo jogo pagava o custo da pesquisa difusa de nomes
+// em CADA pedido, e nunca aprendia com correspondências já confirmadas. Ver
+// server/src/modules/sports/mapping/ e docs/TEAM_MAPPING.md para o motor que preenche estas
+// tabelas (normalização, aliases, pontuação de confiança, cache permanente).
+//
+// IMPORTANTE: a Pulsescore nunca devolve um id de equipa estável em nenhuma amostra real
+// confirmada até agora (só o nome "home"/"away" dentro de cada evento) — por isso não existe um
+// "pulsescore_team_id" verdadeiro para guardar. `normalizedPulsescoreName` (dentro do mesmo
+// desporto) faz esse papel de identidade do lado Pulsescore, com os dados que realmente há.
+enum MappingMethod {
+  ID_KNOWN // mapping já existia em cache — reaproveitado sem nova pesquisa
+  ALIAS // bateu por um alias conhecido (TeamAlias)
+  NORMALIZED // nome normalizado bateu exatamente
+  SIMILARITY // similaridade de texto + liga/país/data
+  MANUAL // corrigido à mão pelo admin — tem sempre prioridade sobre o automático
+}
+
+model TeamMapping {
+  id                       String        @id @default(uuid())
+  sport                    String
+  apiFootballTeamId        Int?
+  apiFootballName          String?
+  normalizedApiName        String?
+  pulsescoreName           String
+  normalizedPulsescoreName String
+  country                  String?
+  confidence               Int // 0-100
+  mappingMethod            MappingMethod
+  verified                 Boolean       @default(false)
+  createdAt                DateTime      @default(now())
+  updatedAt                DateTime      @updatedAt
+
+  homeFixtures FixtureMapping[] @relation("HomeTeamMapping")
+  awayFixtures FixtureMapping[] @relation("AwayTeamMapping")
+
+  @@unique([sport, normalizedPulsescoreName])
+  @@index([sport, normalizedApiName])
+  @@index([apiFootballTeamId])
+}
+
+model LeagueMapping {
+  id                       String        @id @default(uuid())
+  sport                    String
+  apiFootballLeagueId      Int?
+  apiFootballName          String?
+  season                   Int?
+  pulsescoreName           String
+  normalizedPulsescoreName String
+  country                  String?
+  confidence               Int
+  mappingMethod            MappingMethod
+  verified                 Boolean       @default(false)
+  createdAt                DateTime      @default(now())
+  updatedAt                DateTime      @updatedAt
+
+  fixtures FixtureMapping[]
+
+  @@unique([sport, normalizedPulsescoreName])
+}
+
+// Uma linha por evento Pulsescore (pulsescoreEventKey = LiveEvent.id completo, ex:
+// "pulsescore:30759040") — inclui resultados de baixa confiança (apiFootballFixtureId null,
+// confidence<70) para NUNCA repetir a pesquisa cara para o mesmo evento a cada pedido (ver
+// "Cache do mapping" em docs/TEAM_MAPPING.md); esses ficam disponíveis para revisão no painel
+// admin em vez de martelar a API-Football sem necessidade.
+model FixtureMapping {
+  id                   String          @id @default(uuid())
+  pulsescoreEventKey   String          @unique
+  apiFootballFixtureId Int?
+  homeTeamMappingId    String?
+  homeTeamMapping      TeamMapping?    @relation("HomeTeamMapping", fields: [homeTeamMappingId], references: [id], onDelete: SetNull)
+  awayTeamMappingId    String?
+  awayTeamMapping      TeamMapping?    @relation("AwayTeamMapping", fields: [awayTeamMappingId], references: [id], onDelete: SetNull)
+  leagueMappingId      String?
+  leagueMapping        LeagueMapping?  @relation(fields: [leagueMappingId], references: [id], onDelete: SetNull)
+  kickoffPulsescore    DateTime?
+  kickoffApiFootball   DateTime?
+  confidence           Int
+  mappingMethod        MappingMethod
+  verified             Boolean         @default(false)
+  reason               String? // motivo/sinais usados, legível — ver logs [MATCHING] no service
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  @@index([apiFootballFixtureId])
+  @@index([confidence])
+}
+
+// Dicionário de aliases — permite ensinar o sistema a reconhecer "Man Utd" == "Manchester
+// United" sem tocar em código (nem redeploy): editável via painel admin, semeado inicialmente
+// com os aliases mais óbvios (ver mapping/aliasSeed.ts).
+model TeamAlias {
+  id              String   @id @default(uuid())
+  alias           String
+  normalizedAlias String
+  canonicalName   String
+  sport           String   @default("football")
+  createdAt       DateTime @default(now())
+
+  @@unique([sport, normalizedAlias])
+}
