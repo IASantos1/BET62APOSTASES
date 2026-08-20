@@ -1,6 +1,7 @@
 import { env } from "../../../config/env";
 import { Errors } from "../../../lib/errors";
 import { logger } from "../../../lib/logger";
+import { TtlCache, cached } from "../../../lib/ttlCache";
 
 /**
  * API-Football (v3.football.api-sports.io) REST client — statistics enrichment layer.
@@ -48,8 +49,16 @@ export interface ApiFootballStatisticsResponse {
   }>;
 }
 
+// TTL curto (jogo ao vivo muda a cada minuto) só para aparar pedidos concorrentes pelo mesmo
+// fixture (ex: vários utilizadores a ver o mesmo jogo no Match Tracker/endpoint unificado ao
+// mesmo tempo) — não para "poupar" atualizações reais, ver docs/CACHING.md.
+const statsCache = new TtlCache<ApiFootballStatisticsResponse>(15_000);
+const statsInFlight = new Map<string, Promise<ApiFootballStatisticsResponse>>();
+
 export async function getFixtureStatistics(fixtureId: number) {
-  return apiFootballFetch<ApiFootballStatisticsResponse>("/fixtures/statistics", { fixture: fixtureId });
+  return cached(statsCache, statsInFlight, String(fixtureId), () =>
+    apiFootballFetch<ApiFootballStatisticsResponse>("/fixtures/statistics", { fixture: fixtureId })
+  );
 }
 
 export interface ApiFootballFixtureResponse {
@@ -60,8 +69,13 @@ export interface ApiFootballFixtureResponse {
   }>;
 }
 
+const fixtureByIdCache = new TtlCache<ApiFootballFixtureResponse>(15_000);
+const fixtureByIdInFlight = new Map<string, Promise<ApiFootballFixtureResponse>>();
+
 export async function getFixtureById(fixtureId: number) {
-  return apiFootballFetch<ApiFootballFixtureResponse>("/fixtures", { id: fixtureId });
+  return cached(fixtureByIdCache, fixtureByIdInFlight, String(fixtureId), () =>
+    apiFootballFetch<ApiFootballFixtureResponse>("/fixtures", { id: fixtureId })
+  );
 }
 
 // --- Pesquisa crua (candidatos em bruto, sem escolher/filtrar) ------------------------------
@@ -188,13 +202,18 @@ export interface ApiFootballH2HResponse {
   }>;
 }
 
+// H2H é histórico (jogos já terminados) — só muda quando as duas equipas jogam de novo entre
+// si, o que nunca acontece mais do que uma vez a cada tantas semanas/meses. TTL longo.
+const h2hCache = new TtlCache<ApiFootballH2HResponse>(30 * 60_000);
+const h2hInFlight = new Map<string, Promise<ApiFootballH2HResponse>>();
+
 /** Confrontos diretos entre duas equipas — CONFIRMADO via amostra real colada pelo utilizador
  * (endpoint `/fixtures/headtohead?h2h={home}-{away}` e forma da resposta). */
 export async function getHeadToHead(homeTeamId: number, awayTeamId: number, opts: { last?: number } = {}) {
-  return apiFootballFetch<ApiFootballH2HResponse>("/fixtures/headtohead", {
-    h2h: `${homeTeamId}-${awayTeamId}`,
-    last: opts.last ?? 5,
-  });
+  const last = opts.last ?? 5;
+  return cached(h2hCache, h2hInFlight, `${homeTeamId}-${awayTeamId}:${last}`, () =>
+    apiFootballFetch<ApiFootballH2HResponse>("/fixtures/headtohead", { h2h: `${homeTeamId}-${awayTeamId}`, last })
+  );
 }
 
 export interface HeadToHeadMatch {
@@ -217,10 +236,17 @@ export interface ApiFootballPredictionsResponse {
   }>;
 }
 
+// O próprio modelo da API-Football só atualiza de hora a hora — não faz sentido pedir mais
+// vezes do que isso.
+const predictionsCache = new TtlCache<ApiFootballPredictionsResponse>(15 * 60_000);
+const predictionsInFlight = new Map<string, Promise<ApiFootballPredictionsResponse>>();
+
 /** Previsão real da API-Football (forma, médias de golos, etc.) — CONFIRMADO via amostra real
  * colada pelo utilizador (endpoint `/predictions?fixture={id}` e forma da resposta). */
 export async function getPredictions(fixtureId: number) {
-  return apiFootballFetch<ApiFootballPredictionsResponse>("/predictions", { fixture: fixtureId });
+  return cached(predictionsCache, predictionsInFlight, String(fixtureId), () =>
+    apiFootballFetch<ApiFootballPredictionsResponse>("/predictions", { fixture: fixtureId })
+  );
 }
 
 export interface ApiFootballStandingsResponse {
@@ -242,11 +268,19 @@ export interface ApiFootballStandingsResponse {
   }>;
 }
 
+// A tabela só muda quando um jogo dessa liga termina — alguns minutos de TTL evitam pedir de
+// novo a cada utilizador que abre a aba "Classificação" da mesma competição, sem atrasar
+// visivelmente uma atualização real.
+const standingsCache = new TtlCache<ApiFootballStandingsResponse>(5 * 60_000);
+const standingsInFlight = new Map<string, Promise<ApiFootballStandingsResponse>>();
+
 /** Tabela classificativa — CONFIRMADO via amostra real colada pelo utilizador (endpoint
  * `/standings?league={id}&season={year}` e forma da resposta, incluindo o agrupamento em
  * sub-arrays de `standings` para competições com várias fases/grupos). */
 export async function getStandings(leagueId: number, season: number) {
-  return apiFootballFetch<ApiFootballStandingsResponse>("/standings", { league: leagueId, season });
+  return cached(standingsCache, standingsInFlight, `${leagueId}:${season}`, () =>
+    apiFootballFetch<ApiFootballStandingsResponse>("/standings", { league: leagueId, season })
+  );
 }
 
 export interface StandingsRow {

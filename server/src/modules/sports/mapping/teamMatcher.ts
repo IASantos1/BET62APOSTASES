@@ -48,7 +48,13 @@ export async function findTeamMapping(pulsescoreName: string, sport: string, cou
   try {
     candidates = await searchTeamCandidates(searchQuery);
   } catch (err) {
-    logger.warn({ err, pulsescoreName }, "[MATCHING] equipa: falha ao pesquisar na API-Football");
+    logger.warn({ err, pulsescoreName }, "[MATCHING] equipa: falha ao pesquisar na API-Football — não fica em cache, tenta-se de novo no próximo pedido");
+    // Diferente de "sem correspondência" (pesquisa correu e não achou nada, isso sim fica em
+    // cache permanente por design — ver docs/TEAM_MAPPING.md): aqui a pesquisa em si falhou
+    // (rede, rate limit, API-Football em baixo). Cachear isto como "sem equipa" prenderia esta
+    // equipa em falha para sempre — só um Reset manual no admin desbloquearia. Devolve sem
+    // gravar, para o próximo pedido tentar outra vez do zero.
+    return { id: "", apiFootballTeamId: null, apiFootballName: null, confidence: 0, mappingMethod: "SIMILARITY", verified: false };
   }
 
   let best: { candidate: ApiFootballTeamCandidate; score: number } | null = null;

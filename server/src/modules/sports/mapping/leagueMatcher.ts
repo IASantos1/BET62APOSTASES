@@ -34,7 +34,13 @@ export async function findLeagueMapping(pulsescoreName: string, sport: string, c
   try {
     candidates = await searchLeagueCandidates(pulsescoreName);
   } catch (err) {
-    logger.warn({ err, pulsescoreName }, "[MATCHING] liga: falha ao pesquisar na API-Football");
+    logger.warn({ err, pulsescoreName }, "[MATCHING] liga: falha ao pesquisar na API-Football — não fica em cache, tenta-se de novo no próximo pedido");
+    // Mesma razão que teamMatcher.ts: uma falha na PESQUISA (rede/rate limit/API-Football em
+    // baixo) não é o mesmo que "pesquisou e não achou liga nenhuma" — só o segundo caso é que
+    // deve ficar em cache permanente. Sem isto, uma falha transitória na primeira vez que esta
+    // liga é vista prende a Classificação dela em falha para sempre (só um Reset manual no
+    // admin desbloquearia).
+    return { id: "", apiFootballLeagueId: null, apiFootballName: null, season: null, confidence: 0, mappingMethod: "SIMILARITY", verified: false };
   }
 
   let best: { candidate: ApiFootballLeagueCandidate; score: number } | null = null;

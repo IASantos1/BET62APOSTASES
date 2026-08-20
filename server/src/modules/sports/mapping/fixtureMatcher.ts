@@ -51,6 +51,21 @@ export async function findFixtureMapping(event: LiveEvent): Promise<FixtureMatch
     findLeagueMapping(event.league, event.sport, event.country),
   ]);
 
+  // home.id/away.id/league.id só ficam "" quando a PESQUISA na API-Football falhou desta vez
+  // (rede/rate limit) — normalizeTeamName(event.home) vazio é praticamente impossível para um
+  // evento real da Pulsescore. Um miss genuíno ("pesquisou e não achou nada") sempre grava uma
+  // linha e devolve um id válido. Se alguma das três falhou por motivo transitório, não vale a
+  // pena gravar já este FixtureMapping — ficaria preso com homeTeamMappingId/leagueMappingId
+  // nulos PARA SEMPRE (é permanente por design, ver docs/TEAM_MAPPING.md), quando a falha pode
+  // desaparecer sozinha no pedido seguinte. Devolve sem gravar para se tentar tudo de novo.
+  if (!home.id || !away.id || !league.id) {
+    logger.warn(
+      { eventId: event.id, homeFailed: !home.id, awayFailed: !away.id, leagueFailed: !league.id },
+      "[MATCHING] fixture: pesquisa de equipa/liga falhou transitoriamente — não fica em cache, tenta-se de novo no próximo pedido"
+    );
+    return { apiFootballFixtureId: null, homeApiFootballTeamId: null, awayApiFootballTeamId: null, apiFootballLeagueId: null, season: null, confidence: 0, mappingMethod: "SIMILARITY", verified: false };
+  }
+
   let fixtureMatch: FixtureIdMatch | null = null;
   if (home.apiFootballTeamId && away.apiFootballTeamId) {
     const dateISO = (event.startTime ?? new Date().toISOString()).slice(0, 10);
