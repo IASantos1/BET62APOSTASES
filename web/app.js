@@ -1343,7 +1343,17 @@ function renderMarketGroups(e) {
   }
   const isLive = e._isLive || e.status === "live";
   el.innerHTML = e.odds
-    .map((group) => {
+    .map((group, idx) => {
+      // Mercado principal (1X2/moneyline, sempre o primeiro — ver orderMarketsWithPrimaryFirst
+      // no backend) totalmente suspenso: em vez de 3 caixas "Suspenso" repetidas lado a lado,
+      // mostra-se um único botão a cobrir a linha toda. O rótulo do mercado (group.market) pode
+      // vir "Match Odds", "Grande Chance" ou até "Revisão VAR" consoante o bookmaker/desporto —
+      // por isso a decisão usa a posição (idx===0), não o texto do nome.
+      if (idx === 0 && !group.isActive) {
+        return `<div class="market-group"><h4>${group.market}</h4><div class="selection-row">
+          <div class="selection-btn suspended"><span class="sel-odd">Suspenso</span></div>
+        </div></div>`;
+      }
       const rows = Object.entries(group.selections)
         .map(([label, sel]) => {
           // Seleção suspensa pelo bookmaker (isActive:false — ex: durante uma revisão VAR ou
