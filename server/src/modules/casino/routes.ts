@@ -7,6 +7,9 @@ import { listGames, listHighlightedGames } from "./catalog";
 import { getGameImage } from "./imageProxy";
 import { getAgentInfo } from "./apiClient";
 import {
+  handleAuthenticateCallback,
+  handleBalanceCallback,
+  handleBetCallback,
   handleWinCallback,
   handleCancelCallback,
   handleStatusCallback,
@@ -73,9 +76,14 @@ router.get(
   })
 );
 
-// Callbacks do provedor (Win/Cancel/Status) — verificação do header "Callback-Token" contra
-// CASINO_CALLBACK_TOKEN, conforme o contrato. Sem CASINO_CALLBACK_TOKEN configurado, os
-// callbacks são recusados (nunca aceites "por omissão" sem segredo nenhum).
+// Callback do provedor — UM único URL configurado no painel de agente, que envia todos os
+// comandos (authenticate/balance/bet/win/cancel/status) para o mesmo sítio, distinguidos pelo
+// campo `command` do corpo (confirmado pela doc real "Callback API Example" colada pelo
+// utilizador — antes assumíamos, sem confirmação, 3 URLs distintas para win/cancel/status, o
+// que causava "CALLBACK_ERROR" ao pedir o game-url, porque o teste de `authenticate` do
+// provedor não tinha rota nenhuma para responder). Verificação do header "Callback-Token"
+// contra CASINO_CALLBACK_TOKEN, conforme o contrato — sem isso configurado, os callbacks são
+// sempre recusados (nunca aceites "por omissão" sem segredo nenhum).
 function verifyCallbackToken(req: { headers: Record<string, unknown> }) {
   const header = req.headers["callback-token"];
   const token = Array.isArray(header) ? header[0] : header;
@@ -84,46 +92,57 @@ function verifyCallbackToken(req: { headers: Record<string, unknown> }) {
   }
 }
 
-router.post(
-  "/callback/win",
-  asyncHandler(async (req, res) => {
-    try {
-      verifyCallbackToken(req);
-      const data = req.body?.data as CasinoCallbackData;
-      const result = await handleWinCallback(data);
-      res.json(result);
-    } catch (err) {
-      res.json(toCallbackErrorResponse(err));
-    }
-  })
-);
+// Mapa de comando -> path antigo, para inferir o comando quando o corpo não traz `command`
+// (mantém as rotas /callback/win, /callback/cancel e /callback/status a funcionar caso o painel
+// do provedor já tenha sido configurado com URLs separadas em vez de uma só).
+const COMMAND_BY_PATH: Record<string, string> = {
+  authenticate: "authenticate",
+  balance: "balance",
+  bet: "bet",
+  win: "win",
+  cancel: "cancel",
+  status: "status",
+};
 
-router.post(
-  "/callback/cancel",
-  asyncHandler(async (req, res) => {
-    try {
-      verifyCallbackToken(req);
-      const data = req.body?.data as CasinoCallbackData;
-      const result = await handleCancelCallback(data);
-      res.json(result);
-    } catch (err) {
-      res.json(toCallbackErrorResponse(err));
-    }
-  })
-);
+async function dispatchCasinoCallback(command: string, data: CasinoCallbackData & { account?: string }) {
+  switch (command) {
+    case "authenticate":
+      return handleAuthenticateCallback(data.account ?? "");
+    case "balance":
+      return handleBalanceCallback(data.account ?? "");
+    case "bet":
+      return handleBetCallback(data);
+    case "win":
+      return handleWinCallback(data);
+    case "cancel":
+      return handleCancelCallback(data);
+    case "status":
+      return handleStatusCallback(data.account ?? "", data.trans_guid);
+    default:
+      return { result: 1002, status: "UNKNOWN_COMMAND", data: {} };
+  }
+}
 
-router.post(
-  "/callback/status",
-  asyncHandler(async (req, res) => {
+function casinoCallbackHandler(pathCommand?: string) {
+  return asyncHandler(async (req, res) => {
     try {
       verifyCallbackToken(req);
-      const data = req.body?.data as { account: string; trans_guid: string };
-      const result = await handleStatusCallback(data.account, data.trans_guid);
+      const command = typeof req.body?.command === "string" ? req.body.command : pathCommand ?? "";
+      const data = (req.body?.data ?? {}) as CasinoCallbackData & { account?: string };
+      const result = await dispatchCasinoCallback(command, data);
       res.json(result);
     } catch (err) {
       res.json(toCallbackErrorResponse(err));
     }
-  })
-);
+  });
+}
+
+// URL principal a configurar no painel de agente do provedor.
+router.post("/callback", casinoCallbackHandler());
+
+// Aliases (mesma lógica, comando inferido do path se o corpo não o trouxer).
+for (const [path, command] of Object.entries(COMMAND_BY_PATH)) {
+  router.post(`/callback/${path}`, casinoCallbackHandler(command));
+}
 
 export default router;

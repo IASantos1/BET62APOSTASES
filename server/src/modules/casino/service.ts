@@ -57,6 +57,79 @@ function getWalletByAccount(account: string) {
 }
 
 /**
+ * Callback "authenticate": o provedor confirma que a conta existe antes de aceitar uma aposta
+ * (ex: ao abrir o jogo). Também é o pedido usado para testar o URL de callback configurado no
+ * painel de agente — se isto não responder, o pedido de `game-url` falha com "CALLBACK_ERROR".
+ */
+export async function handleAuthenticateCallback(account: string) {
+  const wallet = await getWalletByAccount(account);
+  if (!wallet) return { result: CasinoResult.USER_NOT_FOUND, status: "USER_NOT_FOUND", data: {} };
+  return { result: CasinoResult.OK, status: "OK", data: { account, balance: wallet.balance } };
+}
+
+/** Callback "balance": confirmação do saldo atual, sem alterar nada. */
+export async function handleBalanceCallback(account: string) {
+  const wallet = await getWalletByAccount(account);
+  if (!wallet) return { result: CasinoResult.USER_NOT_FOUND, status: "USER_NOT_FOUND", data: {} };
+  return { result: CasinoResult.OK, status: "OK", data: { balance: wallet.balance } };
+}
+
+/**
+ * Callback "bet": debita o valor apostado na carteira do jogador. Idempotente por `trans_guid`,
+ * e devolve BALANCE_NOT_ENOUGH (em vez de deixar o erro genérico escapar) quando o saldo não
+ * chega — o provedor pede a validação "31: saldo" antes de aceitar a aposta.
+ */
+export async function handleBetCallback(data: CasinoCallbackData) {
+  const existing = await prisma.casinoTransaction.findUnique({ where: { transGuid: data.trans_guid } });
+  if (existing) {
+    const wallet = await prisma.wallet.findUniqueOrThrow({ where: { id: existing.walletId } });
+    return { result: CasinoResult.OK, status: "OK", data: { balance: wallet.balance } };
+  }
+
+  const wallet = await getWalletByAccount(data.account);
+  if (!wallet) return { result: CasinoResult.USER_NOT_FOUND, status: "USER_NOT_FOUND", data: {} };
+
+  let entry, updated;
+  try {
+    ({ entry, wallet: updated } = await applyLedgerMovement({
+      walletId: wallet.id,
+      type: "BET_PLACED",
+      amount: -data.amount,
+      referenceType: "casino_slot",
+      referenceId: data.trans_guid,
+      metadata: {
+        gplayId: data.gplay_id,
+        roundId: data.round_id,
+        providerId: data.provider_id,
+        gameCode: data.game_code,
+        gameType: data.game_type,
+      },
+    }));
+  } catch (err) {
+    if (err instanceof AppError) return { result: CasinoResult.BALANCE_NOT_ENOUGH, status: "BALANCE_NOT_ENOUGH", data: {} };
+    throw err;
+  }
+
+  await prisma.casinoTransaction.create({
+    data: {
+      walletId: wallet.id,
+      transGuid: data.trans_guid,
+      type: "BET",
+      gplayId: data.gplay_id,
+      account: data.account,
+      roundId: data.round_id,
+      providerId: data.provider_id,
+      gameCode: data.game_code,
+      gameType: data.game_type,
+      amount: data.amount,
+      ledgerEntryId: entry.id,
+    },
+  });
+
+  return { result: CasinoResult.OK, status: "OK", data: { balance: updated.balance } };
+}
+
+/**
  * Callback "win": credita o prémio na carteira do jogador. Idempotente por `trans_guid` — uma
  * entrega repetida do mesmo trans_guid não é reaplicada, devolve o saldo atual tal como está.
  */
@@ -111,9 +184,8 @@ export async function handleWinCallback(data: CasinoCallbackData) {
 }
 
 /**
- * Callback "cancel": estorna uma transação anterior identificada por `cancel_trans_guid`. Como
- * a doc fornecida só documenta os callbacks Win/Cancel/Status (não há um callback "bet"/débito
- * documentado ainda), na prática isto só sabe estornar um WIN que passou por aqui — cancelar um
+ * Callback "cancel": estorna uma transação anterior identificada por `cancel_trans_guid` — tanto
+ * um BET (devolve o valor apostado) como um WIN (retira o prémio creditado). Cancelar um
  * trans_guid desconhecido devolve erro em vez de inventar um estorno.
  */
 export async function handleCancelCallback(data: CasinoCallbackData) {
