@@ -380,7 +380,7 @@ export async function listAuditLogs(opts: { userId?: string; action?: string; li
 type SettingValue = boolean | number | string;
 const DEFAULT_SETTINGS: Record<string, SettingValue> = {
   maintenanceMode: false,
-  minDepositEur: 5,
+  minDepositEur: 10,
   maxDepositEur: 5000,
   minWithdrawalEur: 10,
   maxWithdrawalEur: 5000,

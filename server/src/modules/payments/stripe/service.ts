@@ -18,18 +18,25 @@ import { logger } from "../../../lib/logger";
  * voucher. Checkout Sessions is Stripe's own hosted page: it already handles all of that
  * (3DS challenge, the MB WAY phone-number prompt, the Multibanco entity/reference display)
  * without the frontend touching Stripe.js at all — the app only needs to redirect to
- * `checkoutUrl` and read the webhook. Confirmed viable: all three of card/mb_way/multibanco
- * are supported `payment_method_types` on a single Checkout Session in Stripe's public docs
- * knowledge; exact hosted-page behavior per method still needs a real test payment before
- * going live (NEEDS VALIDATION — docs.stripe.com is blocked from this build environment).
+ * `checkoutUrl` and read the webhook.
+ *
+ * `mb_way` support: `stripe` was pinned at 16.12.0, whose `Checkout.SessionCreateParams
+ * .PaymentMethodType` union does NOT list `mb_way` (only `multibanco`) — confirmed by
+ * grepping that package's own `.d.ts`. Upgraded to 22.5.0, whose equivalent type DOES list
+ * `mb_way` (confirmed the same way) — MB WAY support was added to the SDK's types after
+ * 16.12.0 shipped, it wasn't ever unsupported by Stripe itself. Still true regardless of SDK
+ * version: MB WAY must be enabled for the connected Stripe account (Dashboard → Settings →
+ * Payment methods) or Checkout silently drops it from the hosted page — NEEDS VALIDATION
+ * against the real account before going live (docs.stripe.com/dashboard are unreachable from
+ * this build environment).
  */
-const PROVIDER_TO_STRIPE_TYPE: Record<DepositProvider, string> = {
+const PROVIDER_TO_STRIPE_TYPE: Record<DepositProvider, Stripe.Checkout.SessionCreateParams.PaymentMethodType> = {
   STRIPE_CARD: "card",
   STRIPE_MBWAY: "mb_way",
   STRIPE_MULTIBANCO: "multibanco",
 };
 
-const MIN_DEPOSIT_EUR = 5;
+const MIN_DEPOSIT_EUR = 10;
 const MAX_DEPOSIT_EUR = 5000;
 
 export async function createDepositCheckout(params: {
@@ -73,7 +80,7 @@ export async function createDepositCheckout(params: {
 
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
-    payment_method_types: [PROVIDER_TO_STRIPE_TYPE[params.provider] as Stripe.Checkout.SessionCreateParams.PaymentMethodType],
+    payment_method_types: [PROVIDER_TO_STRIPE_TYPE[params.provider]],
     locale: "pt",
     line_items: [
       {
