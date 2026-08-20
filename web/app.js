@@ -342,12 +342,21 @@ function quickPick(event, key, selection) {
   event.currentTarget.classList.toggle("picked");
 }
 
+// As 3 odds 1x2 do cartão compacto ficavam invisíveis assim que o mercado era suspenso (VAR,
+// pênalti, cartão...), porque só entradas ativas (activeSelectionEntries) chegavam a aparecer —
+// pedido explícito para NUNCA sumirem: agora mostram-se sempre, ativas clicáveis e suspensas
+// como bloco cinzento "Suspenso" (mesmo tratamento já usado na página do mercado, ver
+// renderMarketGroups acima) em vez de desaparecer.
 function quickOddsHtml(e, group, isLive) {
-  const odds = activeSelectionEntries(group);
-  if (!odds.length) return "";
-  return `<div class="lc-odds">${odds
-    .slice(0, 3)
+  if (!group?.selections) return "";
+  if (!group.isActive) return '<div class="lc-odds"><div class="suspended" style="flex:3">Suspenso</div></div>';
+  const entries = Object.entries(group.selections).slice(0, 3);
+  if (!entries.length) return "";
+  return `<div class="lc-odds">${entries
     .map(([label, sel]) => {
+      if (!sel.isActive || !Number.isFinite(sel.odd)) {
+        return `<div class="suspended">${label}<br>Suspenso</div>`;
+      }
       const key = `${e.id}|${group.market}|${label}`;
       const picked = betslipSelections.has(key);
       const selection = { eventId: e.id, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };

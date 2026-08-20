@@ -138,6 +138,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .live-card .lc-odds{display:flex;gap:8px;margin-top:10px}
 .live-card .lc-odds div{flex:1;background:var(--surface2);border-radius:8px;padding:8px;text-align:center;font-size:.8rem;font-weight:700;font-variant-numeric:tabular-nums;cursor:pointer}
 .live-card .lc-odds div.picked{color:var(--red);box-shadow:inset 0 0 0 1px var(--red);background:rgba(230,48,39,.1)}
+.live-card .lc-odds div.suspended{cursor:not-allowed;opacity:.5;color:var(--muted);font-style:italic}
 /* Casa/fora um embaixo do outro em todos os cartões de evento (não só ténis) — o placar fica
    sempre alinhado na mesma coluna à direita, card a card, em vez de "flutuar" consoante o
    tamanho do nome da equipa. */
@@ -238,6 +239,8 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .sidebar-left,.sidebar-right{width:270px;flex-shrink:0;padding:18px 14px;position:sticky;top:61px;height:calc(100vh - 61px);overflow-y:auto;scrollbar-width:thin;border:1px solid var(--border)}
 .sidebar-title{font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:.6px;color:var(--muted);margin:16px 4px 8px}
 .sidebar-title:first-child{margin-top:2px}
+.sidebar-title.with-close{display:flex;align-items:center;justify-content:space-between}
+.betslip-close{display:none;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;background:var(--surface2);color:var(--text);font-size:1rem;cursor:pointer;flex-shrink:0}
 .comp-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-radius:10px;cursor:pointer;font-size:.8rem;margin-bottom:3px}
 .comp-item:hover{background:var(--surface2)}
 .comp-item .comp-count{background:var(--surface2);color:var(--muted);font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:10px}
@@ -259,8 +262,11 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
   .sidebar-left,.sidebar-right{position:fixed;top:0;bottom:0;width:280px;max-width:85vw;background:var(--bg);z-index:250;transition:transform .25s ease;box-shadow:0 0 30px rgba(0,0,0,.35)}
   .sidebar-left{left:0;transform:translateX(-100%)}
   .sidebar-left.open{transform:translateX(0)}
-  .sidebar-right{right:0;transform:translateX(100%)}
+  /* O boletim (sidebar-right) fica de ecrã inteiro em mobile/PWA em vez de só uma faixa lateral
+     (85vw) — pedido explícito: preencher o ecrã todo, com o X a fechar em vez de tocar fora. */
+  .sidebar-right{right:0;width:100%;max-width:100%;transform:translateX(100%);overflow-y:auto;-webkit-overflow-scrolling:touch}
   .sidebar-right.open{transform:translateX(0)}
+  .betslip-close{display:inline-flex}
   .drawer-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:240}
   .drawer-overlay.open{display:block}
   .betslip-fab{display:flex!important}
@@ -726,7 +732,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 
 <!-- MENU LATERAL DIREITO: Boletim de Aposta (Simples / Múltipla) -->
 <aside class="sidebar-right" id="sidebar-right">
-    <div class="sidebar-title">BOLETIM DE APOSTA</div>
+    <div class="sidebar-title with-close">BOLETIM DE APOSTA<span class="betslip-close" onclick="closeDrawers()" aria-label="Fechar boletim">✕</span></div>
     <div id="betslip-panel"><div class="empty-note">Selecione odds nos mercados para adicionar ao boletim</div></div>
 </aside>
 
