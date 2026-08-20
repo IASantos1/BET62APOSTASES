@@ -330,7 +330,10 @@ const betslipSelections = new Map(); // key -> { eventId, market, selection, odd
 // UI as mostrar suspensas em vez de clicáveis. Os cartões compactos (pré-jogo/ao vivo) só
 // mostram as ativas, para não ocupar as 3 posições de pré-visualização com odds suspensas.
 function activeSelectionEntries(group) {
-  return Object.entries(group?.selections ?? {}).filter(([, sel]) => sel.isActive);
+  // Number.isFinite(sel?.odd) descarta qualquer entrada com odd inválida/em falta (ex: uma
+  // transição de deploy em que JS antigo em cache leu a forma nova {odd,isActive} como se
+  // fosse só um número — Number({odd:1.85,...}) dá NaN) em vez de deixar "NaN" aparecer no ecrã.
+  return Object.entries(group?.selections ?? {}).filter(([, sel]) => sel?.isActive && Number.isFinite(sel?.odd));
 }
 
 // Setas de subida/descida das odds: guarda o último valor visto por seleção (mesma chave
@@ -1346,7 +1349,9 @@ function renderMarketGroups(e) {
           // Seleção suspensa pelo bookmaker (isActive:false — ex: durante uma revisão VAR ou
           // logo após um penálti/cartão, ver LiveSelection em types.ts): mostra-se visível mas
           // sem onclick, em vez de desaparecer ou continuar clicável com uma odd desatualizada.
-          if (!sel.isActive) {
+          // Mesmo tratamento para uma odd inválida (ex: NaN de uma transição de deploy com JS
+          // antigo em cache) — nunca deixar clicar numa aposta sem preço válido.
+          if (!sel.isActive || !Number.isFinite(sel.odd)) {
             return `<div class="selection-btn suspended">
               <span class="sel-label">${label}</span><span class="sel-odd">Suspenso</span>
             </div>`;
