@@ -23,11 +23,12 @@ provedor, não inventado):
   uma lista de códigos (`21` confirmação do utilizador, `22` utilizador ativo, `31` saldo, `41`
   transação já processada, `42`/`43` existência do ID da transação/transação cancelada) que o
   provedor pede para validarmos antes de aceitar o pedido.
-- Resposta esperada: `{ result, status, data: { balance } }`, com `result` a usar os códigos 0,
-  1 e 1001 — a doc cita estes três valores mas **não** dá a tabela de significados. Neste
-  código, `0` = sucesso (confirmado pelo exemplo de resposta), `1` = erro genérico e `1001` =
-  transação já processada são a leitura padrão para este tipo de contrato seamless — **não
-  confirmado** com uma resposta real de erro do provedor.
+- Resposta esperada: `{ result, status, data: { balance } }`. **Confirmado** pela amostra de
+  implementação PHP oficial colada pelo utilizador (ver "Corrigido: códigos de resultado do
+  callback" abaixo): `result` de erro é o próprio número do item de `check` que falhou (`21`
+  utilizador não encontrado, `22` inativo, `31` saldo insuficiente, `41` `trans_guid` já
+  processado, `42`/`43` `trans_guid`/`cancel_trans_guid` inexistente), mais `100` (token de
+  callback inválido) e `99` (erro genérico ao processar). `0` = sucesso.
 - **Bonus Call Feature**: chamada de bónus aplicada a um jogo em curso; ganhos por bonus call
   chegam como `BonusCall(32)` em vez de `Win(2)` (a doc não detalha um campo explícito no corpo
   do callback `win` para distinguir isto — implementado a assumir que a presença de `call_id`
@@ -73,6 +74,34 @@ separadas. **A URL a configurar no painel de agente é `https://<domínio-produ�
 Como `bet` (débito da aposta) nunca tinha sido documentado nem implementado, este acerto também
 o acrescentou — sem ele, a primeira jogada real falharia sempre, mesmo com o `CALLBACK_ERROR`
 resolvido.
+
+## Corrigido: códigos de resultado do callback
+
+O utilizador colou a implementação PHP de referência **oficial do próprio provedor** (o exemplo
+"Callback Handling" completo, com as tabelas SQL `bet_casino`/`user_casino`). Isto revelou dois
+erros na primeira versão dos handlers, que tinha sido construída sobre a tabela "API Response
+Codes" do Swagger da Agent API de **saída** — uma família de códigos diferente, que nada tem a
+ver com o que devemos devolver nos callbacks de **entrada**:
+
+1. **Códigos de erro errados**: usava-se `USER_NOT_FOUND=2002`, `BALANCE_NOT_ENOUGH=2006`, etc.
+   A amostra oficial mostra que o `result` de erro é literalmente o número do item de `check`
+   que falhou (`21`/`22`/`31`/`41`/`42`/`43`), mais `100` (token inválido) e `99` (erro
+   genérico). Corrigido em `CasinoResult` (`service.ts`).
+2. **Duplicado tratado como sucesso idempotente — errado**: assumia-se, sem confirmação, que
+   reenviar o mesmo `trans_guid` em `bet`/`win`/`cancel` devolvia `OK` com o saldo atual. A
+   amostra oficial mostra o contrário: `check 41` ("já processado") é tratado como **ERRO**
+   (`result: 41`), não como sucesso silencioso. Corrigido em todos os handlers de `service.ts`.
+
+Também implementado, seguindo a amostra oficial mas adaptado ao nosso modelo (log imutável de
+`CasinoTransaction`, em vez de um registo mutável com campo `sort`):
+- Verificação de utilizador **ativo** (`check 22`) — usa `User.status === "ACTIVE"` (o schema já
+  tinha `SUSPENDED`/`SELF_EXCLUDED`/`CLOSED`, por isso a conta suspensa/autoexcluída de um
+  jogador bloqueia automaticamente novas apostas no cassino).
+- `cancel` de um `cancel_trans_guid` já estornado antes devolve `OK` com o saldo atual sem
+  reaplicar o estorno (equivalente ao guard `sort != 'CANCEL'` do PHP, mas consultando se já
+  existe uma transação `CANCEL` com esse `cancelOfTransGuid`, em vez de mutar a linha original).
+- `status` passa a reportar `trans_status: "CANCELED"` quando a transação consultada já foi
+  estornada (antes devolvia sempre `"OK"`).
 
 ## O que está implementado
 
@@ -140,14 +169,21 @@ imagens reais passam a aparecer sozinhas, sem precisar de mais nenhuma alteraç�
   encadeados, `game_url` devolvido corretamente; jogo inexistente, `game_code` em falta e
   pedido não-autenticado devolvem os erros certos; `GET /api/casino/agent-info` restrito a
   SUPPORT/ADMIN (403 para USER comum, dados corretos para ADMIN).
-- ✅ `POST /api/casino/callback` (despachante único, todos os 6 comandos testados):
-  `authenticate`/`balance` devolvem o saldo da conta; `bet` debita (idempotente por
-  `trans_guid`, e devolve `BALANCE_NOT_ENOUGH` numa aposta maior que o saldo); `win` credita;
-  `cancel` estorna tanto um `bet` (devolve o valor apostado) como um `win` (retira o prémio);
-  `status` devolve o estado de uma transação. Aliases `/callback/{comando}` testados sem
-  `command` no corpo (inferido do path).
-- ✅ `Callback-Token` inválido/em falta é recusado (`result: 1001`) em vez de aceite; comando
-  desconhecido devolve `result: 1002` em vez de rebentar.
+- ✅ `POST /api/casino/callback` (despachante único, todos os 6 comandos testados, resultados
+  conferidos byte-a-byte contra a amostra PHP oficial):
+  - `authenticate`/`balance` devolvem `{account, balance}`/`{balance}`; conta desconhecida →
+    `result: 21`.
+  - `bet` debita corretamente (30.5 após apostar 5 de 35.5); reenviar o mesmo `trans_guid` →
+    `result: 41` (**erro**, não sucesso idempotente); aposta maior que o saldo → `result: 31`.
+  - `win` credita corretamente.
+  - `cancel` de um `bet` devolve o valor apostado (30.5 → 35.5); cancelar o mesmo
+    `cancel_trans_guid` outra vez (via um `trans_guid` de cancelamento diferente) devolve `OK`
+    sem reaplicar o estorno; `cancel_trans_guid` inexistente → `result: 43`.
+  - `status` devolve `trans_status: "OK"` para uma transação normal e `"CANCELED"` depois de
+    estornada; `trans_guid` inexistente → `result: 42`.
+  - Aliases `/callback/{comando}` testados sem `command` no corpo (inferido do path).
+- ✅ `Callback-Token` inválido/em falta é recusado (`result: 100`); comando desconhecido devolve
+  `result: 99` em vez de rebentar.
 - ✅ Frontend testado com Playwright: fila de destaques (6 jogos) e página Cassino (grelha +
   pesquisa a filtrar corretamente) renderizam com dados reais da API.
 - ⛔ Imagens dos jogos (`api.playxspin.com`) não carregam **neste ambiente de build** (proxy de
