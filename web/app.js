@@ -1424,9 +1424,15 @@ let betslipMode = "simples"; // "simples" | "multipla"
 const betslipStakes = new Map(); // key -> valor apostado (modo Simples)
 let multiplaStake = 0;
 
+// setStake()/setMultiplaStake() NÃO chamam renderBetslipPanel() — isso reconstruiria o
+// innerHTML do painel inteiro a cada tecla digitada, incluindo o próprio <input> onde o
+// utilizador está a escrever, que perde o foco e fecha o teclado do telemóvel a cada caractere
+// (bug real reportado). updateBetslipSummary() só atualiza o texto dos totais, deixando os
+// <input> intactos; a estrutura do painel só precisa de refazer-se em mudanças estruturais
+// (adicionar/remover seleção, trocar Simples/Múltipla, limpar).
 function setStake(key, value) {
   betslipStakes.set(key, value);
-  renderBetslipPanel();
+  updateBetslipSummary();
 }
 function setBetslipMode(mode) {
   betslipMode = mode;
@@ -1434,7 +1440,22 @@ function setBetslipMode(mode) {
 }
 function setMultiplaStake(value) {
   multiplaStake = Number(value) || 0;
-  renderBetslipPanel();
+  updateBetslipSummary();
+}
+function updateBetslipSummary() {
+  const selections = [...betslipSelections.entries()];
+  if (betslipMode === "simples") {
+    const totalStake = selections.reduce((sum, [key]) => sum + (Number(betslipStakes.get(key)) || 0), 0);
+    const totalReturn = selections.reduce((sum, [key, s]) => sum + (Number(betslipStakes.get(key)) || 0) * s.odd, 0);
+    const stakeEl = document.getElementById("bs-total-stake");
+    const returnEl = document.getElementById("bs-total-return");
+    if (stakeEl) stakeEl.textContent = `€ ${totalStake.toFixed(2)}`;
+    if (returnEl) returnEl.textContent = `€ ${totalReturn.toFixed(2)}`;
+  } else {
+    const totalOdd = selections.reduce((prod, [, s]) => prod * s.odd, 1);
+    const returnEl = document.getElementById("bs-multipla-return");
+    if (returnEl) returnEl.textContent = `€ ${(multiplaStake * totalOdd).toFixed(2)}`;
+  }
 }
 function clearBetslip() {
   betslipSelections.clear();
@@ -1490,15 +1511,15 @@ function renderBetslipPanel() {
       const totalStake = selections.reduce((sum, [key]) => sum + (Number(betslipStakes.get(key)) || 0), 0);
       const totalReturn = selections.reduce((sum, [key, s]) => sum + (Number(betslipStakes.get(key)) || 0) * s.odd, 0);
       summaryHtml = `
-        <div class="bs-summary"><span>Total investido</span><span>€ ${totalStake.toFixed(2)}</span></div>
-        <div class="bs-summary"><span>Retorno potencial</span><span class="bs-return">€ ${totalReturn.toFixed(2)}</span></div>`;
+        <div class="bs-summary"><span>Total investido</span><span id="bs-total-stake">€ ${totalStake.toFixed(2)}</span></div>
+        <div class="bs-summary"><span>Retorno potencial</span><span class="bs-return" id="bs-total-return">€ ${totalReturn.toFixed(2)}</span></div>`;
     } else {
       const totalOdd = selections.reduce((prod, [, s]) => prod * s.odd, 1);
       summaryHtml = `
         <div class="field" style="margin:10px 0"><label>Valor da aposta (€)</label>
           <input type="number" min="0.5" step="0.5" value="${multiplaStake || ""}" placeholder="€" oninput="setMultiplaStake(this.value)"></div>
         <div class="bs-summary"><span>Odd total</span><span>${totalOdd.toFixed(2)}</span></div>
-        <div class="bs-summary"><span>Retorno potencial</span><span class="bs-return">€ ${(multiplaStake * totalOdd).toFixed(2)}</span></div>`;
+        <div class="bs-summary"><span>Retorno potencial</span><span class="bs-return" id="bs-multipla-return">€ ${(multiplaStake * totalOdd).toFixed(2)}</span></div>`;
     }
 
     el.innerHTML = `
