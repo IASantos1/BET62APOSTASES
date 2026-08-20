@@ -553,13 +553,24 @@ export function orderMarketsWithPrimaryFirst<T extends { canonicalMarket?: strin
 
 // "H"/"A" score strings -> number when both sides parse cleanly (futebol, basquetebol, etc.).
 // CONFIRMED shape for paddypower: { home: "1", away: "1" }. No ténis, os pontos do jogo atual
-// nem sempre são numéricos (ex: "AD" em vantagem) — nesse caso passa-se a string tal como veio,
-// em vez de descartar o placar inteiro (bug real: "40"/"15" apareciam, "AD" fazia desaparecer).
-function parsePulsescoreScore(score: PulsescoreScore | undefined): { homeScore?: number | string; awayScore?: number | string } {
-  if (!score || score.home == null || score.away == null) return {};
+// nem sempre são numéricos (ex: esperava-se "AD" em vantagem) — nesse caso passa-se a string tal
+// como veio, em vez de descartar o placar inteiro (bug real: "40"/"15" apareciam, o placar
+// desaparecia por completo ao entrar em vantagem). O valor real que a Pulsescore envia nesse
+// momento **ainda não foi confirmado** com uma amostra real — só se sabe que o placar continuava
+// a desaparecer mesmo depois deste "fallback string" ser adicionado, o que sugere que `e.score`
+// pode estar totalmente ausente nesse instante (não apenas não-numérico). O log abaixo, com o
+// `sport === "tennis"`, serve para capturar a forma real na próxima vez que acontecer.
+function parsePulsescoreScore(score: PulsescoreScore | undefined, sport: Sport): { homeScore?: number | string; awayScore?: number | string } {
+  if (!score || score.home == null || score.away == null) {
+    if (sport === "tennis") logger.info({ score }, "Pulsescore: ténis sem score.home/away parseável (possível estado de vantagem)");
+    return {};
+  }
   const h = Number(score.home);
   const a = Number(score.away);
-  if (Number.isNaN(h) || Number.isNaN(a)) return { homeScore: score.home, awayScore: score.away };
+  if (Number.isNaN(h) || Number.isNaN(a)) {
+    if (sport === "tennis") logger.info({ score }, "Pulsescore: ténis com score.home/away não-numérico (possível estado de vantagem)");
+    return { homeScore: score.home, awayScore: score.away };
+  }
   return { homeScore: h, awayScore: a };
 }
 
@@ -634,7 +645,7 @@ function normalizeEvent(e: PulsescoreEvent, sport: Sport): LiveEvent {
     // próprio REST /live-events) — indefinido se a bookmaker atual não os devolver (ex: a
     // anterior "10bet"), caso em que o frontend esconde a linha de placar em vez de inventar
     // um "0-0".
-    ...parsePulsescoreScore(e.score),
+    ...parsePulsescoreScore(e.score, sport),
     minuteOrPeriod: formatMatchClock(e.matchClock, e.live ? "AO VIVO" : ""),
     status: e.live ? "live" : "scheduled",
     odds: activeMarkets.map(normalizeMarket),
