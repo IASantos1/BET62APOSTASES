@@ -322,3 +322,26 @@ model AuditLog {
   @@index([userId, createdAt])
   @@index([action])
 }
+
+// ============ ADMIN (painel administrativo) ============
+// O catálogo de jogos do Cassino (casino/catalog.ts) vem de um ficheiro JSON estático do
+// provedor (games.json) — sem base de dados própria, não há como o admin desativar um jogo
+// específico (ex: RTP reportado com problema) sem editar o ficheiro à mão. Esta tabela guarda só
+// a exceção manual (override) por cima do catálogo: ausência de registo = usa `launch_enable` do
+// JSON tal como está; um registo aqui força ligado/desligado independentemente do JSON.
+model CasinoGameOverride {
+  gameCode        String   @id
+  enabled         Boolean
+  updatedByUserId String
+  updatedAt       DateTime @updatedAt
+}
+
+// Configurações globais da plataforma editáveis pelo admin sem precisar de novo deploy (ex:
+// modo de manutenção, limites por omissão). Par chave/valor genérico em vez de colunas fixas —
+// evita uma migração por cada nova definição; o valor é validado no service.ts, não aqui.
+model PlatformSetting {
+  key             String   @id
+  value           Json
+  updatedByUserId String?
+  updatedAt       DateTime @updatedAt
+}

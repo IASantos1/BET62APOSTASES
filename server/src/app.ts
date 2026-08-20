@@ -14,6 +14,8 @@ import stripeRoutes, { stripeWebhookHandler } from "./modules/payments/stripe/ro
 import revolutRoutes from "./modules/payments/revolut/routes";
 import sportsRoutes from "./modules/sports/routes";
 import casinoRoutes from "./modules/casino/routes";
+import adminRoutes from "./modules/admin/routes";
+import { maintenanceGate } from "./modules/admin/maintenanceGate";
 
 // server/src/app.ts e server/dist/app.js ficam ambos exatamente 2 níveis abaixo da raiz do
 // monorepo (server/src e server/dist), por isso este caminho relativo funciona em dev e em prod.
@@ -37,6 +39,10 @@ export function createApp() {
 
   app.get("/api/health", (_req, res) => res.json({ status: "ok", env: env.NODE_ENV }));
 
+  // Bloqueia /api/* para jogadores quando o admin liga o modo de manutenção (definições da
+  // plataforma) — exceto o próprio painel admin e login/refresh/logout (ver maintenanceGate.ts).
+  app.use(maintenanceGate);
+
   app.use("/api/auth", authRoutes);
   app.use("/api/users", userRoutes);
   app.use("/api/wallet", walletRoutes);
@@ -44,6 +50,7 @@ export function createApp() {
   app.use("/api/payments/revolut", revolutRoutes);
   app.use("/api/sports", sportsRoutes);
   app.use("/api/casino", casinoRoutes);
+  app.use("/api/admin", adminRoutes);
 
   // Frontend estático servido pelo mesmo processo Node — mesma origem que a API, por isso
   // o frontend não precisa de saber o domínio do backend (nada de CORS nem de variáveis
@@ -70,6 +77,14 @@ export function createApp() {
       },
     })
   );
+  // Painel administrativo: SPA própria, à parte da dos jogadores (login e token separados —
+  // ver admin.js) — precisa de vir ANTES do catch-all abaixo, que serviria index.html (a SPA de
+  // jogador) para qualquer caminho, incluindo /admin.
+  app.get(/^\/admin(\/.*)?$/, (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache, must-revalidate");
+    res.sendFile(path.join(WEB_DIR, "admin.html"));
+  });
+
   app.get(/^\/(?!api\/).*/, (_req, res) => {
     res.setHeader("Cache-Control", "no-cache, must-revalidate");
     res.sendFile(path.join(WEB_DIR, "index.html"));
