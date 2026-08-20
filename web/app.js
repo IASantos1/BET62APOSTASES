@@ -1128,20 +1128,57 @@ function closeStats() {
 function switchStatsTab(tab) {
   document.getElementById("stats-tab-prob").classList.toggle("active", tab === "prob");
   document.getElementById("stats-tab-h2h").classList.toggle("active", tab === "h2h");
+  document.getElementById("stats-tab-teamstats").classList.toggle("active", tab === "teamstats");
   document.getElementById("stats-tab-table").classList.toggle("active", tab === "table");
   document.getElementById("stats-body-prob").classList.toggle("hidden", tab !== "prob");
   document.getElementById("stats-body-h2h").classList.toggle("hidden", tab !== "h2h");
+  document.getElementById("stats-body-teamstats").classList.toggle("hidden", tab !== "teamstats");
   document.getElementById("stats-body-table").classList.toggle("hidden", tab !== "table");
   if (tab === "prob") renderWinProbability(currentMarketEvent);
   if (tab === "h2h") renderH2H(currentMarketEvent);
+  if (tab === "teamstats") renderTeamStats(currentMarketEvent);
 }
 
-// Probabilidade implícita a partir das odds do mercado principal (odds[0] — já vem ordenado com
-// o mercado de resultado/moneyline à frente, ver orderMarketsWithPrimaryFirst() no backend).
-// Fórmula padrão: 1/odd por seleção, normalizado para somar 100% (remove a margem do bookmaker
-// em vez de mostrar probabilidades "cruas" que somariam mais de 100%).
-function renderWinProbability(e) {
+function renderWinProbabilityBars(el, entries, advice) {
+  el.innerHTML =
+    entries
+      .map(
+        ([label, pct]) => `
+        <div class="win-prob-row">
+          <div class="win-prob-row-top"><span>${label}</span><span>${pct.toFixed(1)}%</span></div>
+          <div class="win-prob-bar-track"><div class="win-prob-bar-fill" style="width:${pct.toFixed(1)}%"></div></div>
+        </div>`
+      )
+      .join("") + (advice ? `<div class="empty-note" style="text-align:left;padding-top:4px">💡 ${advice}</div>` : "");
+}
+
+// Probabilidade de vitória: para futebol tenta primeiro a previsão real da API-Football
+// (percent home/draw/away, calculada por eles a partir de forma/médias de golos), com o
+// cálculo pelas odds como recurso (resolução do fixture pode falhar/ambiguar, ou o desporto
+// não é futebol — a API-Football só cobre futebol). Fórmula do recurso: 1/odd por seleção,
+// normalizado para somar 100% (remove a margem do bookmaker).
+async function renderWinProbability(e) {
   const el = document.getElementById("stats-body-prob");
+  if (e.sport === "football") {
+    el.innerHTML = '<div class="empty-note">A carregar…</div>';
+    try {
+      const { predictions } = await Bet62Api.getPredictions(e.id);
+      if (predictions && predictions.percent) {
+        renderWinProbabilityBars(
+          el,
+          [
+            [e.home, parseFloat(predictions.percent.home)],
+            ["Empate", parseFloat(predictions.percent.draw)],
+            [e.away, parseFloat(predictions.percent.away)],
+          ],
+          predictions.advice
+        );
+        return;
+      }
+    } catch {
+      /* cai para o cálculo pelas odds abaixo */
+    }
+  }
   const market = e.odds && e.odds[0];
   if (!market || !Object.keys(market.selections).length) {
     el.innerHTML = '<div class="empty-note">Sem odds disponíveis para calcular probabilidades</div>';
@@ -1149,16 +1186,10 @@ function renderWinProbability(e) {
   }
   const raw = Object.entries(market.selections).map(([label, odd]) => [label, 1 / Number(odd)]);
   const total = raw.reduce((sum, [, p]) => sum + p, 0);
-  el.innerHTML = raw
-    .map(([label, p]) => {
-      const pct = total > 0 ? (p / total) * 100 : 0;
-      return `
-        <div class="win-prob-row">
-          <div class="win-prob-row-top"><span>${label}</span><span>${pct.toFixed(1)}%</span></div>
-          <div class="win-prob-bar-track"><div class="win-prob-bar-fill" style="width:${pct.toFixed(1)}%"></div></div>
-        </div>`;
-    })
-    .join("");
+  renderWinProbabilityBars(
+    el,
+    raw.map(([label, p]) => [label, total > 0 ? (p / total) * 100 : 0])
+  );
 }
 
 // H2H via API-Football (resolução de equipa por nome no backend — melhor esforço, ver
@@ -1189,6 +1220,64 @@ async function renderH2H(e) {
       .join("");
   } catch {
     el.innerHTML = '<div class="empty-note">Não foi possível carregar os confrontos diretos</div>';
+  }
+}
+
+// Rótulos PT dos tipos de estatística devolvidos pela API-Football (ver amostra real colada
+// pelo utilizador em /fixtures/statistics) — o que não estiver mapeado aqui aparece tal como
+// veio, em vez de ser escondido.
+const TEAM_STAT_LABELS = {
+  "Shots on Goal": "Remates à baliza",
+  "Shots off Goal": "Remates fora",
+  "Total Shots": "Remates totais",
+  "Blocked Shots": "Remates bloqueados",
+  "Shots insidebox": "Remates dentro da área",
+  "Shots outsidebox": "Remates fora da área",
+  Fouls: "Faltas",
+  "Corner Kicks": "Cantos",
+  Offsides: "Fora de jogo",
+  "Ball Possession": "Posse de bola",
+  "Yellow Cards": "Cartões amarelos",
+  "Red Cards": "Cartões vermelhos",
+  "Goalkeeper Saves": "Defesas do guarda-redes",
+  "Total passes": "Passes totais",
+  "Passes accurate": "Passes certos",
+  "Passes %": "Precisão de passe",
+};
+
+// Estatísticas completas por equipa via API-Football (só futebol — a API-Football não cobre
+// outros desportos). Reaproveita as classes .mt-stats/.mt-stats-col/.mt-stats-labels já usadas
+// antes na linha de estatísticas do Match Tracker.
+let teamStatsLoadedForEventId = null;
+async function renderTeamStats(e) {
+  const el = document.getElementById("stats-body-teamstats");
+  if (e.sport !== "football") {
+    el.innerHTML = '<div class="empty-note">Estatísticas detalhadas disponíveis só para futebol, por agora</div>';
+    return;
+  }
+  if (teamStatsLoadedForEventId === e.id) return;
+  el.innerHTML = '<div class="empty-note">A carregar…</div>';
+  try {
+    const { response } = await Bet62Api.getTeamStats(e.id);
+    teamStatsLoadedForEventId = e.id;
+    const [home, away] = response || [];
+    if (!home || !away || !home.statistics?.length) {
+      el.innerHTML = '<div class="empty-note">Sem estatísticas detalhadas disponíveis para este jogo</div>';
+      return;
+    }
+    const rows = home.statistics.map((s, i) => ({
+      label: TEAM_STAT_LABELS[s.type] || s.type,
+      homeVal: s.value ?? "-",
+      awayVal: away.statistics[i]?.value ?? "-",
+    }));
+    el.innerHTML = `
+      <div class="mt-stats">
+        <div class="mt-stats-col home">${rows.map((r) => `<div>${r.homeVal}</div>`).join("")}</div>
+        <div class="mt-stats-labels">${rows.map((r) => `<div>${r.label}</div>`).join("")}</div>
+        <div class="mt-stats-col away">${rows.map((r) => `<div>${r.awayVal}</div>`).join("")}</div>
+      </div>`;
+  } catch {
+    el.innerHTML = '<div class="empty-note">Não foi possível carregar as estatísticas</div>';
   }
 }
 
