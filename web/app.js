@@ -1102,7 +1102,7 @@ function renderMatchTracker(e) {
     </div>
     <div class="mt-period${clockClass}">${e.minuteOrPeriod}</div>
     <div class="mt-actions">
-      <div class="mt-action-btn" onclick="openTracker()"><span class="mt-action-icon">🎯</span>Match Tracker</div>
+      <div class="mt-action-btn" onclick="openTracker()"><span class="mt-action-icon"><span class="pitch-icon" style="width:26px;height:18px"></span></span>Match Tracker</div>
       <div class="mt-action-btn" onclick="openStats()"><span class="mt-action-icon">📊</span>Estatísticas</div>
     </div>`;
 }
@@ -1137,6 +1137,7 @@ function switchStatsTab(tab) {
   if (tab === "prob") renderWinProbability(currentMarketEvent);
   if (tab === "h2h") renderH2H(currentMarketEvent);
   if (tab === "teamstats") renderTeamStats(currentMarketEvent);
+  if (tab === "table") renderStandings(currentMarketEvent);
 }
 
 function renderWinProbabilityBars(el, entries, advice) {
@@ -1278,6 +1279,43 @@ async function renderTeamStats(e) {
       </div>`;
   } catch {
     el.innerHTML = '<div class="empty-note">Não foi possível carregar as estatísticas</div>';
+  }
+}
+
+// Classificação da liga do evento via API-Football (só futebol) — realça as duas equipas do
+// jogo atual na tabela, quando encontradas.
+let standingsLoadedForEventId = null;
+async function renderStandings(e) {
+  const el = document.getElementById("stats-body-table");
+  if (e.sport !== "football") {
+    el.innerHTML = '<div class="empty-note">Classificação disponível só para futebol, por agora</div>';
+    return;
+  }
+  if (standingsLoadedForEventId === e.id) return;
+  el.innerHTML = '<div class="empty-note">A carregar…</div>';
+  try {
+    const { standings } = await Bet62Api.getStandings(e.id);
+    standingsLoadedForEventId = e.id;
+    if (!standings || !standings.length) {
+      el.innerHTML = '<div class="empty-note">Sem classificação disponível para esta competição</div>';
+      return;
+    }
+    el.innerHTML = `
+      <div class="standings-table">
+        <div class="standings-row standings-header">
+          <span class="st-rank">#</span><span class="st-team">Equipa</span><span class="st-pts">Pts</span><span class="st-pj">J</span><span class="st-gd">SG</span>
+        </div>
+        ${standings
+          .map(
+            (r) => `
+          <div class="standings-row${r.team === e.home || r.team === e.away ? " highlight" : ""}">
+            <span class="st-rank">${r.rank}</span><span class="st-team">${r.team}</span><span class="st-pts">${r.points}</span><span class="st-pj">${r.played}</span><span class="st-gd">${r.goalsDiff > 0 ? "+" : ""}${r.goalsDiff}</span>
+          </div>`
+          )
+          .join("")}
+      </div>`;
+  } catch {
+    el.innerHTML = '<div class="empty-note">Não foi possível carregar a classificação</div>';
   }
 }
 

@@ -140,6 +140,7 @@ const Bet62Api = (() => {
     getH2H: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/h2h`, { auth: false }),
     getPredictions: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/predictions`, { auth: false }),
     getTeamStats: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/stats`, { auth: false }),
+    getStandings: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/standings`, { auth: false }),
 
     // Casino
     getCasinoGames: (opts = {}) => {
