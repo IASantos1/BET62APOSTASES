@@ -4,6 +4,7 @@ import { hybridSportsService } from "./hybridService";
 import { getPrematchEvents } from "./prematch/service";
 import { getTodayCompetitions } from "./competitions/service";
 import { fetchEventById } from "./pulsescore/client";
+import { getHeadToHeadByTeamNames } from "./apifootball/client";
 import { ALL_SPORTS, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
 
@@ -57,6 +58,19 @@ router.get(
     const stats = await hybridSportsService.getStatistics(req.params.id);
     if (!stats) throw Errors.notFound("Estatísticas indisponíveis para este evento");
     res.json(stats);
+  })
+);
+
+// Confrontos diretos (H2H) via API-Football, resolvendo as equipas por nome — ver
+// getHeadToHeadByTeamNames() para as limitações (melhor esforço, sem mapeamento confirmado de
+// id de equipa entre a Pulsescore e a API-Football).
+router.get(
+  "/events/:id/h2h",
+  asyncHandler(async (req, res) => {
+    const event = hybridSportsService.getById(req.params.id);
+    if (!event) throw Errors.notFound("Evento não encontrado");
+    const matches = await getHeadToHeadByTeamNames(event.home, event.away);
+    res.json({ matches });
   })
 );
 

@@ -137,6 +137,7 @@ const Bet62Api = (() => {
     getPrematchEvents: (sport) => request(`/sports/prematch?sport=${sport}`, { auth: false }),
     refreshEvent: (eventId, sport) => request(`/sports/events/${encodeURIComponent(eventId)}/refresh?sport=${sport}`, { auth: false }),
     getCompetitions: () => request("/sports/competitions", { auth: false }),
+    getH2H: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/h2h`, { auth: false }),
 
     // Casino
     getCasinoGames: (opts = {}) => {

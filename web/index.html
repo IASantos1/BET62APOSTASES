@@ -193,6 +193,22 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .mt-stats-col.home{align-items:flex-start}
 .mt-stats-col.away{align-items:flex-end}
 .mt-stats-labels{flex:0 0 96px;display:flex;flex-direction:column;gap:6px;text-align:center;color:var(--muted);font-size:.66rem;text-transform:uppercase;letter-spacing:.03em}
+.mt-actions{display:flex;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+.mt-action-btn{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 8px;text-align:center;cursor:pointer;font-weight:700;font-size:.82rem;color:var(--text)}
+.mt-action-btn .mt-action-icon{display:block;font-size:1.2rem;margin-bottom:4px}
+.stats-tabs{display:flex;gap:6px;padding:12px 16px 0}
+.stats-tab{flex:1;padding:10px 6px;text-align:center;font-size:.72rem;font-weight:700;border-radius:10px 10px 0 0;cursor:pointer;background:var(--surface2);color:var(--muted)}
+.stats-tab.active{background:var(--surface);color:var(--text);border:1px solid var(--border);border-bottom:none}
+.stats-tab-body{padding:20px}
+.win-prob-row{margin-bottom:16px}
+.win-prob-row-top{display:flex;justify-content:space-between;font-size:.85rem;font-weight:700;margin-bottom:6px}
+.win-prob-bar-track{background:var(--surface2);border-radius:8px;height:10px;overflow:hidden}
+.win-prob-bar-fill{background:var(--gold);height:100%;border-radius:8px}
+.h2h-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid var(--border);font-size:.82rem}
+.h2h-item:last-child{border-bottom:none}
+.h2h-teams{flex:1}
+.h2h-teams .h2h-comp{color:var(--muted);font-size:.7rem;display:block;margin-bottom:2px}
+.h2h-score{font-weight:700;color:var(--gold);white-space:nowrap}
 .market-group{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:12px}
 .market-group h4{font-size:.85rem;margin-bottom:10px;text-transform:capitalize}
 .selection-row{display:flex;gap:8px;flex-wrap:wrap}
@@ -285,7 +301,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
     <div class="header-right">
         <button class="login-btn hidden" id="btn-header-login" onclick="openAuth('login')">Entrar</button>
         <div class="balance-pill hidden" id="balance-display">€ 0.00</div>
-        <button class="add-btn hidden" id="btn-deposit" onclick="openDeposit()">+</button>
+        <button class="add-btn hidden" id="btn-header-deposit" onclick="openDeposit()">+</button>
         <button class="avatar-btn hidden" id="btn-avatar" onclick="showPage('profile')">👤</button>
     </div>
 </header>
@@ -653,6 +669,41 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
             <div class="form-group hidden" id="deposit-phone-group"><label>Telemóvel (MB WAY)</label><input type="tel" id="deposit-phone" placeholder="+351 900 000 000"></div>
             <button class="auth-submit" id="btn-deposit" onclick="submitDeposit()">CONTINUAR</button>
             <button class="btn-outline" onclick="closeDeposit()">Cancelar</button>
+        </div>
+    </div>
+</div>
+
+<!-- MATCH TRACKER MODAL (mini campo 2D — ainda por construir, só o ponto de entrada) -->
+<div class="auth-overlay" id="tracker-modal">
+    <div class="auth-box">
+        <div class="auth-tabs"><div class="auth-tab active" style="cursor:default">🎯 Match Tracker</div></div>
+        <div class="auth-body" style="text-align:center;padding:40px 24px">
+            <div style="font-size:2rem;margin-bottom:10px">🛠️</div>
+            <div style="font-weight:700;margin-bottom:6px">Brevemente</div>
+            <div style="color:var(--muted);font-size:.85rem">O mini campo em 2D com a posição da jogada em tempo real está a caminho.</div>
+            <button class="btn-outline" onclick="closeTracker()">Fechar</button>
+        </div>
+    </div>
+</div>
+
+<!-- ESTATÍSTICAS MODAL: Margens de Vitória / H2H / Classificação lado a lado -->
+<div class="auth-overlay" id="stats-modal">
+    <div class="auth-box" style="max-width:440px">
+        <div class="stats-tabs">
+            <div class="stats-tab active" id="stats-tab-prob" onclick="switchStatsTab('prob')">Margens de Vitória</div>
+            <div class="stats-tab" id="stats-tab-h2h" onclick="switchStatsTab('h2h')">H2H</div>
+            <div class="stats-tab" id="stats-tab-table" onclick="switchStatsTab('table')">Classificação</div>
+        </div>
+        <div class="stats-tab-body">
+            <div id="stats-body-prob"></div>
+            <div id="stats-body-h2h" class="hidden"></div>
+            <div id="stats-body-table" class="hidden">
+                <div style="text-align:center;padding:20px 0;color:var(--muted)">
+                    <div style="font-size:1.6rem;margin-bottom:8px">🛠️</div>
+                    Brevemente
+                </div>
+            </div>
+            <button class="btn-outline" onclick="closeStats()">Fechar</button>
         </div>
     </div>
 </div>
