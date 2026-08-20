@@ -47,7 +47,7 @@ antes de esta plataforma poder aceitar dinheiro real. Nada disto é resolvido po
 
 - Idade mínima de 18 anos validada no registo (`registerUser`).
 - Limites de depósito diário e perda semanal (`ResponsibleGamblingLimits`), aplicados
-  server-side no momento do depósito (`createDepositIntent`).
+  server-side no momento do depósito (`createDepositCheckout`).
 - Reduzir limites é imediato; **aumentar** limites é bloqueado com uma mensagem a pedir
   contacto com o suporte — o período de reflexão de 24h referido no erro ainda não tem um
   fluxo assíncrono de aprovação automática implementado (fica para uma fase seguinte).

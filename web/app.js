@@ -786,14 +786,18 @@ function openDeposit() {
 function closeDeposit() {
   document.getElementById("deposit-modal").classList.remove("open");
 }
+const DEPOSIT_METHOD_HINTS = {
+  STRIPE_CARD: "",
+  STRIPE_MBWAY: "O número de telemóvel é pedido na página de pagamento seguinte.",
+  STRIPE_MULTIBANCO: "A entidade e referência Multibanco aparecem na página de pagamento seguinte.",
+};
 function selectDepositMethod(method) {
   selectedDepositMethod = method;
   document.querySelectorAll(".dm-btn").forEach((b) => b.classList.toggle("active", b.dataset.method === method));
-  document.getElementById("deposit-phone-group").classList.toggle("hidden", method !== "STRIPE_MBWAY");
+  document.getElementById("deposit-method-hint").textContent = DEPOSIT_METHOD_HINTS[method] || "";
 }
 async function submitDeposit() {
   const amountEur = Number(document.getElementById("deposit-amount").value);
-  const phone = document.getElementById("deposit-phone").value.trim();
   const errEl = document.getElementById("deposit-error");
   errEl.classList.remove("show");
 
@@ -806,20 +810,31 @@ async function submitDeposit() {
   const btn = document.getElementById("btn-deposit");
   btn.disabled = true;
   try {
-    await Bet62Api.createDeposit(selectedDepositMethod, amountEur, phone || undefined);
-    closeDeposit();
-    if (selectedDepositMethod === "STRIPE_MULTIBANCO") {
-      alert("Depósito iniciado. A referência Multibanco será apresentada assim que o Stripe confirmar o pagamento (fluxo completo requer Stripe.js no frontend com a chave publicável).");
-    } else if (selectedDepositMethod === "STRIPE_MBWAY") {
-      alert("Pedido enviado para a app MB WAY associada a esse número. Confirme o pagamento na app.");
-    } else {
-      alert("PaymentIntent criado (client_secret recebido). A confirmação do cartão requer Stripe.js/Elements no frontend com a chave publicável (STRIPE_PUBLISHABLE_KEY) — ainda não configurada.");
-    }
+    const { checkoutUrl } = await Bet62Api.createDeposit(selectedDepositMethod, amountEur);
+    // Sai da SPA para a página de pagamento hospedada da própria Stripe — volta sozinho para
+    // aqui (?deposit=success|cancel, ver handleDepositRedirect() no init) assim que o cliente
+    // terminar ou cancelar.
+    window.location.href = checkoutUrl;
   } catch (err) {
     errEl.textContent = err.message || "Não foi possível iniciar o depósito.";
     errEl.classList.add("show");
-  } finally {
     btn.disabled = false;
+  }
+}
+
+// Lê ?deposit=success|cancel devolvido pelo Stripe Checkout (success_url/cancel_url em
+// payments/stripe/service.ts) — o crédito em si só acontece quando o webhook confirmar (nunca
+// só por o cliente ter voltado a esta página, ver nota de segurança no service.ts), por isso
+// esta mensagem é só informativa; o saldo atualiza-se sozinho no próximo refresh do perfil.
+function handleDepositRedirect() {
+  const params = new URLSearchParams(location.search);
+  const status = params.get("deposit");
+  if (!status) return;
+  history.replaceState(null, "", location.pathname);
+  if (status === "success") {
+    alert("Pagamento em processamento. O saldo é atualizado assim que a Stripe confirmar (pode demorar alguns minutos, ou até alguns dias no caso do Multibanco).");
+  } else if (status === "cancel") {
+    alert("Depósito cancelado.");
   }
 }
 
@@ -1558,6 +1573,7 @@ function placeBetDemo() {
   renderSportsMenu();
   renderCompetitions();
   renderBetslipPanel();
+  handleDepositRedirect();
   if (Bet62Api.isAuthenticated()) {
     await loadProfile();
   }

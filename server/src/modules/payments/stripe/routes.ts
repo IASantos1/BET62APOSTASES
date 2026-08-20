@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../../../middleware/errorHandler";
 import { requireAuth, type AuthedRequest } from "../../../middleware/auth";
 import { validateBody } from "../../../middleware/validate";
-import { createDepositIntent, handleStripeWebhookEvent } from "./service";
+import { createDepositCheckout, handleStripeWebhookEvent } from "./service";
 import { Errors } from "../../../lib/errors";
 
 const router = Router();
@@ -15,11 +15,13 @@ router.post(
     z.object({
       provider: z.enum(["STRIPE_CARD", "STRIPE_MBWAY", "STRIPE_MULTIBANCO"]),
       amountEur: z.number().positive(),
-      phone: z.string().optional(),
     })
   ),
   asyncHandler(async (req: AuthedRequest, res) => {
-    const result = await createDepositIntent({ userId: req.user!.id, ...req.body });
+    // origin do próprio pedido (nunca fixo no código) — mesmo domínio de onde o frontend fez
+    // este pedido, funciona tanto no domínio final (bet62.plus) como no subdomínio do Railway.
+    const origin = `${req.protocol}://${req.get("host")}`;
+    const result = await createDepositCheckout({ userId: req.user!.id, origin, ...req.body });
     res.status(201).json(result);
   })
 );

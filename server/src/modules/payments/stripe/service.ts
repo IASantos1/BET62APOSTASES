@@ -1,4 +1,5 @@
 import { DepositProvider } from "@prisma/client";
+import type Stripe from "stripe";
 import { prisma } from "../../../lib/prisma";
 import { Errors } from "../../../lib/errors";
 import { getStripeClient } from "./client";
@@ -8,17 +9,19 @@ import { isSelfExcluded } from "../../users/service";
 import { logger } from "../../../lib/logger";
 
 /**
- * Deposit methods offered to PT users, mapped to Stripe payment_method_types.
+ * Deposit methods offered to PT users, mapped to Stripe Checkout `payment_method_types`.
  *
- * NEEDS VALIDATION against https://docs.stripe.com (blocked from this environment):
- *  - "card": standard, requires SCA/3DS handling on the frontend via Stripe.js confirmCardPayment.
- *  - "multibanco": voucher-based method, EUR only, delayed settlement (customer pays at an ATM/
- *    home banking using entity+reference within ~7 days); PaymentIntent must be confirmed
- *    server-side with `confirm: true` and a `return_url`, then read
- *    `next_action.multibanco_display_details` for the entity/reference to show the user.
- *  - "mb_way": push-payment to the customer's phone via the MB WAY app; requires the customer's
- *    phone number. Confirm availability/exact param shape for your Stripe account & country
- *    before enabling in production (payment method support varies by Stripe account config).
+ * Checkout Sessions (not raw PaymentIntents) on purpose — the previous PaymentIntent-based
+ * flow left a placeholder alert on the frontend ("requires Stripe.js/Elements... not yet
+ * configured", see git history) because finishing it means building custom card Elements +
+ * 3DS handling, and manually reading `next_action.multibanco_display_details` to show the
+ * voucher. Checkout Sessions is Stripe's own hosted page: it already handles all of that
+ * (3DS challenge, the MB WAY phone-number prompt, the Multibanco entity/reference display)
+ * without the frontend touching Stripe.js at all — the app only needs to redirect to
+ * `checkoutUrl` and read the webhook. Confirmed viable: all three of card/mb_way/multibanco
+ * are supported `payment_method_types` on a single Checkout Session in Stripe's public docs
+ * knowledge; exact hosted-page behavior per method still needs a real test payment before
+ * going live (NEEDS VALIDATION — docs.stripe.com is blocked from this build environment).
  */
 const PROVIDER_TO_STRIPE_TYPE: Record<DepositProvider, string> = {
   STRIPE_CARD: "card",
@@ -29,11 +32,11 @@ const PROVIDER_TO_STRIPE_TYPE: Record<DepositProvider, string> = {
 const MIN_DEPOSIT_EUR = 5;
 const MAX_DEPOSIT_EUR = 5000;
 
-export async function createDepositIntent(params: {
+export async function createDepositCheckout(params: {
   userId: string;
   provider: DepositProvider;
   amountEur: number;
-  phone?: string; // required for MB WAY
+  origin: string; // ex: "https://bet62.plus" — de req.protocol+req.get("host"), nunca fixo no código
 }) {
   if (await isSelfExcluded(params.userId)) throw Errors.selfExcluded();
 
@@ -53,10 +56,6 @@ export async function createDepositIntent(params: {
     throw Errors.badRequest("Este depósito excede o seu limite diário de depósito. Ajuste o limite em Jogo Responsável.");
   }
 
-  if (params.provider === "STRIPE_MBWAY" && !params.phone) {
-    throw Errors.badRequest("Número de telemóvel obrigatório para MB WAY");
-  }
-
   const wallet = await getWalletByUserId(params.userId);
   const stripe = getStripeClient();
   const amountCents = Math.round(params.amountEur * 100);
@@ -72,26 +71,35 @@ export async function createDepositIntent(params: {
     },
   });
 
-  const paymentIntent = await stripe.paymentIntents.create({
-    amount: amountCents,
-    currency: "eur",
-    payment_method_types: [PROVIDER_TO_STRIPE_TYPE[params.provider]],
+  const session = await stripe.checkout.sessions.create({
+    mode: "payment",
+    payment_method_types: [PROVIDER_TO_STRIPE_TYPE[params.provider] as Stripe.Checkout.SessionCreateParams.PaymentMethodType],
+    locale: "pt",
+    line_items: [
+      {
+        price_data: {
+          currency: "eur",
+          unit_amount: amountCents,
+          product_data: { name: "Depósito Bet62" },
+        },
+        quantity: 1,
+      },
+    ],
     metadata: { depositId: deposit.id, userId: params.userId },
-    ...(params.provider === "STRIPE_MBWAY" && params.phone
-      ? { payment_method_data: { type: "mb_way", mb_way: {} } as any, payment_method_options: { mb_way: { phone: params.phone } } as any }
-      : {}),
+    // {CHECKOUT_SESSION_ID} é substituído pela própria Stripe no redirecionamento — não é um
+    // placeholder nosso. A SPA lê ?deposit=success|cancel no arranque (ver web/app.js) em vez
+    // de haver páginas /payment/success|cancel dedicadas — mantém o depósito dentro da mesma
+    // app em vez de saltar para outra página só para mostrar uma mensagem.
+    success_url: `${params.origin}/?deposit=success&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${params.origin}/?deposit=cancel`,
   });
 
   await prisma.deposit.update({
     where: { id: deposit.id },
-    data: { stripePaymentIntentId: paymentIntent.id, status: "PROCESSING" },
+    data: { stripeSessionId: session.id, status: "PROCESSING" },
   });
 
-  return {
-    depositId: deposit.id,
-    clientSecret: paymentIntent.client_secret,
-    status: paymentIntent.status,
-  };
+  return { depositId: deposit.id, checkoutUrl: session.url };
 }
 
 export async function handleStripeWebhookEvent(rawBody: Buffer, signature: string) {
@@ -104,17 +112,30 @@ export async function handleStripeWebhookEvent(rawBody: Buffer, signature: strin
   const event = stripe.webhooks.constructEvent(rawBody, signature, env.STRIPE_WEBHOOK_SECRET);
 
   switch (event.type) {
-    case "payment_intent.succeeded": {
-      const pi = event.data.object as { id: string };
-      await creditDeposit(pi.id);
+    // Dispara sempre que o checkout termina. Para "card"/"mb_way" isto já costuma vir com
+    // payment_status:"paid" (crédito imediato); para "multibanco" (o cliente só paga depois,
+    // num multibanco/ATM/homebanking, até ~7 dias) vem "unpaid" — nesse caso NÃO se credita
+    // aqui, espera-se pelo evento async_payment_succeeded abaixo.
+    case "checkout.session.completed": {
+      const session = event.data.object as { id: string; payment_status: string; amount_total: number | null; currency: string | null };
+      if (session.payment_status === "paid") {
+        await creditDepositFromSession(session);
+      } else {
+        logger.info({ sessionId: session.id, paymentStatus: session.payment_status }, "Stripe webhook: checkout completo, pagamento ainda pendente (ex: Multibanco)");
+      }
       break;
     }
-    case "payment_intent.payment_failed":
-    case "payment_intent.canceled": {
-      const pi = event.data.object as { id: string };
+    case "checkout.session.async_payment_succeeded": {
+      const session = event.data.object as { id: string; payment_status: string; amount_total: number | null; currency: string | null };
+      await creditDepositFromSession(session);
+      break;
+    }
+    case "checkout.session.async_payment_failed":
+    case "checkout.session.expired": {
+      const session = event.data.object as { id: string };
       await prisma.deposit.updateMany({
-        where: { stripePaymentIntentId: pi.id, status: { in: ["PENDING", "PROCESSING"] } },
-        data: { status: "FAILED" },
+        where: { stripeSessionId: session.id, status: { in: ["PENDING", "PROCESSING"] } },
+        data: { status: event.type === "checkout.session.expired" ? "CANCELLED" : "FAILED" },
       });
       break;
     }
@@ -125,13 +146,35 @@ export async function handleStripeWebhookEvent(rawBody: Buffer, signature: strin
   return { received: true };
 }
 
-async function creditDeposit(paymentIntentId: string) {
-  const deposit = await prisma.deposit.findUnique({ where: { stripePaymentIntentId: paymentIntentId } });
+async function creditDepositFromSession(session: { id: string; amount_total: number | null; currency: string | null }) {
+  const deposit = await prisma.deposit.findUnique({ where: { stripeSessionId: session.id } });
   if (!deposit) {
-    logger.warn({ paymentIntentId }, "Webhook Stripe: depósito não encontrado para este PaymentIntent");
+    logger.warn({ sessionId: session.id }, "Webhook Stripe: depósito não encontrado para este Checkout Session");
     return;
   }
-  if (deposit.status === "SUCCEEDED") return; // idempotência: evento já processado
+  // Idempotência (spec: "NÃO creditar novamente se já estiver succeeded") — a Stripe pode
+  // reenviar o mesmo evento (retry em caso de timeout da nossa parte, ou um operador a
+  // reenviar manualmente pelo dashboard).
+  if (deposit.status === "SUCCEEDED") return;
+
+  // Confere valor e moeda do evento contra o que a BET62 pediu, antes de creditar — defesa
+  // extra além da verificação de assinatura do webhook (que já garante que o evento é mesmo
+  // da Stripe, mas não que corresponde ao depósito certo).
+  const expectedCents = Math.round(Number(deposit.amount) * 100);
+  if (session.amount_total !== null && session.amount_total !== expectedCents) {
+    logger.error(
+      { sessionId: session.id, depositId: deposit.id, expectedCents, gotCents: session.amount_total },
+      "Webhook Stripe: valor do Checkout Session não corresponde ao depósito — a NÃO creditar"
+    );
+    return;
+  }
+  if (session.currency && session.currency.toUpperCase() !== deposit.currency) {
+    logger.error(
+      { sessionId: session.id, depositId: deposit.id, expected: deposit.currency, got: session.currency },
+      "Webhook Stripe: moeda do Checkout Session não corresponde ao depósito — a NÃO creditar"
+    );
+    return;
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.deposit.update({ where: { id: deposit.id }, data: { status: "SUCCEEDED" } });
@@ -141,7 +184,7 @@ async function creditDeposit(paymentIntentId: string) {
       amount: deposit.amount,
       referenceType: "deposit",
       referenceId: deposit.id,
-      metadata: { provider: deposit.provider, stripePaymentIntentId: paymentIntentId },
+      metadata: { provider: deposit.provider, stripeSessionId: session.id },
       tx,
     });
   });

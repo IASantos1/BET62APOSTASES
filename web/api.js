@@ -124,8 +124,10 @@ const Bet62Api = (() => {
     getTransactions: (cursor) => request(`/wallet/transactions${cursor ? `?cursor=${cursor}` : ""}`),
 
     // Payments
-    createDeposit: (provider, amountEur, phone) =>
-      request("/payments/stripe/deposits", { method: "POST", body: { provider, amountEur, phone } }),
+    // Devolve { depositId, checkoutUrl } — checkoutUrl é a página hospedada da própria Stripe
+    // (Checkout Session), que já trata do 3DS do cartão, do pedido de telemóvel da MB WAY e da
+    // apresentação da entidade/referência Multibanco, sem o frontend precisar de Stripe.js.
+    createDeposit: (provider, amountEur) => request("/payments/stripe/deposits", { method: "POST", body: { provider, amountEur } }),
     saveBankAccount: (payload) => request("/payments/revolut/bank-accounts", { method: "POST", body: payload }),
     listBankAccounts: () => request("/payments/revolut/bank-accounts"),
     requestWithdrawal: (amountEur, bankAccountId) =>
