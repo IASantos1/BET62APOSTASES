@@ -723,7 +723,7 @@ function updateHeader() {
   const authed = Bet62Api.isAuthenticated();
   document.getElementById("btn-header-login").classList.toggle("hidden", authed);
   document.getElementById("balance-display").classList.toggle("hidden", !authed);
-  document.getElementById("btn-deposit").classList.toggle("hidden", !authed);
+  document.getElementById("btn-header-deposit").classList.toggle("hidden", !authed);
   document.getElementById("btn-avatar").classList.toggle("hidden", !authed);
 
   if (currentBalance) {
@@ -1101,34 +1101,95 @@ function renderMatchTracker(e) {
       <div class="mt-team">${e.away}</div>
     </div>
     <div class="mt-period${clockClass}">${e.minuteOrPeriod}</div>
-    ${renderStatsRow(e.statistics)}`;
+    <div class="mt-actions">
+      <div class="mt-action-btn" onclick="openTracker()"><span class="mt-action-icon">🎯</span>Match Tracker</div>
+      <div class="mt-action-btn" onclick="openStats()"><span class="mt-action-icon">📊</span>Estatísticas</div>
+    </div>`;
 }
 
-// Cartões amarelos/vermelhos + cantos, quando a bookmaker os devolve (ver LiveEvent.statistics
-// em types.ts — vem da paddypower, não existia na 10bet). Ausente => nada é desenhado, em vez de
-// inventar zeros para um jogo sem estes dados.
-function renderStatsRow(stats) {
-  if (!stats) return "";
-  const h = stats.home || {};
-  const a = stats.away || {};
-  return `
-    <div class="mt-stats">
-      <div class="mt-stats-col home">
-        <div>${h.corners ?? 0}</div>
-        <div>🟨 ${h.yellowCards ?? 0}</div>
-        <div>🟥 ${h.redCards ?? 0}</div>
-      </div>
-      <div class="mt-stats-labels">
-        <div>Cantos</div>
-        <div>Amarelos</div>
-        <div>Vermelhos</div>
-      </div>
-      <div class="mt-stats-col away">
-        <div>${a.corners ?? 0}</div>
-        <div>🟨 ${a.yellowCards ?? 0}</div>
-        <div>🟥 ${a.redCards ?? 0}</div>
-      </div>
-    </div>`;
+// ====================== MATCH TRACKER (mini campo 2D) ======================
+// Só o ponto de entrada por agora — o campo 2D em si ainda não foi construído.
+function openTracker() {
+  document.getElementById("tracker-modal").classList.add("open");
+}
+function closeTracker() {
+  document.getElementById("tracker-modal").classList.remove("open");
+}
+
+// ====================== ESTATÍSTICAS (Margens de Vitória / H2H / Classificação) ======================
+function openStats() {
+  if (!currentMarketEvent) return;
+  document.getElementById("stats-modal").classList.add("open");
+  switchStatsTab("prob");
+}
+function closeStats() {
+  document.getElementById("stats-modal").classList.remove("open");
+}
+function switchStatsTab(tab) {
+  document.getElementById("stats-tab-prob").classList.toggle("active", tab === "prob");
+  document.getElementById("stats-tab-h2h").classList.toggle("active", tab === "h2h");
+  document.getElementById("stats-tab-table").classList.toggle("active", tab === "table");
+  document.getElementById("stats-body-prob").classList.toggle("hidden", tab !== "prob");
+  document.getElementById("stats-body-h2h").classList.toggle("hidden", tab !== "h2h");
+  document.getElementById("stats-body-table").classList.toggle("hidden", tab !== "table");
+  if (tab === "prob") renderWinProbability(currentMarketEvent);
+  if (tab === "h2h") renderH2H(currentMarketEvent);
+}
+
+// Probabilidade implícita a partir das odds do mercado principal (odds[0] — já vem ordenado com
+// o mercado de resultado/moneyline à frente, ver orderMarketsWithPrimaryFirst() no backend).
+// Fórmula padrão: 1/odd por seleção, normalizado para somar 100% (remove a margem do bookmaker
+// em vez de mostrar probabilidades "cruas" que somariam mais de 100%).
+function renderWinProbability(e) {
+  const el = document.getElementById("stats-body-prob");
+  const market = e.odds && e.odds[0];
+  if (!market || !Object.keys(market.selections).length) {
+    el.innerHTML = '<div class="empty-note">Sem odds disponíveis para calcular probabilidades</div>';
+    return;
+  }
+  const raw = Object.entries(market.selections).map(([label, odd]) => [label, 1 / Number(odd)]);
+  const total = raw.reduce((sum, [, p]) => sum + p, 0);
+  el.innerHTML = raw
+    .map(([label, p]) => {
+      const pct = total > 0 ? (p / total) * 100 : 0;
+      return `
+        <div class="win-prob-row">
+          <div class="win-prob-row-top"><span>${label}</span><span>${pct.toFixed(1)}%</span></div>
+          <div class="win-prob-bar-track"><div class="win-prob-bar-fill" style="width:${pct.toFixed(1)}%"></div></div>
+        </div>`;
+    })
+    .join("");
+}
+
+// H2H via API-Football (resolução de equipa por nome no backend — melhor esforço, ver
+// getHeadToHeadByTeamNames() no servidor). "Sem dados" é um resultado normal, não um erro.
+let h2hLoadedForEventId = null;
+async function renderH2H(e) {
+  const el = document.getElementById("stats-body-h2h");
+  if (h2hLoadedForEventId === e.id) return; // já carregado para este evento, não repete o pedido
+  el.innerHTML = '<div class="empty-note">A carregar…</div>';
+  try {
+    const { matches } = await Bet62Api.getH2H(e.id);
+    h2hLoadedForEventId = e.id;
+    if (!matches || !matches.length) {
+      el.innerHTML = '<div class="empty-note">Sem confrontos diretos recentes disponíveis</div>';
+      return;
+    }
+    el.innerHTML = matches
+      .map(
+        (m) => `
+      <div class="h2h-item">
+        <div class="h2h-teams">
+          <span class="h2h-comp">${m.competition} • ${new Date(m.date).toLocaleDateString("pt-PT")}</span>
+          ${m.homeTeam} vs ${m.awayTeam}
+        </div>
+        <div class="h2h-score">${m.homeGoals ?? "?"} - ${m.awayGoals ?? "?"}</div>
+      </div>`
+      )
+      .join("");
+  } catch {
+    el.innerHTML = '<div class="empty-note">Não foi possível carregar os confrontos diretos</div>';
+  }
 }
 
 function renderMarketGroups(e) {

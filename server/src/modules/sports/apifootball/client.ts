@@ -53,3 +53,66 @@ export interface ApiFootballFixtureResponse {
 export async function getFixtureById(fixtureId: number) {
   return apiFootballFetch<ApiFootballFixtureResponse>("/fixtures", { id: fixtureId });
 }
+
+export interface ApiFootballTeamSearchResponse {
+  response: Array<{ team: { id: number; name: string; country?: string } }>;
+}
+
+/**
+ * Resolve o id de uma equipa na API-Football pelo nome — não temos nenhum mapeamento
+ * Pulsescore->API-Football de fixture/team id (o campo `apiFootballFixtureId` existe no tipo
+ * mas nunca chegou a ser preenchido em lado nenhum), por isso isto é melhor esforço: usa o
+ * primeiro resultado da pesquisa por nome, o que pode falhar/ambiguar em clubes com o mesmo
+ * nome em países diferentes. Sem resultado -> null, nunca inventa um id.
+ */
+export async function searchTeam(name: string): Promise<{ id: number; name: string } | null> {
+  const res = await apiFootballFetch<ApiFootballTeamSearchResponse>("/teams", { search: name });
+  const first = res.response[0];
+  return first ? { id: first.team.id, name: first.team.name } : null;
+}
+
+export interface ApiFootballH2HResponse {
+  response: Array<{
+    fixture: { id: number; date: string; status: { short: string } };
+    league: { name: string; country: string };
+    teams: { home: { id: number; name: string }; away: { id: number; name: string } };
+    goals: { home: number | null; away: number | null };
+  }>;
+}
+
+/** Confrontos diretos entre duas equipas — CONFIRMADO via amostra real colada pelo utilizador
+ * (endpoint `/fixtures/headtohead?h2h={home}-{away}` e forma da resposta). */
+export async function getHeadToHead(homeTeamId: number, awayTeamId: number, opts: { last?: number } = {}) {
+  return apiFootballFetch<ApiFootballH2HResponse>("/fixtures/headtohead", {
+    h2h: `${homeTeamId}-${awayTeamId}`,
+    last: opts.last ?? 5,
+  });
+}
+
+export interface HeadToHeadMatch {
+  date: string;
+  homeTeam: string;
+  awayTeam: string;
+  homeGoals: number | null;
+  awayGoals: number | null;
+  competition: string;
+}
+
+/**
+ * Resolve as duas equipas pelo nome (ver searchTeam acima) e devolve os últimos confrontos
+ * diretos entre elas. Nunca lança por equipa não encontrada — devolve [] nesse caso, para a UI
+ * mostrar "sem dados" em vez de um erro genérico (a pesquisa por nome não é garantida).
+ */
+export async function getHeadToHeadByTeamNames(homeName: string, awayName: string): Promise<HeadToHeadMatch[]> {
+  const [home, away] = await Promise.all([searchTeam(homeName), searchTeam(awayName)]);
+  if (!home || !away) return [];
+  const res = await getHeadToHead(home.id, away.id, { last: 5 });
+  return res.response.map((f) => ({
+    date: f.fixture.date,
+    homeTeam: f.teams.home.name,
+    awayTeam: f.teams.away.name,
+    homeGoals: f.goals.home,
+    awayGoals: f.goals.away,
+    competition: f.league.name,
+  }));
+}
