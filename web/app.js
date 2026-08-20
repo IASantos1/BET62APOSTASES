@@ -1076,6 +1076,10 @@ function renderMatchTracker(e) {
         <span class="status-badge status-pending">PRÉ-JOGO</span>
         <div class="big" style="margin-top:10px">${formatKickoff(e.startTime)}</div>
         <div style="color:var(--muted);font-size:.82rem;margin-top:6px">${e.home} vs ${e.away}</div>
+      </div>
+      <div class="mt-actions">
+        <div class="mt-action-btn" onclick="openTracker()"><span class="mt-action-icon"><span class="pitch-icon" style="width:26px;height:18px"></span></span>Match Tracker</div>
+        <div class="mt-action-btn" onclick="openStats()"><span class="mt-action-icon">📊</span>Estatísticas</div>
       </div>`;
     return;
   }
