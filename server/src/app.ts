@@ -24,6 +24,17 @@ const WEB_DIR = path.join(__dirname, "../../web");
 export function createApp() {
   const app = express();
 
+  // Sem isto, o Railway (proxy TLS na frente do processo, HTTP puro internamente) fazia
+  // req.protocol devolver sempre "http" e req.ip devolver sempre o IP interno do proxy — nunca
+  // o IP real do cliente. Efeitos reais, não cosméticos: os IPs guardados no AuditLog
+  // (auth/routes.ts) ficavam todos iguais (inúteis para investigar um login suspeito), o
+  // limitador de tentativas de login (express-rate-limit, mesma chave por omissão = req.ip)
+  // ficava a partilhar UM balde entre todos os utilizadores em vez de um por pessoa, e os
+  // success_url/cancel_url do Stripe Checkout (payments/stripe/routes.ts) saíam com "http://"
+  // mesmo em produção. "1" confia no primeiro salto à frente do processo — exatamente o que o
+  // Railway é aqui (não há mais nenhum proxy entre o Railway e este processo).
+  app.set("trust proxy", 1);
+
   // CSP desligado: o frontend usa scripts inline (tema claro/escuro automático, fallback do
   // /config.js) que a política por defeito do helmet bloquearia. As outras proteções do
   // helmet (X-Frame-Options, HSTS, noSniff, etc.) continuam ativas.

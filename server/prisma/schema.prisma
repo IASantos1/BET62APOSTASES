@@ -242,6 +242,7 @@ model Deposit {
   amount        Decimal         @db.Decimal(14, 2)
   currency      String          @default("EUR")
   status        DepositStatus   @default(PENDING)
+  stripeSessionId       String? @unique
   stripePaymentIntentId String? @unique
   multibancoEntity     String?
   multibancoReference  String?
@@ -250,6 +251,7 @@ model Deposit {
   updatedAt     DateTime        @updatedAt
 
   @@index([userId, status])
+  @@index([stripeSessionId])
   @@index([stripePaymentIntentId])
 }
 
