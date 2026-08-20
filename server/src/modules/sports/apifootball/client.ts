@@ -168,8 +168,18 @@ export async function searchTeam(name: string): Promise<{ id: number; name: stri
   const res = await apiFootballFetch<ApiFootballTeamSearchResponse>("/teams", { search: name });
   const best = bestNameMatch(name, res.response, (r) => r.team.name);
   if (!best || best.score < MIN_NAME_SIMILARITY) {
+    // Regista a lista completa de candidatos (não só o melhor) — distingue "a pesquisa não
+    // devolveu nada" (candidatesCount: 0, plano/endpoint pode não cobrir esta equipa) de "a
+    // pesquisa devolveu candidatos mas nenhum passou o limiar" (a heurística pode estar
+    // demasiado rígida para este caso real).
     logger.info(
-      { query: name, bestMatch: best?.candidate.team.name, score: best?.score ?? 0 },
+      {
+        query: name,
+        candidatesCount: res.response.length,
+        candidates: res.response.slice(0, 5).map((r) => r.team.name),
+        bestMatch: best?.candidate.team.name,
+        score: best?.score ?? 0,
+      },
       "API-Football: pesquisa de equipa sem correspondência suficientemente próxima"
     );
     return null;
@@ -300,7 +310,13 @@ export async function searchLeague(name: string): Promise<{ id: number; name: st
   const best = bestNameMatch(name, res.response, (r) => r.league.name);
   if (!best || best.score < MIN_NAME_SIMILARITY || !best.candidate.seasons.length) {
     logger.info(
-      { query: name, bestMatch: best?.candidate.league.name, score: best?.score ?? 0 },
+      {
+        query: name,
+        candidatesCount: res.response.length,
+        candidates: res.response.slice(0, 5).map((r) => r.league.name),
+        bestMatch: best?.candidate.league.name,
+        score: best?.score ?? 0,
+      },
       "API-Football: pesquisa de liga sem correspondência suficientemente próxima"
     );
     return null;
