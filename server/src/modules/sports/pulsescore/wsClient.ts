@@ -92,21 +92,36 @@ interface WsFrame {
 
 // Accepts both the docs' "H-A" string AND the {home,away} object shape actually seen from
 // paddypower — never throws, whatever unexpected shape a frame carries (see WsEvent.score above).
-// No ténis, os pontos do jogo atual nem sempre são numéricos (ex: "AD" em vantagem) — nesse caso
-// (só possível na forma {home,away}, a única confirmada com dados reais de ténis) passa-se a
-// string tal como veio, em vez de descartar o placar inteiro.
-function parseScore(score: WsEvent["score"]): { homeScore?: number | string; awayScore?: number | string } {
-  if (!score) return {};
+// No ténis, os pontos do jogo atual nem sempre são numéricos (esperava-se "AD" em vantagem) —
+// nesse caso (só possível na forma {home,away}, a única confirmada com dados reais de ténis)
+// passa-se a string tal como veio, em vez de descartar o placar inteiro. O valor real que a
+// Pulsescore envia em vantagem ainda não foi confirmado — o placar continuava a desaparecer
+// mesmo depois deste fallback, o que sugere que `score` pode ficar totalmente ausente nesse
+// instante. O log com `sport === "tennis"` serve para capturar a forma real da próxima vez.
+function parseScore(score: WsEvent["score"], sport: Sport): { homeScore?: number | string; awayScore?: number | string } {
+  if (!score) {
+    if (sport === "tennis") logger.info("Pulsescore WS: ténis sem campo score (possível estado de vantagem)");
+    return {};
+  }
   if (typeof score === "string") {
     const [h, a] = score.split("-").map((p) => Number(p.trim()));
-    if (h === undefined || a === undefined || Number.isNaN(h) || Number.isNaN(a)) return {};
+    if (h === undefined || a === undefined || Number.isNaN(h) || Number.isNaN(a)) {
+      if (sport === "tennis") logger.info({ score }, "Pulsescore WS: ténis com score em string não parseável");
+      return {};
+    }
     return { homeScore: h, awayScore: a };
   }
   if (typeof score === "object") {
-    if (score.home == null || score.away == null) return {};
+    if (score.home == null || score.away == null) {
+      if (sport === "tennis") logger.info({ score }, "Pulsescore WS: ténis sem score.home/away parseável (possível estado de vantagem)");
+      return {};
+    }
     const h = Number(score.home);
     const a = Number(score.away);
-    if (Number.isNaN(h) || Number.isNaN(a)) return { homeScore: score.home, awayScore: score.away };
+    if (Number.isNaN(h) || Number.isNaN(a)) {
+      if (sport === "tennis") logger.info({ score }, "Pulsescore WS: ténis com score.home/away não-numérico (possível estado de vantagem)");
+      return { homeScore: score.home, awayScore: score.away };
+    }
     return { homeScore: h, awayScore: a };
   }
   return {};
@@ -138,7 +153,7 @@ function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
     league: e.league,
     home: e.home,
     away: e.away,
-    ...parseScore(e.score),
+    ...parseScore(e.score, sport),
     minuteOrPeriod: formatWsMatchClock(e.matchClock, e.live === false ? "" : "AO VIVO"),
     status: e.live === false ? "scheduled" : "live",
     odds: markets.map(normalizeWsMarket),
