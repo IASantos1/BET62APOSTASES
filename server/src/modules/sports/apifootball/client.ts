@@ -168,3 +168,89 @@ export interface ApiFootballPredictionsResponse {
 export async function getPredictions(fixtureId: number) {
   return apiFootballFetch<ApiFootballPredictionsResponse>("/predictions", { fixture: fixtureId });
 }
+
+export interface ApiFootballLeagueSearchResponse {
+  response: Array<{
+    league: { id: number; name: string };
+    seasons: Array<{ year: number; current: boolean }>;
+  }>;
+}
+
+/**
+ * Resolve o id de uma liga na API-Football pelo nome, e a época atual (`current: true`, ou a
+ * mais recente da lista se nenhuma estiver marcada) — mesma lógica de melhor esforço do
+ * searchTeam(): usa o primeiro resultado da pesquisa, pode falhar/ambiguar em nomes de
+ * competição duplicados entre países.
+ */
+export async function searchLeague(name: string): Promise<{ id: number; name: string; season: number } | null> {
+  const res = await apiFootballFetch<ApiFootballLeagueSearchResponse>("/leagues", { search: name });
+  const first = res.response[0];
+  if (!first || !first.seasons.length) return null;
+  const season = first.seasons.find((s) => s.current) ?? first.seasons[first.seasons.length - 1]!;
+  return { id: first.league.id, name: first.league.name, season: season.year };
+}
+
+export interface ApiFootballStandingsResponse {
+  response: Array<{
+    league: {
+      id: number;
+      name: string;
+      standings: Array<
+        Array<{
+          rank: number;
+          team: { id: number; name: string; logo: string };
+          points: number;
+          goalsDiff: number;
+          form: string | null;
+          all: { played: number; win: number; draw: number; lose: number; goals: { for: number; against: number } };
+        }>
+      >;
+    };
+  }>;
+}
+
+/** Tabela classificativa — CONFIRMADO via amostra real colada pelo utilizador (endpoint
+ * `/standings?league={id}&season={year}` e forma da resposta, incluindo o agrupamento em
+ * sub-arrays de `standings` para competições com várias fases/grupos). */
+export async function getStandings(leagueId: number, season: number) {
+  return apiFootballFetch<ApiFootballStandingsResponse>("/standings", { league: leagueId, season });
+}
+
+export interface StandingsRow {
+  rank: number;
+  team: string;
+  points: number;
+  played: number;
+  win: number;
+  draw: number;
+  lose: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalsDiff: number;
+  form: string | null;
+}
+
+/**
+ * Resolve a liga pelo nome (ver searchLeague) e devolve a tabela classificativa da primeira
+ * fase/grupo. Nunca lança por liga não encontrada — devolve [] nesse caso, para a UI mostrar
+ * "sem dados" em vez de um erro genérico.
+ */
+export async function getStandingsByLeagueName(leagueName: string): Promise<StandingsRow[]> {
+  const league = await searchLeague(leagueName);
+  if (!league) return [];
+  const data = await getStandings(league.id, league.season);
+  const table = data.response[0]?.league.standings[0] ?? [];
+  return table.map((r) => ({
+    rank: r.rank,
+    team: r.team.name,
+    points: r.points,
+    played: r.all.played,
+    win: r.all.win,
+    draw: r.all.draw,
+    lose: r.all.lose,
+    goalsFor: r.all.goals.for,
+    goalsAgainst: r.all.goals.against,
+    goalsDiff: r.goalsDiff,
+    form: r.form,
+  }));
+}

@@ -4,7 +4,7 @@ import { hybridSportsService } from "./hybridService";
 import { getPrematchEvents } from "./prematch/service";
 import { getTodayCompetitions } from "./competitions/service";
 import { fetchEventById } from "./pulsescore/client";
-import { getHeadToHeadByTeamNames, resolveFixtureIdByTeamNames, getPredictions } from "./apifootball/client";
+import { getHeadToHeadByTeamNames, resolveFixtureIdByTeamNames, getPredictions, getStandingsByLeagueName } from "./apifootball/client";
 import { ALL_SPORTS, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
 
@@ -88,6 +88,19 @@ router.get(
     const data = await getPredictions(fixtureId);
     const p = data.response[0]?.predictions;
     res.json({ predictions: p ? { winnerName: p.winner?.name ?? null, advice: p.advice, percent: p.percent } : null });
+  })
+);
+
+// Classificação da liga do evento — só futebol. Resolve a liga pelo nome (ver
+// getStandingsByLeagueName), melhor esforço tal como o resto da integração API-Football.
+router.get(
+  "/events/:id/standings",
+  asyncHandler(async (req, res) => {
+    const event = hybridSportsService.getById(req.params.id);
+    if (!event) throw Errors.notFound("Evento não encontrado");
+    if (event.sport !== "football") return res.json({ standings: [] });
+    const standings = await getStandingsByLeagueName(event.league);
+    res.json({ standings });
   })
 );
 
