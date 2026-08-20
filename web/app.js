@@ -292,14 +292,14 @@ async function renderPrematchList() {
   const icon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
   container.innerHTML = events
     .map((e) => {
-      const odds = e.odds?.[0]?.selections;
+      const odds = activeSelectionEntries(e.odds?.[0]);
       return `
       <div class="live-card" onclick="openMarket('${e.id}', false)">
         <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime)}</span></div>
         <div class="lc-teams"><span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span></div>
         ${
-          odds
-            ? `<div class="lc-odds">${Object.entries(odds).slice(0, 3).map(([k, v]) => `<div>${k}<br>${Number(v).toFixed(2)}</div>`).join("")}</div>`
+          odds.length
+            ? `<div class="lc-odds">${odds.slice(0, 3).map(([k, v]) => `<div>${k}<br>${v.odd.toFixed(2)}</div>`).join("")}</div>`
             : ""
         }
       </div>`;
@@ -324,6 +324,14 @@ let liveSocket = null;
 const liveEventsById = new Map();
 let currentMarketEvent = null;
 const betslipSelections = new Map(); // key -> { eventId, market, selection, odd }
+
+// Seleções ativas de um mercado — o backend já não descarta seleções suspensas (isActive:false,
+// ex: durante uma revisão VAR ou logo após um penálti/cartão), passam a chegar marcadas para a
+// UI as mostrar suspensas em vez de clicáveis. Os cartões compactos (pré-jogo/ao vivo) só
+// mostram as ativas, para não ocupar as 3 posições de pré-visualização com odds suspensas.
+function activeSelectionEntries(group) {
+  return Object.entries(group?.selections ?? {}).filter(([, sel]) => sel.isActive);
+}
 
 // Setas de subida/descida das odds: guarda o último valor visto por seleção (mesma chave
 // "eventId|mercado|seleção" usada no boletim) e compara a cada render — só mostra seta quando
@@ -986,15 +994,15 @@ function renderLiveEvents() {
   container.innerHTML = events
     .map((e) => {
       const primaryMarket = e.odds?.[0];
-      const odds = primaryMarket?.selections;
+      const odds = activeSelectionEntries(primaryMarket);
       const clockClass = isClockMissing(e) ? "clock-missing" : "";
       const icon = sportIcon[e.sport] || "";
-      const oddsHtml = odds
-        ? `<div class="lc-odds">${Object.entries(odds)
+      const oddsHtml = odds.length
+        ? `<div class="lc-odds">${odds
             .slice(0, 3)
             .map(([k, v]) => {
-              const arrow = oddsArrowHtml(`${e.id}|${primaryMarket.market}|${k}`, Number(v));
-              return `<div>${k}<br>${Number(v).toFixed(2)}${arrow}</div>`;
+              const arrow = oddsArrowHtml(`${e.id}|${primaryMarket.market}|${k}`, v.odd);
+              return `<div>${k}<br>${v.odd.toFixed(2)}${arrow}</div>`;
             })
             .join("")}</div>`
         : "";
@@ -1185,11 +1193,12 @@ async function renderWinProbability(e) {
     }
   }
   const market = e.odds && e.odds[0];
-  if (!market || !Object.keys(market.selections).length) {
+  const active = activeSelectionEntries(market);
+  if (!active.length) {
     el.innerHTML = '<div class="empty-note">Sem odds disponíveis para calcular probabilidades</div>';
     return;
   }
-  const raw = Object.entries(market.selections).map(([label, odd]) => [label, 1 / Number(odd)]);
+  const raw = active.map(([label, sel]) => [label, 1 / sel.odd]);
   const total = raw.reduce((sum, [, p]) => sum + p, 0);
   renderWinProbabilityBars(
     el,
@@ -1333,19 +1342,28 @@ function renderMarketGroups(e) {
   el.innerHTML = e.odds
     .map((group) => {
       const rows = Object.entries(group.selections)
-        .map(([label, odd]) => {
+        .map(([label, sel]) => {
+          // Seleção suspensa pelo bookmaker (isActive:false — ex: durante uma revisão VAR ou
+          // logo após um penálti/cartão, ver LiveSelection em types.ts): mostra-se visível mas
+          // sem onclick, em vez de desaparecer ou continuar clicável com uma odd desatualizada.
+          if (!sel.isActive) {
+            return `<div class="selection-btn suspended">
+              <span class="sel-label">${label}</span><span class="sel-odd">Suspenso</span>
+            </div>`;
+          }
           const key = `${e.id}|${group.market}|${label}`;
           const picked = betslipSelections.has(key);
-          const selection = { eventId: e.id, market: group.market, selection: label, odd, home: e.home, away: e.away, league: e.league };
+          const selection = { eventId: e.id, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
           // Setas de subida/descida só em Ao Vivo — no pré-jogo o valor não costuma mudar
           // ao ponto de justificar o indicador, e não foi pedido para essa página.
-          const arrow = isLive ? oddsArrowHtml(key, Number(odd)) : "";
+          const arrow = isLive ? oddsArrowHtml(key, sel.odd) : "";
           return `<div class="selection-btn ${picked ? "picked" : ""}" onclick='toggleSelection(${JSON.stringify(key)}, ${JSON.stringify(selection)})'>
-            <span class="sel-label">${label}</span><span class="sel-odd">${Number(odd).toFixed(2)}${arrow}</span>
+            <span class="sel-label">${label}</span><span class="sel-odd">${sel.odd.toFixed(2)}${arrow}</span>
           </div>`;
         })
         .join("");
-      return `<div class="market-group"><h4>${group.market}</h4><div class="selection-row">${rows}</div></div>`;
+      const suspendedBadge = !group.isActive ? '<span class="market-suspended-badge">Suspenso</span>' : "";
+      return `<div class="market-group"><h4>${group.market}${suspendedBadge}</h4><div class="selection-row">${rows}</div></div>`;
     })
     .join("");
 }

@@ -19,9 +19,22 @@ export const ALL_SPORTS: Sport[] = [
   "formula1",
 ];
 
+export interface LiveSelection {
+  odd: number;
+  // CONFIRMED real da Pulsescore (PulsescoreSelection.isActive, ver pulsescore/client.ts) — o
+  // bookmaker desativa temporariamente uma seleção (ex: durante uma revisão VAR ou logo após um
+  // penálti/cartão) sem a remover do mercado. Antes disto, o código descartava seleções/mercados
+  // inativos em silêncio (nunca chegavam ao frontend); agora chegam com isActive:false para a UI
+  // os mostrar como suspensos (não clicáveis) em vez de os fazer desaparecer. Não há nenhum
+  // campo confirmado com o MOTIVO da suspensão (VAR/pênalti/grande chance/cartão) — só este
+  // sinal genérico ligado/desligado.
+  isActive: boolean;
+}
+
 export interface LiveOdds {
   market: string; // e.g. "1x2", "moneyline", "total_games"
-  selections: Record<string, number>; // e.g. { home: 1.85, draw: 3.4, away: 4.2 }
+  isActive: boolean; // mercado suspenso como um todo (ver LiveSelection acima)
+  selections: Record<string, LiveSelection>; // e.g. { home: {odd:1.85,isActive:true}, ... }
 }
 
 export interface LiveTeamStats {

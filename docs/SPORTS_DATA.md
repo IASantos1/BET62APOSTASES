@@ -578,6 +578,35 @@ mínima, sem tocar em mais nada. `fetchEvents()`/`/leagues` fica por usar por ag
 implementado, caso volte a ser útil (ex: pedir os jogos de uma liga específica de forma mais
 barata).
 
+## Mercados/seleções suspensos (pedido: "botões não clicáveis" em momentos críticos)
+
+O utilizador pediu suspensão de odds em momentos críticos do futebol (Grande Chance, Revisão
+VAR, Pênalti, Cartões) — investigado o contrato real confirmado, e a Pulsescore **não** expõe
+nenhum campo com o motivo da suspensão, só um sinal genérico ligado/desligado: `isActive` em
+cada mercado e em cada seleção (`{canonicalMarket, rawName, period, isActive, marketId,
+selections: [{canonicalOutcome, rawName, odds, isActive, selectionId, ...}]}`, ver acima).
+
+Antes desta correção, o código **descartava em silêncio** tudo o que vinha com `isActive:
+false` (`e.markets.filter((m) => m.isActive)` em `normalizeEvent()`,
+`m.selections.filter((s) => s.isActive)` em `normalizeMarket()`, e o equivalente no WS) — um
+mercado suspenso simplesmente desaparecia da lista em vez de aparecer suspenso, e voltava a
+aparecer do nada quando reativado.
+
+**Correção**: `LiveOdds`/`LiveSelection` (`types.ts`) passam a carregar `isActive` explícito a
+dois níveis (mercado e seleção), e os dois normalizadores (`pulsescore/client.ts` REST,
+`pulsescore/wsClient.ts` WS) deixam de filtrar — tudo o que a Pulsescore envia chega ao
+frontend. `web/app.js` (`renderMarketGroups`) mostra uma seleção inativa visível mas sem
+`onclick` (bloco cinzento "Suspenso", em vez do valor da odd), e um mercado totalmente inativo
+ganha uma etiqueta "SUSPENSO" no cabeçalho. Os cartões compactos (pré-jogo/ao vivo) e o cálculo
+de probabilidade pelas odds (aba "Margens de Vitória") passam a usar só as seleções ativas.
+
+**Não implementado, por falta de dado confirmado**: etiquetas específicas por motivo ("Grande
+Chance", "Revisão VAR", "Pênalti", "Cartões") — a Pulsescore não distingue isto no contrato
+confirmado até agora. Se houver documentação adicional (ex: um campo `reason`/`incident` numa
+amostra real ainda não vista, ou um evento WS separado do tipo "incident"), pode ser adicionado
+depois; sem isso, mostrar essas etiquetas seria inventar informação que a UI apresentaria como
+verdadeira sem o ser.
+
 ## Testado nesta build
 
 - ✅ Feed simulado a gerar eventos dos 8 desportos em tempo real.

@@ -505,10 +505,14 @@ export async function fetchLiveEventById(eventId: string): Promise<LiveEvent | n
   return normalizeEvent({ ...raw, live: true }, sport);
 }
 
+// Mantém as seleções inativas em vez de as descartar (o bookmaker desativa-as temporariamente,
+// ex: durante uma revisão VAR — ver LiveSelection em types.ts) para a UI as mostrar suspensas
+// em vez de as fazer desaparecer.
 function normalizeMarket(m: PulsescoreMarket): LiveOdds {
   return {
     market: m.rawName,
-    selections: Object.fromEntries(m.selections.filter((s) => s.isActive).map((s) => [s.rawName, s.odds])),
+    isActive: m.isActive,
+    selections: Object.fromEntries(m.selections.map((s) => [s.rawName, { odd: s.odds, isActive: s.isActive }])),
   };
 }
 
@@ -634,7 +638,9 @@ function withSyntheticMoneyline(markets: PulsescoreMarket[]): PulsescoreMarket[]
 }
 
 function normalizeEvent(e: PulsescoreEvent, sport: Sport): LiveEvent {
-  const activeMarkets = orderMarketsWithPrimaryFirst(withSyntheticMoneyline(e.markets.filter((m) => m.isActive)));
+  // Já não filtra mercados inativos aqui — passam para o frontend com isActive:false para
+  // aparecerem suspensos (não clicáveis) em vez de desaparecerem silenciosamente.
+  const orderedMarkets = orderMarketsWithPrimaryFirst(withSyntheticMoneyline(e.markets));
   return {
     id: `pulsescore:${e.eventId}`,
     sport,
@@ -648,7 +654,7 @@ function normalizeEvent(e: PulsescoreEvent, sport: Sport): LiveEvent {
     ...parsePulsescoreScore(e.score, sport),
     minuteOrPeriod: formatMatchClock(e.matchClock, e.live ? "AO VIVO" : ""),
     status: e.live ? "live" : "scheduled",
-    odds: activeMarkets.map(normalizeMarket),
+    odds: orderedMarkets.map(normalizeMarket),
     updatedAt: new Date().toISOString(),
     source: "pulsescore",
     startTime: e.startTime,
