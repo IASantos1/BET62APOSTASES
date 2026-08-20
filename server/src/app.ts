@@ -50,13 +50,28 @@ export function createApp() {
   // BET62_API_BASE/BET62_WS_BASE por ambiente).
   app.get("/config.js", (_req, res) => {
     res.type("application/javascript");
+    res.setHeader("Cache-Control", "no-cache, must-revalidate");
     res.send(
       "window.BET62_CONFIG = { API_BASE: '/api', " +
         "WS_BASE: (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host };\n"
     );
   });
-  app.use(express.static(WEB_DIR));
+  // "no-cache, must-revalidate" em vez de deixar o express.static usar o seu default (que
+  // permite servir uma cópia em cache sem sequer voltar a perguntar ao servidor) — o site tem
+  // `apple-mobile-web-app-capable` (index.html), que deixa adicionar ao ecrã principal do iOS;
+  // esse modo standalone é conhecido por prender uma versão antiga do app.js/index.html durante
+  // muito tempo sem ir buscar a nova (confirmado: botões novos não apareciam mesmo com o deploy
+  // já feito). Isto não desliga a cache — só obriga a validar com o servidor (ETag/
+  // If-None-Match) antes de reutilizar, o que continua a devolver 304 quando nada mudou.
+  app.use(
+    express.static(WEB_DIR, {
+      setHeaders: (res) => {
+        res.setHeader("Cache-Control", "no-cache, must-revalidate");
+      },
+    })
+  );
   app.get(/^\/(?!api\/).*/, (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache, must-revalidate");
     res.sendFile(path.join(WEB_DIR, "index.html"));
   });
 
