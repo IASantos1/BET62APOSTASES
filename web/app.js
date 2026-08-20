@@ -912,7 +912,10 @@ function renderSetsCard(e, clockClass, oddsHtml, icon) {
   const homeServe = sets.homeServe === true;
   const awayServe = sets.homeServe === false;
   const setLabel = e.minuteOrPeriod.replace(/^Set /, "S");
-  const showPoints = typeof e.homeScore === "number" && typeof e.awayScore === "number";
+  // Não usar `typeof === "number"`: no ténis os pontos do jogo atual podem vir como string não
+  // numérica (ex: "AD" em vantagem) — exigir número escondia o placar inteiro assim que chegava
+  // a vantagem, embora "15"/"30"/"40" aparecessem bem antes disso.
+  const showPoints = e.homeScore !== undefined && e.awayScore !== undefined;
   const flag = flagEmoji(e.country);
 
   const cols = (arr) =>
@@ -952,7 +955,7 @@ function redCardsHtml(redCards) {
 }
 
 function renderGenericCard(e, clockClass, oddsHtml, icon) {
-  const hasScore = typeof e.homeScore === "number" && typeof e.awayScore === "number";
+  const hasScore = e.homeScore !== undefined && e.awayScore !== undefined;
   const homeRed = redCardsHtml(e.statistics?.home?.redCards);
   const awayRed = redCardsHtml(e.statistics?.away?.redCards);
   return `
@@ -1059,7 +1062,7 @@ function renderMatchTracker(e) {
         <span class="status-badge status-ok">ENCERRADO</span>
         <div style="color:var(--muted);font-size:.85rem;margin-top:10px">${e.home} vs ${e.away}</div>
         ${
-          typeof e.homeScore === "number" && typeof e.awayScore === "number"
+          e.homeScore !== undefined && e.awayScore !== undefined
             ? `<div class="mt-score" style="margin-top:10px">${e.homeScore} - ${e.awayScore}</div>`
             : ""
         }
@@ -1089,7 +1092,7 @@ function renderMatchTracker(e) {
     return;
   }
 
-  const hasScore = typeof e.homeScore === "number" && typeof e.awayScore === "number";
+  const hasScore = e.homeScore !== undefined && e.awayScore !== undefined;
   el.innerHTML = `
     <div class="mt-live"><span class="dot"></span> AO VIVO</div>
     <div class="mt-teams">
