@@ -8,11 +8,16 @@ Pragmatic Play). Dessa documentação, o que está **confirmado** (frase/exemplo
 provedor, não inventado):
 
 - **Fuso horário da API**: UTC.
-- **Três callbacks HTTP** que o provedor chama para o nosso servidor (`POST` para uma URL nossa
-  configurada no painel do provedor), todos com o mesmo cabeçalho obrigatório
+- **Um único URL de callback** (`POST`, configurado no painel do provedor), que recebe **seis
+  comandos diferentes** — `authenticate`, `balance`, `bet`, `win`, `cancel`, `status` —
+  distinguidos pelo campo `command` do corpo, todos com o mesmo cabeçalho obrigatório
   `Callback-Token: <segredo>` e `Content-Type: application/json`:
+  - `authenticate` — confirma que a conta do jogador existe (ex: ao abrir o jogo).
+  - `balance` — confirma o saldo atual, sem alterar nada.
+  - `bet` — debita o valor apostado (**não estava documentado nem implementado até agora** —
+    ver "Corrigido: CALLBACK_ERROR" abaixo).
   - `win` — credita o prémio ganho pelo jogador.
-  - `cancel` — estorna uma transação anterior, identificada por `cancel_trans_guid`.
+  - `cancel` — estorna uma transação anterior (bet ou win), identificada por `cancel_trans_guid`.
   - `status` — consulta o estado de uma transação (`trans_guid`) sem alterar nada.
 - Forma do corpo de cada callback: `{ command, data: {...}, timestamp, check }`, onde `check` é
   uma lista de códigos (`21` confirmação do utilizador, `22` utilizador ativo, `31` saldo, `41`
@@ -38,45 +43,64 @@ provedor, não inventado):
   (o corpo original tinha alguns duplicados de `game_code` com `reg_date` diferente; mantida
   apenas a entrada mais recente de cada).
 
-## ⚠️ Por confirmar — falta o endpoint de lançamento de jogo
+## ✅ Lançamento de jogo — confirmado e implementado
 
-A documentação recebida cobre **só o lado dos callbacks** (o provedor a chamar-nos para
-debitar/creditar a carteira do jogador). **Não** inclui o endpoint que NÓS precisamos de chamar
-para pedir uma sessão/URL de jogo ao provedor antes de o jogador conseguir sequer começar a
-jogar — falta a base URL, o formato de autenticação de agente e a forma da resposta (URL do
-iframe do jogo, token de sessão, etc.).
+Confirmado via Swagger real (`agent.goldslotpalase.com/swagger/v4/swagger.json`): a "Agent API"
+do provedor, autenticada por `Authorization: Bearer {CASINO_AGENT_KEY}`, com dois passos —
+`POST /v4/user/create` (obtém/cria o `user_code` do jogador) e `POST /v4/game/game-url` (devolve
+o `game_url`, válido 10min, uso único). Implementado em
+`server/src/modules/casino/apiClient.ts`, ligado a `requestGameLaunch()` em `service.ts`.
+Falta apenas preencher `CASINO_AGENT_KEY` (dada pelo provedor à conta de agente) e
+`CASINO_PROVIDER_BASE_URL` em produção (Railway) — testado localmente com uma Agent API mock.
 
-Sem isso, `POST /api/casino/launch` (autenticado) devolve sempre um erro 400 claro em vez de
-inventar uma chamada HTTP para um endpoint nunca confirmado — `requestGameLaunch()` em
-`server/src/modules/casino/service.ts`. As variáveis `CASINO_PROVIDER_BASE_URL` e
-`CASINO_AGENT_KEY` (`server/src/config/env.ts`) estão prontas mas por preencher até essa parte
-da doc chegar.
+## Corrigido: `CALLBACK_ERROR` ao pedir o `game-url`
+
+Depois de implementado o lançamento, o pedido real a `/v4/game/game-url` em produção devolvia
+`Cassino: CALLBACK_ERROR`. Causa: a doc "Callback API Example" colada pelo utilizador revelou
+que o contrato real tem **um único URL de callback** com 6 comandos (`authenticate`, `balance`,
+`bet`, `win`, `cancel`, `status`) — não 3 URLs separadas para `win`/`cancel`/`status` como se
+tinha assumido antes. O provedor testa `authenticate` nesse URL antes de aceitar o pedido de
+`game-url`; como não existia rota nenhuma capaz de responder a esse formato, o teste falhava e
+o provedor recusava o lançamento com `CALLBACK_ERROR`.
+
+**Correção**: `routes.ts` passou a ter um despachante único `POST /api/casino/callback` que lê
+o campo `command` do corpo e chama o handler certo (`authenticate`/`balance`/`bet` são novos em
+`service.ts`; `win`/`cancel`/`status` já existiam). Mantidos também os aliases
+`/api/casino/callback/{authenticate,balance,bet,win,cancel,status}` (comando inferido do path
+se o corpo não o trouxer), para o caso de o painel do provedor já ter sido configurado com URLs
+separadas. **A URL a configurar no painel de agente é `https://<domínio-produção>/api/casino/callback`.**
+
+Como `bet` (débito da aposta) nunca tinha sido documentado nem implementado, este acerto também
+o acrescentou — sem ele, a primeira jogada real falharia sempre, mesmo com o `CALLBACK_ERROR`
+resolvido.
 
 ## O que está implementado
 
 - `server/src/modules/casino/`:
   - `catalog.ts` — lista/pesquisa/destaques sobre o catálogo estático.
-  - `service.ts` — `handleWinCallback`, `handleCancelCallback`, `handleStatusCallback`,
-    idempotentes por `trans_guid` (tabela `CasinoTransaction`, `transGuid` com índice único —
-    uma entrega repetida do mesmo callback nunca é reaplicada).
+  - `apiClient.ts` — cliente da Agent API (`user/create`, `game-url`, `agent/info`,
+    `providers`, `games`), autenticado por `Bearer CASINO_AGENT_KEY`.
+  - `service.ts` — `handleAuthenticateCallback`, `handleBalanceCallback`, `handleBetCallback`,
+    `handleWinCallback`, `handleCancelCallback`, `handleStatusCallback`; `requestGameLaunch()`.
+    Os callbacks que movem saldo (`bet`/`win`/`cancel`) são idempotentes por `trans_guid`
+    (tabela `CasinoTransaction`, `transGuid` com índice único — uma entrega repetida nunca é
+    reaplicada).
   - `routes.ts` — `GET /api/casino/games`, `GET /api/casino/games/highlighted`,
-    `POST /api/casino/launch` (autenticado), `POST /api/casino/callback/{win,cancel,status}`
-    (verificam `Callback-Token` contra `CASINO_CALLBACK_TOKEN`).
-- Wallet: os créditos/estornos passam por `applyLedgerMovement()` (o mesmo motor de carteira já
-  usado por depósitos/levantamentos), com `type: BET_WON`/`BET_REFUND` e
-  `referenceType: "casino_slot"` — aparecem no extrato normal do utilizador
-  (`GET /api/wallet/transactions`).
-- **Limite conhecido**: a doc dada não inclui um callback "bet" (débito da aposta) — só
-  `win`/`cancel`/`status`. `handleCancelCallback()` já está pronto para estornar um `BET`
-  também (a lógica de reversão trata os dois casos), mas isso só ficará ativo quando esse
-  callback em falta for confirmado e implementado.
+    `GET /api/casino/image/:gameCode`, `POST /api/casino/launch` (autenticado),
+    `GET /api/casino/agent-info` (SUPPORT/ADMIN), `POST /api/casino/callback` (despachante único
+    por `command`) + aliases `/callback/{authenticate,balance,bet,win,cancel,status}` — todos
+    verificam `Callback-Token` contra `CASINO_CALLBACK_TOKEN`.
+- Wallet: apostas/créditos/estornos passam por `applyLedgerMovement()` (o mesmo motor de
+  carteira já usado por depósitos/levantamentos), com `type: BET_PLACED`/`BET_WON`/`BET_REFUND`
+  e `referenceType: "casino_slot"` — aparecem no extrato normal do utilizador
+  (`GET /api/wallet/transactions`). Saldo insuficiente numa aposta devolve
+  `BALANCE_NOT_ENOUGH(2006)` ao provedor em vez de deixar escapar um erro genérico.
 - Frontend (`web/app.js`, `web/index.html`):
   - Página **Cassino** com grelha real (pesquisa por nome, `GET /api/casino/games`).
   - Fila **"Cassino em destaque"** na página Destaques com 6 jogos reais e curados
     (`GET /api/casino/games/highlighted`), a substituir os 4 emojis fixos anteriores.
-  - `playGame(gameCode, gameName)` chama `POST /api/casino/launch` — mostra a mensagem de erro
-    real do backend enquanto o endpoint de lançamento não estiver confirmado, em vez de um
-    alerta genérico "não implementado".
+  - `playGame(gameCode, gameName)` abre a aba do jogo já no clique (evita bloqueio de pop-up) e
+    só lhe muda o destino após receber o `game_url` real de `POST /api/casino/launch`.
 
 ### Corrigido: imagens dos jogos não carregavam em produção
 
@@ -112,12 +136,18 @@ imagens reais passam a aparecer sozinhas, sem precisar de mais nenhuma alteraç�
 
 - ✅ Servidor local com Postgres real: `GET /api/casino/games` (490 jogos), `.../highlighted`
   (6 jogos), pesquisa (`?search=olympus` → 5 resultados corretos).
-- ✅ `POST /api/casino/callback/win` credita a carteira (saldo 0 → 1000), idempotência
-  confirmada (reenvio do mesmo `trans_guid` devolve `result: 1001` sem duplicar o crédito).
-- ✅ `POST /api/casino/callback/status` devolve o estado da transação.
-- ✅ `POST /api/casino/callback/cancel` estorna o `win` anterior (saldo volta a 0).
-- ✅ `Callback-Token` inválido/em falta é recusado (`result: 1`) em vez de aceite.
-- ✅ `POST /api/casino/launch` devolve erro claro (autenticado e não-autenticado testados).
+- ✅ `POST /api/casino/launch` contra uma Agent API mock local: `user/create` + `game-url`
+  encadeados, `game_url` devolvido corretamente; jogo inexistente, `game_code` em falta e
+  pedido não-autenticado devolvem os erros certos; `GET /api/casino/agent-info` restrito a
+  SUPPORT/ADMIN (403 para USER comum, dados corretos para ADMIN).
+- ✅ `POST /api/casino/callback` (despachante único, todos os 6 comandos testados):
+  `authenticate`/`balance` devolvem o saldo da conta; `bet` debita (idempotente por
+  `trans_guid`, e devolve `BALANCE_NOT_ENOUGH` numa aposta maior que o saldo); `win` credita;
+  `cancel` estorna tanto um `bet` (devolve o valor apostado) como um `win` (retira o prémio);
+  `status` devolve o estado de uma transação. Aliases `/callback/{comando}` testados sem
+  `command` no corpo (inferido do path).
+- ✅ `Callback-Token` inválido/em falta é recusado (`result: 1001`) em vez de aceite; comando
+  desconhecido devolve `result: 1002` em vez de rebentar.
 - ✅ Frontend testado com Playwright: fila de destaques (6 jogos) e página Cassino (grelha +
   pesquisa a filtrar corretamente) renderizam com dados reais da API.
 - ⛔ Imagens dos jogos (`api.playxspin.com`) não carregam **neste ambiente de build** (proxy de
