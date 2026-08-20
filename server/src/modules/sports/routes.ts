@@ -4,7 +4,7 @@ import { hybridSportsService } from "./hybridService";
 import { getPrematchEvents } from "./prematch/service";
 import { getTodayCompetitions } from "./competitions/service";
 import { fetchEventById } from "./pulsescore/client";
-import { getHeadToHeadByTeamNames } from "./apifootball/client";
+import { getHeadToHeadByTeamNames, resolveFixtureIdByTeamNames, getPredictions } from "./apifootball/client";
 import { ALL_SPORTS, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
 
@@ -71,6 +71,23 @@ router.get(
     if (!event) throw Errors.notFound("Evento não encontrado");
     const matches = await getHeadToHeadByTeamNames(event.home, event.away);
     res.json({ matches });
+  })
+);
+
+// Previsão real da API-Football (percent home/draw/away + conselho) — só futebol. Resolve o
+// fixture_id pelas equipas (melhor esforço, ver resolveFixtureIdByTeamNames). Sem fixture
+// encontrado -> predictions: null, para o frontend cair no cálculo pelas odds em vez de erro.
+router.get(
+  "/events/:id/predictions",
+  asyncHandler(async (req, res) => {
+    const event = hybridSportsService.getById(req.params.id);
+    if (!event) throw Errors.notFound("Evento não encontrado");
+    if (event.sport !== "football") return res.json({ predictions: null });
+    const fixtureId = await resolveFixtureIdByTeamNames(event.home, event.away, event.startTime?.slice(0, 10));
+    if (!fixtureId) return res.json({ predictions: null });
+    const data = await getPredictions(fixtureId);
+    const p = data.response[0]?.predictions;
+    res.json({ predictions: p ? { winnerName: p.winner?.name ?? null, advice: p.advice, percent: p.percent } : null });
   })
 );
 

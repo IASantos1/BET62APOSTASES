@@ -3,7 +3,7 @@ import { env } from "../../config/env";
 import { logger } from "../../lib/logger";
 import { fetchLiveEvents, fetchLiveSportsWithEvents } from "./pulsescore/client";
 import { pulsescoreWs } from "./pulsescore/wsClient";
-import { getFixtureStatistics } from "./apifootball/client";
+import { getFixtureStatistics, resolveFixtureIdByTeamNames } from "./apifootball/client";
 import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
 
 const POLL_INTERVAL_MS = 25_000;
@@ -107,11 +107,17 @@ class HybridSportsService extends EventEmitter {
     return this.events.get(id);
   }
 
-  /** Football-only statistics enrichment via API-Football, keyed by their fixture id. */
+  /**
+   * Estatísticas detalhadas por equipa via API-Football (só futebol). `apiFootballFixtureId`
+   * nunca chega a vir preenchido no evento (ver nota em resolveFixtureIdByTeamNames), por isso
+   * resolve-se sempre pelo nome das equipas — melhor esforço, pode falhar/ambiguar.
+   */
   async getStatistics(eventId: string) {
     const event = this.events.get(eventId);
-    if (!event || event.sport !== "football" || !event.apiFootballFixtureId) return null;
-    return getFixtureStatistics(event.apiFootballFixtureId);
+    if (!event || event.sport !== "football") return null;
+    const fixtureId = event.apiFootballFixtureId ?? (await resolveFixtureIdByTeamNames(event.home, event.away, event.startTime?.slice(0, 10)));
+    if (!fixtureId) return null;
+    return getFixtureStatistics(fixtureId);
   }
 }
 

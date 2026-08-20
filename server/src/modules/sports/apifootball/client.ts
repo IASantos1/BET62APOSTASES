@@ -116,3 +116,55 @@ export async function getHeadToHeadByTeamNames(homeName: string, awayName: strin
     competition: f.league.name,
   }));
 }
+
+export interface ApiFootballFixtureSearchResponse {
+  response: Array<{
+    fixture: { id: number; date: string };
+    teams: { home: { id: number; name: string }; away: { id: number; name: string } };
+  }>;
+}
+
+/**
+ * Resolve o fixture_id do jogo entre duas equipas (por id) numa data — usado porque
+ * `LiveEvent.apiFootballFixtureId` nunca é preenchido (ver nota em searchTeam). Melhor esforço:
+ * pesquisa os jogos da equipa da casa nessa data e filtra pelo adversário certo. Sem resultado
+ * -> null, nunca inventa um id.
+ */
+export async function findFixtureId(homeTeamId: number, awayTeamId: number, dateISO: string): Promise<number | null> {
+  const res = await apiFootballFetch<ApiFootballFixtureSearchResponse>("/fixtures", { team: homeTeamId, date: dateISO });
+  const match = res.response.find(
+    (f) =>
+      (f.teams.home.id === homeTeamId && f.teams.away.id === awayTeamId) ||
+      (f.teams.home.id === awayTeamId && f.teams.away.id === homeTeamId)
+  );
+  return match ? match.fixture.id : null;
+}
+
+/**
+ * Combina searchTeam() + findFixtureId(): resolve o fixture_id do jogo atual entre duas
+ * equipas pelo nome. `dateISO` opcional (jogos ao vivo não têm `startTime` — usa a data de
+ * hoje como melhor esforço, assumindo que um jogo ao vivo está a decorrer hoje).
+ */
+export async function resolveFixtureIdByTeamNames(homeName: string, awayName: string, dateISO?: string): Promise<number | null> {
+  const [home, away] = await Promise.all([searchTeam(homeName), searchTeam(awayName)]);
+  if (!home || !away) return null;
+  const date = dateISO ?? new Date().toISOString().slice(0, 10);
+  return findFixtureId(home.id, away.id, date);
+}
+
+export interface ApiFootballPredictionsResponse {
+  response: Array<{
+    predictions: {
+      winner: { id: number | null; name: string | null; comment: string | null };
+      win_or_draw: boolean;
+      advice: string;
+      percent: { home: string; draw: string; away: string };
+    };
+  }>;
+}
+
+/** Previsão real da API-Football (forma, médias de golos, etc.) — CONFIRMADO via amostra real
+ * colada pelo utilizador (endpoint `/predictions?fixture={id}` e forma da resposta). */
+export async function getPredictions(fixtureId: number) {
+  return apiFootballFetch<ApiFootballPredictionsResponse>("/predictions", { fixture: fixtureId });
+}
