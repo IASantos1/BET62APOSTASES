@@ -720,6 +720,12 @@ function requireLogin() {
 
 // ====================== HEADER ======================
 function updateHeader() {
+  const authed = Bet62Api.isAuthenticated();
+  document.getElementById("btn-header-login").classList.toggle("hidden", authed);
+  document.getElementById("balance-display").classList.toggle("hidden", !authed);
+  document.getElementById("btn-deposit").classList.toggle("hidden", !authed);
+  document.getElementById("btn-avatar").classList.toggle("hidden", !authed);
+
   if (currentBalance) {
     document.getElementById("balance-display").textContent = "€ " + Number(currentBalance.available).toFixed(2);
   } else {
