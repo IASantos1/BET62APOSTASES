@@ -5,13 +5,18 @@ import { logger } from "../../../lib/logger";
 /**
  * API-Football (v3.football.api-sports.io) REST client — statistics enrichment layer.
  *
- * NEEDS VALIDATION against https://www.api-football.com/documentation-v3 (blocked from this
- * environment). Implemented from documented knowledge:
- *   - Auth header: "x-apisports-key: <API_FOOTBALL_KEY>" when calling the direct host
- *     (v3.football.api-sports.io). If instead subscribed via RapidAPI, swap to
- *     "x-rapidapi-key" + "x-rapidapi-host" headers and the RapidAPI base URL.
- *   - Rate limits depend on plan (requests/day + requests/minute) — respect the
- *     `x-ratelimit-requests-remaining` response header and back off before going live.
+ * Direct fetch of https://www.api-football.com/documentation-v3 is blocked from this build
+ * environment (EGRESS_BLOCKED), but web search snippets of that same documentation (still
+ * reachable) confirmed every endpoint/parameter this client actually calls: `x-apisports-key`
+ * auth header on the direct host; `/fixtures` accepting `id`/`team`/`date` together;
+ * `/fixtures/statistics?fixture=` (required int); `/fixtures/headtohead?h2h={home}-{away}`;
+ * `/predictions?fixture=` (response has `winner.name`/`advice`/`percent.{home,draw,away}`, as
+ * used below); `/standings?league=&season=`; `/teams?search=`. No mismatch found against what
+ * this file sends/reads. If instead subscribed via RapidAPI, swap to "x-rapidapi-key" +
+ * "x-rapidapi-host" headers and the RapidAPI base URL. Rate limits depend on plan
+ * (requests/day + requests/minute) — respect the `x-ratelimit-requests-remaining` response
+ * header and back off before going live (this specific header name NOT independently
+ * re-confirmed by the search above — carried over from the original implementation).
  *
  * A resolução de nomes (equipa/liga Pulsescore -> id API-Football) NÃO vive aqui — vive em
  * mapping/teamMatcher.ts e mapping/leagueMatcher.ts (aliases, semelhança, cache permanente,

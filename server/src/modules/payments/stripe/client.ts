@@ -30,9 +30,12 @@ export function getStripeClient(): Stripe {
   }
   if (!_stripe) {
     _stripe = new Stripe(env.STRIPE_SECRET_KEY, {
-      // NEEDS VALIDATION: confirm the latest stable API version in the Stripe dashboard
-      // before going live — pin it explicitly rather than trusting the account default.
-      apiVersion: "2024-06-20",
+      // Pinned to the version bundled with the installed `stripe` SDK itself
+      // (`node_modules/stripe/.../apiVersion.d.ts::ApiVersion`) — ground truth for "latest
+      // stable" when docs.stripe.com isn't reachable from this build environment. Pinning
+      // explicitly (rather than trusting the Stripe account's dashboard default) avoids an
+      // account-side default bump silently changing response shapes under this integration.
+      apiVersion: "2026-07-29.dahlia",
     });
   }
   return _stripe;

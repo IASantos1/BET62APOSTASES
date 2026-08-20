@@ -24,9 +24,22 @@ Métodos suportados, mapeados para `payment_method_types` do Stripe Checkout:
 
 | Bet62 (`DepositProvider`) | Stripe `payment_method_types` | Notas |
 |---|---|---|
-| `STRIPE_CARD` | `card` | 3DS tratado pela própria página da Stripe. |
-| `STRIPE_MBWAY` | `mb_way` | O número de telemóvel é pedido na página da Stripe, não no nosso formulário. **NEEDS VALIDATION**: confirmar com um pagamento de teste real (disponibilidade pode depender de aprovação regional na conta Stripe). |
-| `STRIPE_MULTIBANCO` | `multibanco` | Voucher-based (entidade + referência), moeda EUR obrigatória, liquidação diferida (o cliente paga num prazo, tipicamente até 7 dias) — a entidade/referência aparecem na própria página da Stripe. |
+| `STRIPE_CARD` | `card` | Os dados do cartão são inseridos na própria página da Stripe (3DS tratado lá também) — nunca no nosso formulário, por exigência de PCI-DSS (ver "Cartão/MB WAY/Multibanco aparecem no nosso formulário?" abaixo). |
+| `STRIPE_MBWAY` | `mb_way` | O número de telemóvel é pedido na página da Stripe, não no nosso formulário. **CONFIRMADO**: `mb_way` existe em `Checkout.SessionCreateParams.PaymentMethodType` no SDK `stripe@22.5.0` instalado (grepado diretamente no `.d.ts` do pacote — a versão anteriormente instalada, 16.12.0, não o listava, daí a dúvida inicial; não é uma limitação da Stripe, era só o SDK desatualizado). Falta só **NEEDS VALIDATION**: confirmar que o MB WAY está ativado na conta Stripe (Dashboard → Settings → Payment methods) — se não estiver, a Stripe descarta-o silenciosamente da página de Checkout mesmo estando no pedido. |
+| `STRIPE_MULTIBANCO` | `multibanco` | Voucher-based (entidade + referência), moeda EUR obrigatória, liquidação diferida (o cliente paga num prazo, tipicamente até 7 dias) — a entidade/referência são geradas e mostradas na própria página da Stripe, não por nós. |
+
+### Cartão/MB WAY/Multibanco aparecem no nosso formulário?
+
+Não — e é intencional. O nosso modal de depósito (`web/index.html#deposit-modal`) só pede
+**método + valor**; ao clicar "Continuar" a app sai da SPA e vai para a página hospedada da
+Stripe (`checkoutUrl`, `web/app.js::submitDeposit`), que **é onde** o número de telemóvel MB
+WAY, os dados do cartão, ou a entidade/referência Multibanco realmente aparecem — não é uma
+funcionalidade em falta, é a arquitetura de Checkout Sessions: a Stripe processa esses dados
+diretamente na sua própria página para que o cartão nunca passe pelo nosso servidor/frontend
+(exigência de PCI-DSS SAQ A — a alternativa, coletar esses campos no nosso próprio formulário
+com Stripe Elements, exige um nível de conformidade PCI muito mais pesado, SAQ A-EP). O
+`DEPOSIT_METHOD_HINTS` em `web/app.js` mostra uma frase por método a avisar disto antes de
+clicar em Continuar.
 
 Fluxo implementado:
 
@@ -48,7 +61,7 @@ Fluxo implementado:
 4. Proteções antes de creditar: idempotência (ignora se o depósito já estiver `SUCCEEDED` —
    a Stripe pode reenviar o mesmo evento), e confere o valor/moeda do evento contra o
    depósito guardado antes de aplicar o crédito.
-5. Regras de jogo responsável aplicadas antes de criar a sessão: montante entre 5€ e 5000€,
+5. Regras de jogo responsável aplicadas antes de criar a sessão: montante entre 10€ e 5000€,
    dentro do limite diário de depósito do utilizador, conta não autoexcluída.
 6. `client.ts::getStripeClient()` recusa arrancar se `STRIPE_MODE` (sandbox/live) não bater
    certo com o prefixo da chave configurada (`sk_test_`/`sk_live_`) — protege contra ligar a
@@ -69,11 +82,16 @@ Fluxo implementado:
    `whsec_...` gerado para `STRIPE_WEBHOOK_SECRET`.
 4. Mudar `STRIPE_MODE=live` no Railway (tem de bater certo com `sk_live_`, ver ponto 6 acima
    — o servidor recusa arrancar depósitos se não bater).
-5. Confirmar `apiVersion` do Stripe (fixado em `2024-06-20` no `client.ts` — **NEEDS
-   VALIDATION** contra a versão atual da conta no dashboard).
-6. Fazer um depósito real pequeno (5€) com cada um dos 3 métodos antes de anunciar a
-   plataforma como "live" — confirmar que o webhook chega, credita o saldo, e que reenviar o
+5. `apiVersion` do Stripe fixado em `2026-07-29.dahlia` no `client.ts` — lido diretamente de
+   `node_modules/stripe/.../apiVersion.d.ts` do SDK instalado (`stripe@22.5.0`), já que
+   docs.stripe.com/o dashboard não são alcançáveis deste ambiente de build. Continua a valer
+   a pena confirmar contra o dashboard antes de produção, caso a conta tenha uma versão fixada
+   diferente.
+6. Fazer um depósito real pequeno (10€, o mínimo) com cada um dos 3 métodos antes de anunciar
+   a plataforma como "live" — confirmar que o webhook chega, credita o saldo, e que reenviar o
    mesmo evento (dashboard → Webhooks → esse evento → "Resend") não credita a segunda vez.
+   Para o MB WAY especificamente, confirmar primeiro que está ativado em Dashboard → Settings
+   → Payment methods (ver nota na tabela acima).
 
 ### Ícones dos métodos de pagamento
 

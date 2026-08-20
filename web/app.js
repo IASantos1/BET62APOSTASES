@@ -782,14 +782,15 @@ function openDeposit() {
   if (!Bet62Api.isAuthenticated()) return openAuth("login");
   document.getElementById("deposit-modal").classList.add("open");
   document.getElementById("deposit-error").classList.remove("show");
+  selectDepositMethod(selectedDepositMethod || "STRIPE_CARD");
 }
 function closeDeposit() {
   document.getElementById("deposit-modal").classList.remove("open");
 }
 const DEPOSIT_METHOD_HINTS = {
-  STRIPE_CARD: "",
-  STRIPE_MBWAY: "O número de telemóvel é pedido na página de pagamento seguinte.",
-  STRIPE_MULTIBANCO: "A entidade e referência Multibanco aparecem na página de pagamento seguinte.",
+  STRIPE_CARD: "Ao continuar, é reencaminhado para a página segura da Stripe para inserir os dados do cartão.",
+  STRIPE_MBWAY: "Ao continuar, é reencaminhado para a página segura da Stripe, onde insere o número de telemóvel MB WAY.",
+  STRIPE_MULTIBANCO: "Ao continuar, é reencaminhado para a página segura da Stripe, que gera a entidade e referência Multibanco para pagar no Multibanco/homebanking.",
 };
 function selectDepositMethod(method) {
   selectedDepositMethod = method;
@@ -801,8 +802,8 @@ async function submitDeposit() {
   const errEl = document.getElementById("deposit-error");
   errEl.classList.remove("show");
 
-  if (!amountEur || amountEur < 5) {
-    errEl.textContent = "Indique um valor válido (mínimo 5€)";
+  if (!amountEur || amountEur < 10) {
+    errEl.textContent = "Indique um valor válido (mínimo 10€)";
     errEl.classList.add("show");
     return;
   }
