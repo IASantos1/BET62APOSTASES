@@ -300,30 +300,57 @@ export interface ApiFootballLeagueSearchResponse {
   }>;
 }
 
-/**
- * Resolve o id de uma liga na API-Football pelo nome (mesma lógica de correspondência por
- * semelhança do searchTeam() — evita aceitar uma competição homónima de outro país), e a
- * época atual (`current: true`, ou a mais recente da lista se nenhuma estiver marcada).
- */
-export async function searchLeague(name: string): Promise<{ id: number; name: string; season: number } | null> {
-  const res = await apiFootballFetch<ApiFootballLeagueSearchResponse>("/leagues", { search: name });
-  const best = bestNameMatch(name, res.response, (r) => r.league.name);
+// "Qualifiers"/"Play-offs"/etc. descrevem uma FASE, não uma competição própria, para ligas de
+// clubes (Champions/Europa/Conference League) — a API-Football só tem a liga-mãe (ex: "UEFA
+// Europa League"), por isso pesquisar literalmente "UEFA Europa League Qualifiers" devolve 0
+// candidatos (CONFIRMADO: /leagues?search= com o sufixo -> results:0; sem o sufixo -> results:1,
+// id 3, época atual 2026). Para seleções, porém, os qualifiers SÃO uma competição própria e
+// pesquisável na API-Football (ex: "World Cup Qualifiers Europe") — por isso este sufixo só é
+// removido como FALLBACK depois do nome completo falhar, nunca como primeira tentativa.
+const LEAGUE_PHASE_SUFFIX_RE = /\s*[-–—:]?\s*\b(qualifiers?|qualifying(?:\s+round)?|play[- ]?offs?|preliminary round|group stage)\b.*$/i;
+
+async function searchLeagueOnce(
+  searchQuery: string,
+  scoreAgainst: string
+): Promise<{ result: { id: number; name: string; season: number } | null; res: ApiFootballLeagueSearchResponse; best: ReturnType<typeof bestNameMatch<ApiFootballLeagueSearchResponse["response"][number]>> }> {
+  const res = await apiFootballFetch<ApiFootballLeagueSearchResponse>("/leagues", { search: searchQuery });
+  const best = bestNameMatch(scoreAgainst, res.response, (r) => r.league.name);
   if (!best || best.score < MIN_NAME_SIMILARITY || !best.candidate.seasons.length) {
-    logger.info(
-      {
-        query: name,
-        candidatesCount: res.response.length,
-        candidates: res.response.slice(0, 5).map((r) => r.league.name),
-        bestMatch: best?.candidate.league.name,
-        score: best?.score ?? 0,
-      },
-      "API-Football: pesquisa de liga sem correspondência suficientemente próxima"
-    );
-    return null;
+    return { result: null, res, best };
   }
   const first = best.candidate;
   const season = first.seasons.find((s) => s.current) ?? first.seasons[first.seasons.length - 1]!;
-  return { id: first.league.id, name: first.league.name, season: season.year };
+  return { result: { id: first.league.id, name: first.league.name, season: season.year }, res, best };
+}
+
+/**
+ * Resolve o id de uma liga na API-Football pelo nome (mesma lógica de correspondência por
+ * semelhança do searchTeam() — evita aceitar uma competição homónima de outro país), e a
+ * época atual (`current: true`, ou a mais recente da lista se nenhuma estiver marcada). Se o
+ * nome completo não devolver nada, tenta uma segunda vez sem o sufixo de fase (ver
+ * LEAGUE_PHASE_SUFFIX_RE acima) antes de desistir.
+ */
+export async function searchLeague(name: string): Promise<{ id: number; name: string; season: number } | null> {
+  const direct = await searchLeagueOnce(name, name);
+  if (direct.result) return direct.result;
+
+  const stripped = name.replace(LEAGUE_PHASE_SUFFIX_RE, "").trim();
+  const fallback = stripped && stripped !== name ? await searchLeagueOnce(stripped, name) : null;
+  if (fallback?.result) return fallback.result;
+
+  const last = fallback ?? direct;
+  logger.info(
+    {
+      query: name,
+      searchQuery: fallback ? stripped : name,
+      candidatesCount: last.res.response.length,
+      candidates: last.res.response.slice(0, 5).map((r) => r.league.name),
+      bestMatch: last.best?.candidate.league.name,
+      score: last.best?.score ?? 0,
+    },
+    "API-Football: pesquisa de liga sem correspondência suficientemente próxima"
+  );
+  return null;
 }
 
 export interface ApiFootballStandingsResponse {
