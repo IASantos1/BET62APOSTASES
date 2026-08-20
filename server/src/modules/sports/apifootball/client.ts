@@ -54,21 +54,127 @@ export async function getFixtureById(fixtureId: number) {
   return apiFootballFetch<ApiFootballFixtureResponse>("/fixtures", { id: fixtureId });
 }
 
+// --- Correspondência de nomes entre Pulsescore e API-Football -------------------------------
+// São duas fontes totalmente independentes, sem NENHUM id partilhado (o `apiFootballFixtureId`
+// declarado em types.ts nunca chega a ser preenchido) — a única forma de as ligar é pelo nome
+// (equipa ou liga), que pode vir escrito de forma diferente em cada uma (acentos, sufixos como
+// "FC"/"CF", abreviações como "Man United" vs "Manchester United"). Em vez de confiar às cegas
+// no primeiro resultado da pesquisa, compara-se cada candidato com o nome pedido e só se aceita
+// o melhor quando a semelhança é suficiente — caso contrário devolve-se null (sem dados) em vez
+// de arriscar mostrar a equipa/liga errada. `findFixtureId()` usa ainda a data do jogo como
+// segundo sinal de confirmação (só considera fixtures da equipa da casa nesse dia exato).
+function normalizeName(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\b(fc|cf|ac|afc|cd|ud|sd)\b/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+// Palavras demasiado comuns em nomes de clube/liga para, sozinhas, servirem de sinal de
+// correspondência (ex: "Real Madrid" não pode "passar" por "Real Sociedad" só por partilharem
+// "real") — mas reduzida à lista mínima que não compromete abreviações legítimas onde a
+// palavra partilhada É o único nome distintivo do próprio clube (ex: "Manchester United" ~
+// "Man United" precisa de "united" continuar a contar, ver prefixMatches em tokenSimilarity).
+const GENERIC_NAME_WORDS = new Set([
+  "real", "deportivo", "sporting", "atletico", "athletic", "united", "city", "town",
+  "county", "racing", "union", "national", "sport", "calcio", "club", "deportes",
+]);
+
+// Distância de edição normalizada (0..1) — apanha diferenças de grafia/acentuação entre as
+// duas fontes (ex: "Bayern München" vs "Bayern Munich").
+function editSimilarity(a: string, b: string): number {
+  if (!a.length && !b.length) return 1;
+  const m = a.length,
+    n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i]![0] = i;
+  for (let j = 0; j <= n; j++) dp[0]![j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i]![j] = a[i - 1] === b[j - 1] ? dp[i - 1]![j - 1]! : 1 + Math.min(dp[i - 1]![j]!, dp[i]![j - 1]!, dp[i - 1]![j - 1]!);
+    }
+  }
+  return 1 - dp[m]![n]! / Math.max(m, n);
+}
+
+// Sobreposição de palavras entre os dois nomes já normalizados — só conta palavras "não
+// genéricas" (GENERIC_NAME_WORDS) como sinal forte, e trata palavras não-partilhadas mas
+// relacionadas por prefixo (ex: "man" abrevia "manchester") também como sinal forte, para não
+// perder abreviações legítimas cujo único nome distintivo aparece truncado.
+function tokenSimilarity(na: string, nb: string): number {
+  const wa = na.split(" ").filter(Boolean);
+  const wb = nb.split(" ").filter(Boolean);
+  const sa = new Set(wa);
+  const sb = new Set(wb);
+  const common = [...sa].filter((w) => sb.has(w));
+  const significant = common.filter((w) => !GENERIC_NAME_WORDS.has(w));
+  const onlyA = [...sa].filter((w) => !sb.has(w));
+  const onlyB = [...sb].filter((w) => !sa.has(w));
+  let prefixMatches = 0;
+  for (const wA of onlyA) {
+    if (onlyB.some((wB) => wA.length >= 3 && wB.length >= 3 && (wA.startsWith(wB) || wB.startsWith(wA)))) prefixMatches++;
+  }
+  const strongCommon = significant.length + prefixMatches;
+  const effectiveCommon = strongCommon > 0 ? strongCommon : common.length * 0.3;
+  return effectiveCommon / Math.max(sa.size, sb.size);
+}
+
+/**
+ * Semelhança entre dois nomes (equipa ou liga) — combina sobreposição de palavras (mais forte
+ * para nomes com várias palavras) com distância de edição (apanha variações de grafia), com a
+ * segunda "amortecida" quando a primeira é fraca — evita que dois nomes só partilhem um prefixo
+ * comum longo (ex: "Deportivo Santani" ~ "Deportivo Capiata") passem por semelhantes só pela
+ * distância de edição. Testado contra ~18 pares reais/adversariais (equipas com sufixos,
+ * abreviações comuns, homónimos por país) antes de fixar os pesos — não é perfeito (alguns
+ * homónimos continuam a passar, ex: "Arsenal" vs "Arsenal de Sarandí"), mas é uma rede de
+ * segurança bem melhor do que aceitar sempre o primeiro resultado da pesquisa.
+ */
+function nameSimilarity(a: string, b: string): number {
+  const na = normalizeName(a);
+  const nb = normalizeName(b);
+  if (!na || !nb) return 0;
+  if (na === nb) return 1;
+  const t = tokenSimilarity(na, nb);
+  const e = editSimilarity(na, nb);
+  const guardedEdit = t < 0.3 ? e * 0.55 : e;
+  return Math.max(t, guardedEdit);
+}
+
+const MIN_NAME_SIMILARITY = 0.5;
+
+function bestNameMatch<T>(query: string, candidates: T[], nameOf: (c: T) => string): { candidate: T; score: number } | null {
+  let best: { candidate: T; score: number } | null = null;
+  for (const c of candidates) {
+    const score = nameSimilarity(query, nameOf(c));
+    if (!best || score > best.score) best = { candidate: c, score };
+  }
+  return best;
+}
+
 export interface ApiFootballTeamSearchResponse {
   response: Array<{ team: { id: number; name: string; country?: string } }>;
 }
 
 /**
- * Resolve o id de uma equipa na API-Football pelo nome — não temos nenhum mapeamento
- * Pulsescore->API-Football de fixture/team id (o campo `apiFootballFixtureId` existe no tipo
- * mas nunca chegou a ser preenchido em lado nenhum), por isso isto é melhor esforço: usa o
- * primeiro resultado da pesquisa por nome, o que pode falhar/ambiguar em clubes com o mesmo
- * nome em países diferentes. Sem resultado -> null, nunca inventa um id.
+ * Resolve o id de uma equipa na API-Football pelo nome — melhor esforço: entre todos os
+ * candidatos devolvidos pela pesquisa, escolhe o de nome mais parecido com o pedido, e só o
+ * aceita se a semelhança passar o limiar (evita aceitar um clube homónimo de outro país). Sem
+ * correspondência suficiente -> null, nunca inventa um id.
  */
 export async function searchTeam(name: string): Promise<{ id: number; name: string } | null> {
   const res = await apiFootballFetch<ApiFootballTeamSearchResponse>("/teams", { search: name });
-  const first = res.response[0];
-  return first ? { id: first.team.id, name: first.team.name } : null;
+  const best = bestNameMatch(name, res.response, (r) => r.team.name);
+  if (!best || best.score < MIN_NAME_SIMILARITY) {
+    logger.info(
+      { query: name, bestMatch: best?.candidate.team.name, score: best?.score ?? 0 },
+      "API-Football: pesquisa de equipa sem correspondência suficientemente próxima"
+    );
+    return null;
+  }
+  return { id: best.candidate.team.id, name: best.candidate.team.name };
 }
 
 export interface ApiFootballH2HResponse {
@@ -127,17 +233,25 @@ export interface ApiFootballFixtureSearchResponse {
 /**
  * Resolve o fixture_id do jogo entre duas equipas (por id) numa data — usado porque
  * `LiveEvent.apiFootballFixtureId` nunca é preenchido (ver nota em searchTeam). Melhor esforço:
- * pesquisa os jogos da equipa da casa nessa data e filtra pelo adversário certo. Sem resultado
- * -> null, nunca inventa um id.
+ * pesquisa os jogos da equipa da casa nessa data exata (segundo sinal de confirmação, além do
+ * id da equipa) e filtra pelo adversário certo. Sem resultado -> null, nunca inventa um id. Se
+ * houver mais do que um (ex: taça a dobrar com a liga no mesmo dia — raro), regista um aviso e
+ * usa o primeiro, por não haver mais nenhum dado (ex: hora exata) para desempatar com confiança.
  */
 export async function findFixtureId(homeTeamId: number, awayTeamId: number, dateISO: string): Promise<number | null> {
   const res = await apiFootballFetch<ApiFootballFixtureSearchResponse>("/fixtures", { team: homeTeamId, date: dateISO });
-  const match = res.response.find(
+  const matches = res.response.filter(
     (f) =>
       (f.teams.home.id === homeTeamId && f.teams.away.id === awayTeamId) ||
       (f.teams.home.id === awayTeamId && f.teams.away.id === homeTeamId)
   );
-  return match ? match.fixture.id : null;
+  if (matches.length > 1) {
+    logger.warn(
+      { homeTeamId, awayTeamId, dateISO, count: matches.length },
+      "API-Football: mais do que um fixture encontrado para as mesmas equipas na mesma data — a usar o primeiro"
+    );
+  }
+  return matches[0]?.fixture.id ?? null;
 }
 
 /**
@@ -177,15 +291,21 @@ export interface ApiFootballLeagueSearchResponse {
 }
 
 /**
- * Resolve o id de uma liga na API-Football pelo nome, e a época atual (`current: true`, ou a
- * mais recente da lista se nenhuma estiver marcada) — mesma lógica de melhor esforço do
- * searchTeam(): usa o primeiro resultado da pesquisa, pode falhar/ambiguar em nomes de
- * competição duplicados entre países.
+ * Resolve o id de uma liga na API-Football pelo nome (mesma lógica de correspondência por
+ * semelhança do searchTeam() — evita aceitar uma competição homónima de outro país), e a
+ * época atual (`current: true`, ou a mais recente da lista se nenhuma estiver marcada).
  */
 export async function searchLeague(name: string): Promise<{ id: number; name: string; season: number } | null> {
   const res = await apiFootballFetch<ApiFootballLeagueSearchResponse>("/leagues", { search: name });
-  const first = res.response[0];
-  if (!first || !first.seasons.length) return null;
+  const best = bestNameMatch(name, res.response, (r) => r.league.name);
+  if (!best || best.score < MIN_NAME_SIMILARITY || !best.candidate.seasons.length) {
+    logger.info(
+      { query: name, bestMatch: best?.candidate.league.name, score: best?.score ?? 0 },
+      "API-Football: pesquisa de liga sem correspondência suficientemente próxima"
+    );
+    return null;
+  }
+  const first = best.candidate;
   const season = first.seasons.find((s) => s.current) ?? first.seasons[first.seasons.length - 1]!;
   return { id: first.league.id, name: first.league.name, season: season.year };
 }
