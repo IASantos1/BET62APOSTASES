@@ -292,16 +292,11 @@ async function renderPrematchList() {
   const icon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
   container.innerHTML = events
     .map((e) => {
-      const odds = activeSelectionEntries(e.odds?.[0]);
       return `
       <div class="live-card" onclick="openMarket('${e.id}', false)">
         <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime)}</span></div>
         <div class="lc-teams"><span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span></div>
-        ${
-          odds.length
-            ? `<div class="lc-odds">${odds.slice(0, 3).map(([k, v]) => `<div>${k}<br>${v.odd.toFixed(2)}</div>`).join("")}</div>`
-            : ""
-        }
+        ${quickOddsHtml(e, e.odds?.[0], false)}
       </div>`;
     })
     .join("");
@@ -334,6 +329,32 @@ function activeSelectionEntries(group) {
   // transição de deploy em que JS antigo em cache leu a forma nova {odd,isActive} como se
   // fosse só um número — Number({odd:1.85,...}) dá NaN) em vez de deixar "NaN" aparecer no ecrã.
   return Object.entries(group?.selections ?? {}).filter(([, sel]) => sel?.isActive && Number.isFinite(sel?.odd));
+}
+
+// Clicar numa odd 1x2 do cartão compacto (pré-jogo/ao vivo) vai direto ao boletim, sem abrir o
+// mercado — pedido explícito, o cartão inteiro tem onclick='openMarket(...)' à volta, por isso
+// stopPropagation() é obrigatório para não navegar também. classList.toggle() dá feedback visual
+// imediato; o "picked" calculado em quickOddsHtml() a partir de betslipSelections garante que o
+// estado sobrevive ao próximo refresh da lista (poll/WS), que substitui todo o innerHTML.
+function quickPick(event, key, selection) {
+  event.stopPropagation();
+  toggleSelection(key, selection);
+  event.currentTarget.classList.toggle("picked");
+}
+
+function quickOddsHtml(e, group, isLive) {
+  const odds = activeSelectionEntries(group);
+  if (!odds.length) return "";
+  return `<div class="lc-odds">${odds
+    .slice(0, 3)
+    .map(([label, sel]) => {
+      const key = `${e.id}|${group.market}|${label}`;
+      const picked = betslipSelections.has(key);
+      const selection = { eventId: e.id, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
+      const arrow = isLive ? oddsArrowHtml(key, sel.odd) : "";
+      return `<div class="${picked ? "picked" : ""}" onclick='quickPick(event, ${JSON.stringify(key)}, ${JSON.stringify(selection)})'>${label}<br>${sel.odd.toFixed(2)}${arrow}</div>`;
+    })
+    .join("")}</div>`;
 }
 
 // Setas de subida/descida das odds: guarda o último valor visto por seleção (mesma chave
@@ -996,19 +1017,9 @@ function renderLiveEvents() {
   const sportIcon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
   container.innerHTML = events
     .map((e) => {
-      const primaryMarket = e.odds?.[0];
-      const odds = activeSelectionEntries(primaryMarket);
       const clockClass = isClockMissing(e) ? "clock-missing" : "";
       const icon = sportIcon[e.sport] || "";
-      const oddsHtml = odds.length
-        ? `<div class="lc-odds">${odds
-            .slice(0, 3)
-            .map(([k, v]) => {
-              const arrow = oddsArrowHtml(`${e.id}|${primaryMarket.market}|${k}`, v.odd);
-              return `<div>${k}<br>${v.odd.toFixed(2)}${arrow}</div>`;
-            })
-            .join("")}</div>`
-        : "";
+      const oddsHtml = quickOddsHtml(e, e.odds?.[0], true);
 
       if (e.statistics?.sets) return renderSetsCard(e, clockClass, oddsHtml, icon);
       return renderGenericCard(e, clockClass, oddsHtml, icon);
