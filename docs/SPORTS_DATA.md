@@ -676,6 +676,35 @@ jogo em ligas menores vs. até 47 em jogos populares, incluindo `CORNERS_RACE_TO
 enviar esses mercados para um jogo em concreto, continuam a não aparecer (nem no "Todos"),
 porque este projeto nunca inventa mercados/odds que a fonte de dados não devolveu.
 
+## Fuso horário dos jogos (hora de início)
+
+Pedido do utilizador: verificar se a hora mostrada para jogos de outros fusos (ex: Japan NPB,
+horário do Japão) está corretamente configurada para Portugal. **Não estava** — corrigido.
+
+- Antes: `web/app.js::formatKickoff()` e as outras chamadas a `toLocaleTimeString`/
+  `toLocaleDateString` não passavam `timeZone` nenhum, o que faz o JavaScript usar o fuso horário
+  do PRÓPRIO dispositivo/browser de quem está a ver a página — não o de Portugal. Para a maioria
+  dos utilizadores em Portugal isto calhava parecer certo (o telemóvel deles já está no fuso de
+  Portugal), mas não estava realmente configurado: um utilizador com o fuso do dispositivo
+  diferente (viagem, VPN, ambiente de testes) via a hora errada — a hora do SEU fuso, não a de
+  Portugal, que é o que importa para decidir uma aposta.
+- Agora: `BET62_TIMEZONE = "Europe/Lisbon"` (fuso IANA, não um offset fixo — trata sozinho a
+  mudança WET/WEST) passado explicitamente em todas as chamadas de formatação de hora/data
+  visíveis ao utilizador (`formatKickoff()`, validade de Multibanco, data do histórico H2H).
+  Testado com Playwright emulando 3 fusos de dispositivo diferentes (Europe/Lisbon, Asia/Tokyo,
+  America/New_York) para o MESMO jogo — a hora mostrada foi sempre idêntica (a de Lisboa),
+  confirmando que já não depende do fuso do dispositivo.
+- ⚠️ **NEEDS VALIDATION — o lado de dentro continua por confirmar**: nenhuma amostra real
+  guardada neste projeto mostra a forma exata da string `startTime` que a Pulsescore envia (ex:
+  se vem com `Z`/offset UTC, ou uma string "ingénua" sem fuso). O `BET62_TIMEZONE` acima corrige
+  sempre a EXIBIÇÃO (mostra sempre a hora de Lisboa, seja qual for o instante recebido), mas só
+  se `new Date(startTime)` interpretar esse instante corretamente à partida — se a Pulsescore
+  alguma vez enviar uma string sem fuso (ex: `"2026-08-21T18:00:00"`, sem `Z`), o JavaScript
+  trata-a como hora LOCAL de quem está a correr o código (o browser do utilizador, não o
+  servidor), o que voltaria a introduzir o mesmo tipo de erro só no lado dos dados, não da
+  exibição. Confirmar com uma amostra real assim que possível (mesma metodologia já usada no
+  resto desta integração).
+
 ## Fallback de mercados/estatísticas entre bookmakers
 
 Pedido explícito do utilizador (colou uma configuração `marketRouting` real, confirmada por ele

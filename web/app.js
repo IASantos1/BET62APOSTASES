@@ -344,12 +344,28 @@ async function renderPrematchList() {
   renderInBlocks(container, cardsHtml);
 }
 renderPrematchList._token = 0;
+// Fuso horário fixo de Portugal (IANA — trata sozinho a mudança de hora WET/WEST, ao contrário
+// de um offset fixo tipo "+01:00") — pedido explícito do utilizador: um jogo do Japão (Japan
+// NPB) ou de qualquer outro país deve sempre aparecer na hora de Portugal, nunca na hora do
+// dispositivo de quem está a ver. Sem isto, `toLocaleTimeString`/`toLocaleDateString` sem
+// `timeZone` explícito usam o fuso do PRÓPRIO browser — só calhava mostrar certo antes disto
+// para quem tivesse o telemóvel definido para o fuso de Portugal, por coincidência, não porque
+// estivesse mesmo configurado.
+const BET62_TIMEZONE = "Europe/Lisbon";
+
+// Chave YYYY-MM-DD do dia civil em Portugal (não o do browser) — usada só para decidir "Hoje"
+// vs. mostrar a data; a locale "en-CA" dá o formato ISO diretamente, não é a locale mostrada ao
+// utilizador (essa continua "pt-PT" no `toLocaleTimeString`/`toLocaleDateString` abaixo).
+function lisbonDateKey(date) {
+  return date.toLocaleDateString("en-CA", { timeZone: BET62_TIMEZONE });
+}
+
 function formatKickoff(d) {
   const date = new Date(d);
   const now = new Date();
-  const sameDay = date.toDateString() === now.toDateString();
-  const time = date.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" });
-  return sameDay ? `Hoje, ${time}` : date.toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit" }) + `, ${time}`;
+  const sameDay = lisbonDateKey(date) === lisbonDateKey(now);
+  const time = date.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit", timeZone: BET62_TIMEZONE });
+  return sameDay ? `Hoje, ${time}` : date.toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit", timeZone: BET62_TIMEZONE }) + `, ${time}`;
 }
 
 // ====================== STATE ======================
@@ -1083,7 +1099,7 @@ function showDepositResult(kind, data) {
         <div class="dr-note">Abra a app MB WAY no seu telemóvel e confirme o pagamento. <span class="spinner-dot"></span></div></div>
       <button class="btn-outline" onclick="closeDeposit()">Fechar (o saldo atualiza-se sozinho)</button>`;
   } else if (kind === "multibanco") {
-    const expires = data.expiresAt ? new Date(data.expiresAt).toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" }) : null;
+    const expires = data.expiresAt ? new Date(data.expiresAt).toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: BET62_TIMEZONE }) : null;
     el.innerHTML = `
       <div class="deposit-result">
         <div class="dr-icon">🏧</div>
@@ -1651,7 +1667,7 @@ async function renderH2H(e) {
         (m) => `
       <div class="h2h-item">
         <div class="h2h-teams">
-          <span class="h2h-comp">${m.competition} • ${new Date(m.date).toLocaleDateString("pt-PT")}</span>
+          <span class="h2h-comp">${m.competition} • ${new Date(m.date).toLocaleDateString("pt-PT", { timeZone: BET62_TIMEZONE })}</span>
           ${m.homeTeam} vs ${m.awayTeam}
         </div>
         <div class="h2h-score">${m.homeGoals ?? "?"} - ${m.awayGoals ?? "?"}</div>
