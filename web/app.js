@@ -316,9 +316,14 @@ async function renderPrematchList() {
     if (r.status === "fulfilled" && r.value.source === "pulsescore") realEvents.push(...r.value.events);
   });
 
-  const events = selectedLeague
+  const filteredEvents = selectedLeague
     ? realEvents.filter((e) => e.league && e.league.toLowerCase().includes(selectedLeague.toLowerCase()))
     : realEvents;
+  // Pedido explícito do utilizador: futebol sempre primeiro quando "Todos" os desportos estão
+  // visíveis — os pedidos por desporto já resolvem por esta ordem (Promise.allSettled preserva a
+  // ordem de `sports`, que começa em futebol), mas este sort explícito garante o agrupamento
+  // mesmo que essa ordem interna mude no futuro (mesmo SPORT_ORDER usado em renderLiveEvents).
+  const events = [...filteredEvents].sort((a, b) => (SPORT_ORDER[a.sport] ?? 99) - (SPORT_ORDER[b.sport] ?? 99));
 
   prematchEventsById.clear();
   events.forEach((e) => prematchEventsById.set(e.id, e));
@@ -437,7 +442,7 @@ function showPage(page) {
   if (page === "aovivo") { renderSportSubnav(); renderLiveEvents(); ensureLiveSocket(); }
   if (page === "esportes") { renderSportSubnav(); renderPrematchList(); }
   if (page === "casino") renderCasinoPage();
-  if (page === "destaques") renderDestaquesCasinoRow();
+  if (page === "destaques") { renderDestaquesHighlights(); renderDestaquesCasinoRow(); }
 }
 
 function goBack() {
@@ -1133,6 +1138,87 @@ function pollDepositStatus(depositId, attempt = 0) {
       if (note) note.innerHTML = "Ainda não recebemos a confirmação. Pode fechar esta janela — o saldo atualiza-se sozinho assim que aprovar na app.";
     }
   }, 3000);
+}
+
+// ====================== DESTAQUES: JOGOS EM DESTAQUE ======================
+// Pedido explícito do utilizador: a página Destaques mostra 5 pré-jogos (com preferência para
+// competições da UEFA — Champions League, Europa League, etc.) e 5 jogos Ao Vivo (1 de cada:
+// futebol, ténis, basquete, beisebol, mais 1 "bónus" — sempre futebol; qualquer um destes 4
+// desportos sem jogo ao vivo neste momento tem a sua vaga preenchida com mais futebol em vez de
+// ficar por preencher).
+const DESTAQUES_LIVE_SPORTS = ["football", "tennis", "basketball", "baseball"];
+
+function highlightPrematchCardHtml(e, icon) {
+  return `
+    <div class="live-card" onclick="openMarket('${e.id}', false)">
+      <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime)}</span></div>
+      <div class="lc-teams"><span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span></div>
+      ${quickOddsHtml(e, e.odds?.[0], false)}
+    </div>`;
+}
+
+function highlightLiveCardHtml(e, icon) {
+  const clockClass = isClockMissing(e) ? "clock-missing" : "";
+  const oddsHtml = quickOddsHtml(e, e.odds?.[0], true);
+  return e.statistics?.sets ? renderSetsCard(e, clockClass, oddsHtml, icon[e.sport] || "") : renderGenericCard(e, clockClass, oddsHtml, icon[e.sport] || "");
+}
+
+async function renderDestaquesHighlights() {
+  const prematchEl = document.getElementById("destaques-prematch-list");
+  const liveEl = document.getElementById("destaques-live-list");
+  if (!prematchEl || !liveEl) return;
+  prematchEl.innerHTML = skeletonCardsHtml(5);
+  liveEl.innerHTML = skeletonCardsHtml(5);
+  const icon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
+
+  const [prematchResults, liveResult] = await Promise.all([
+    Promise.allSettled(SPORTS_META.map((s) => Bet62Api.getPrematchEvents(s.id))),
+    Bet62Api.getLiveEvents().catch(() => ({ events: [] })),
+  ]);
+
+  // --- Pré-jogo: 5, com preferência para competições UEFA (ordenação estável: mantém a ordem
+  // relativa original dentro de cada grupo, só separa "é UEFA" de "não é UEFA"). ---
+  const prematchEvents = [];
+  prematchResults.forEach((r) => {
+    if (r.status === "fulfilled" && r.value.source === "pulsescore") prematchEvents.push(...r.value.events);
+  });
+  const prematchHighlights = [...prematchEvents]
+    .sort((a, b) => (/uefa/i.test(a.league || "") ? 0 : 1) - (/uefa/i.test(b.league || "") ? 0 : 1))
+    .slice(0, 5);
+  prematchHighlights.forEach((e) => prematchEventsById.set(e.id, e));
+
+  if (!prematchHighlights.length) {
+    prematchEl.innerHTML = '<div class="empty-note">Sem jogos agendados neste momento</div>';
+  } else {
+    renderInBlocks(prematchEl, prematchHighlights.map((e) => highlightPrematchCardHtml(e, icon)));
+  }
+
+  // --- Ao vivo: 1 por desporto-alvo + vagas em falta (incluindo o "bónus") preenchidas com
+  // futebol extra. ---
+  const liveEvents = liveResult.events || [];
+  liveEvents.forEach((e) => liveEventsById.set(e.id, e));
+
+  const picked = [];
+  const pickedIds = new Set();
+  let missingSlots = 0;
+  for (const sportId of DESTAQUES_LIVE_SPORTS) {
+    const candidate = liveEvents.find((e) => e.sport === sportId);
+    if (candidate) {
+      picked.push(candidate);
+      pickedIds.add(candidate.id);
+    } else {
+      missingSlots += 1;
+    }
+  }
+  const extraFootballNeeded = 1 + missingSlots; // 1 vaga "bónus" + cada vaga em falta
+  const extraFootball = liveEvents.filter((e) => e.sport === "football" && !pickedIds.has(e.id)).slice(0, extraFootballNeeded);
+  const liveHighlights = [...picked, ...extraFootball].slice(0, 5);
+
+  if (!liveHighlights.length) {
+    liveEl.innerHTML = '<div class="empty-note">Sem jogos ao vivo neste momento</div>';
+  } else {
+    renderInBlocks(liveEl, liveHighlights.map((e) => highlightLiveCardHtml(e, icon)));
+  }
 }
 
 // ====================== CASINO ======================
