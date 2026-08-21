@@ -42,7 +42,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 .header-right{display:flex;align-items:center;gap:10px}
 .balance-pill{background:var(--surface2);border:1px solid var(--border);padding:6px 12px;border-radius:20px;font-size:.85rem;font-weight:700;color:var(--gold);font-variant-numeric:tabular-nums}
 .add-btn{width:34px;height:34px;border-radius:50%;background:var(--green);border:none;color:#fff;font-size:1.2rem;display:flex;align-items:center;justify-content:center;cursor:pointer}
-.withdraw-btn{width:34px;height:34px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:1.2rem;display:flex;align-items:center;justify-content:center;cursor:pointer}
 .avatar-btn{width:34px;height:34px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:1.1rem;cursor:pointer;color:var(--text)}
 .login-btn{background:var(--red);color:#fff;border:none;padding:8px 18px;border-radius:20px;font-size:.85rem;font-weight:700;cursor:pointer}
 .top-nav{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;flex:1;justify-content:center}
@@ -370,7 +369,6 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
         <button class="login-btn hidden" id="btn-header-login" onclick="openAuth('login')">Entrar</button>
         <div class="balance-pill hidden" id="balance-display">€ 0.00</div>
         <button class="add-btn hidden" id="btn-header-deposit" onclick="openDeposit()" title="Depositar">+</button>
-        <button class="withdraw-btn hidden" id="btn-header-withdraw" onclick="openWithdraw()" title="Levantar">−</button>
         <button class="avatar-btn hidden" id="btn-avatar" onclick="showPage('profile')">👤</button>
     </div>
 </header>
@@ -756,72 +754,75 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
     </div>
 </div>
 
-<!-- DEPOSIT MODAL -->
+<!-- DEPOSIT / WITHDRAW MODAL — mesmo modal para os dois, com abas "Depositar"/"Levantar"
+     (pedido explícito: nada de ícone próprio no cabeçalho, o levantamento vive aqui). -->
 <div class="auth-overlay" id="deposit-modal">
     <div class="auth-box">
-        <div class="auth-tabs"><div class="auth-tab active" style="cursor:default">Depositar</div></div>
+        <div class="auth-tabs">
+            <div class="auth-tab" id="money-tab-deposit" onclick="switchMoneyModal('deposit')">Depositar</div>
+            <div class="auth-tab" id="money-tab-withdraw" onclick="switchMoneyModal('withdraw')">Levantar</div>
+        </div>
         <div class="auth-body">
             <div class="auth-error" id="deposit-error"></div>
-            <!-- Ícones próprios (não os logótipos oficiais registados da MB WAY/Multibanco — este
-                 ambiente não teve acesso à internet para obter os ficheiros de marca reais);
-                 servem só para indicar visualmente o método, cores aproximadas da marca. -->
-            <div class="deposit-methods">
-                <div class="dm-btn active" data-method="STRIPE_CARD" onclick="selectDepositMethod('STRIPE_CARD')">
-                    <span class="dm-icon"><svg viewBox="0 0 32 22" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="30" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="1" y="6" width="30" height="4" fill="currentColor"/><rect x="4" y="15" width="8" height="2.2" rx="1.1" fill="currentColor"/></svg></span>
-                    Cartão
+
+            <div id="deposit-section">
+                <!-- Ícones próprios (não os logótipos oficiais registados da MB WAY/Multibanco —
+                     este ambiente não teve acesso à internet para obter os ficheiros de marca
+                     reais); servem só para indicar visualmente o método, cores aproximadas da
+                     marca. -->
+                <div class="deposit-methods">
+                    <div class="dm-btn active" data-method="STRIPE_CARD" onclick="selectDepositMethod('STRIPE_CARD')">
+                        <span class="dm-icon"><svg viewBox="0 0 32 22" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="30" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="1" y="6" width="30" height="4" fill="currentColor"/><rect x="4" y="15" width="8" height="2.2" rx="1.1" fill="currentColor"/></svg></span>
+                        Cartão
+                    </div>
+                    <div class="dm-btn" data-method="STRIPE_MBWAY" onclick="selectDepositMethod('STRIPE_MBWAY')">
+                        <span class="dm-icon"><svg viewBox="0 0 64 22" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="22" rx="5" fill="#e4032e"/><text x="32" y="15" text-anchor="middle" font-family="DM Sans,Arial,sans-serif" font-size="10" font-weight="700" fill="#fff">MB WAY</text></svg></span>
+                        MB WAY
+                    </div>
+                    <div class="dm-btn" data-method="STRIPE_MULTIBANCO" onclick="selectDepositMethod('STRIPE_MULTIBANCO')">
+                        <span class="dm-icon"><svg viewBox="0 0 64 22" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="22" rx="5" fill="#00205b"/><text x="32" y="15" text-anchor="middle" font-family="DM Sans,Arial,sans-serif" font-size="9" font-weight="700" fill="#fff">Multibanco</text></svg></span>
+                        Multibanco
+                    </div>
                 </div>
-                <div class="dm-btn" data-method="STRIPE_MBWAY" onclick="selectDepositMethod('STRIPE_MBWAY')">
-                    <span class="dm-icon"><svg viewBox="0 0 64 22" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="22" rx="5" fill="#e4032e"/><text x="32" y="15" text-anchor="middle" font-family="DM Sans,Arial,sans-serif" font-size="10" font-weight="700" fill="#fff">MB WAY</text></svg></span>
-                    MB WAY
+                <div id="deposit-form-fields">
+                    <div class="form-group"><label>Valor (€)</label><input type="number" id="deposit-amount" min="10" max="5000" placeholder="Mínimo 10€"></div>
+                    <!-- Cartão: campo da própria Stripe (iframe do Card Element), montado aqui
+                         dentro do nosso modal — nunca uma página à parte. Os dados do cartão
+                         nunca tocam o nosso servidor/JS (exigência de PCI-DSS), só o número/
+                         validade/CVC ficam dentro deste iframe isolado. -->
+                    <div class="form-group hidden" id="deposit-card-group">
+                        <label>Dados do cartão</label>
+                        <div id="card-element" class="card-element-mount"></div>
+                    </div>
+                    <!-- MB WAY: o número fica no NOSSO formulário — não há redirecionamento
+                         nenhum, a confirmação acontece na app MB WAY do próprio telemóvel do
+                         cliente. -->
+                    <div class="form-group hidden" id="deposit-mbway-group">
+                        <label>Número de telemóvel MB WAY</label>
+                        <input type="tel" id="deposit-phone" placeholder="912345678" inputmode="tel" autocomplete="tel">
+                    </div>
+                    <div class="field-hint" id="deposit-method-hint" style="margin:-6px 0 10px"></div>
+                    <button class="auth-submit" id="btn-deposit" onclick="submitDeposit()">CONTINUAR</button>
+                    <button class="btn-outline" onclick="closeDeposit()">Cancelar</button>
                 </div>
-                <div class="dm-btn" data-method="STRIPE_MULTIBANCO" onclick="selectDepositMethod('STRIPE_MULTIBANCO')">
-                    <span class="dm-icon"><svg viewBox="0 0 64 22" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="22" rx="5" fill="#00205b"/><text x="32" y="15" text-anchor="middle" font-family="DM Sans,Arial,sans-serif" font-size="9" font-weight="700" fill="#fff">Multibanco</text></svg></span>
-                    Multibanco
-                </div>
+                <!-- Estado pós-submissão (cartão a processar, à espera de aprovação MB WAY, ou a
+                     entidade/referência Multibanco) — tudo no nosso próprio layout, nunca uma
+                     segunda página. Preenchido por showDepositResult() em app.js. -->
+                <div id="deposit-result" class="hidden"></div>
             </div>
-            <div id="deposit-form-fields">
-                <div class="form-group"><label>Valor (€)</label><input type="number" id="deposit-amount" min="10" max="5000" placeholder="Mínimo 10€"></div>
-                <!-- Cartão: campo da própria Stripe (iframe do Card Element), montado aqui dentro
-                     do nosso modal — nunca uma página à parte. Os dados do cartão nunca tocam o
-                     nosso servidor/JS (exigência de PCI-DSS), só o número/validade/CVC ficam
-                     dentro deste iframe isolado. -->
-                <div class="form-group hidden" id="deposit-card-group">
-                    <label>Dados do cartão</label>
-                    <div id="card-element" class="card-element-mount"></div>
-                </div>
-                <!-- MB WAY: o número fica no NOSSO formulário — não há redirecionamento nenhum,
-                     a confirmação acontece na app MB WAY do próprio telemóvel do cliente. -->
-                <div class="form-group hidden" id="deposit-mbway-group">
-                    <label>Número de telemóvel MB WAY</label>
-                    <input type="tel" id="deposit-phone" placeholder="912345678" inputmode="tel" autocomplete="tel">
-                </div>
-                <div class="field-hint" id="deposit-method-hint" style="margin:-6px 0 10px"></div>
-                <button class="auth-submit" id="btn-deposit" onclick="submitDeposit()">CONTINUAR</button>
+
+            <!-- Aba "Levantar" do mesmo modal — reaproveita as mesmas rotas de conta bancária/
+                 levantamento já usadas em Perfil > Dados Bancários e Levantamentos, só que tudo
+                 num único passo (titular + IBAN + valor) sem precisar de navegar até lá. -->
+            <div id="withdraw-section" class="hidden">
+                <div class="field-hint" style="margin-bottom:12px">Requer verificação de identidade (KYC) aprovada. Processado via Revolut Business após revisão de conformidade.</div>
+                <div class="form-group"><label>Nome Completo (titular da conta)</label><input type="text" id="w-name" placeholder="Nome completo"></div>
+                <div class="form-group"><label>IBAN</label><input type="text" id="w-iban" placeholder="PT50 0000 0000 0000 0000 0000 0"></div>
+                <div class="form-group"><label>BIC/SWIFT (opcional)</label><input type="text" id="w-bic" placeholder="XXXXPTXX"></div>
+                <div class="form-group"><label>Valor a levantar (€)</label><input type="number" id="w-amount" min="10" placeholder="Mínimo 10€"></div>
+                <button class="auth-submit" id="btn-withdraw-submit" onclick="submitWithdraw()">SOLICITAR LEVANTAMENTO</button>
                 <button class="btn-outline" onclick="closeDeposit()">Cancelar</button>
             </div>
-            <!-- Estado pós-submissão (cartão a processar, à espera de aprovação MB WAY, ou a
-                 entidade/referência Multibanco) — tudo no nosso próprio layout, nunca uma segunda
-                 página. Preenchido por renderDepositResult() em app.js. -->
-            <div id="deposit-result" class="hidden"></div>
-        </div>
-    </div>
-</div>
-
-<!-- WITHDRAW MODAL — atalho rápido no cabeçalho, ao lado do Depositar. Reaproveita as mesmas
-     rotas de conta bancária/levantamento já usadas em Perfil > Dados Bancários e Levantamentos,
-     só que tudo num único passo (titular + IBAN + valor) sem precisar de navegar até lá. -->
-<div class="auth-overlay" id="withdraw-modal">
-    <div class="auth-box">
-        <div class="auth-tabs"><div class="auth-tab active" style="cursor:default">Levantar</div></div>
-        <div class="auth-body">
-            <div class="auth-error" id="withdraw-error"></div>
-            <div class="field-hint" style="margin-bottom:12px">Requer verificação de identidade (KYC) aprovada. Processado via Revolut Business após revisão de conformidade.</div>
-            <div class="form-group"><label>Nome Completo (titular da conta)</label><input type="text" id="w-name" placeholder="Nome completo"></div>
-            <div class="form-group"><label>IBAN</label><input type="text" id="w-iban" placeholder="PT50 0000 0000 0000 0000 0000 0"></div>
-            <div class="form-group"><label>BIC/SWIFT (opcional)</label><input type="text" id="w-bic" placeholder="XXXXPTXX"></div>
-            <div class="form-group"><label>Valor a levantar (€)</label><input type="number" id="w-amount" min="10" placeholder="Mínimo 10€"></div>
-            <button class="auth-submit" id="btn-withdraw-submit" onclick="submitWithdraw()">SOLICITAR LEVANTAMENTO</button>
-            <button class="btn-outline" onclick="closeWithdraw()">Cancelar</button>
         </div>
     </div>
 </div>
