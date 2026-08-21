@@ -694,16 +694,28 @@ horário do Japão) está corretamente configurada para Portugal. **Não estava*
   Testado com Playwright emulando 3 fusos de dispositivo diferentes (Europe/Lisbon, Asia/Tokyo,
   America/New_York) para o MESMO jogo — a hora mostrada foi sempre idêntica (a de Lisboa),
   confirmando que já não depende do fuso do dispositivo.
-- ⚠️ **NEEDS VALIDATION — o lado de dentro continua por confirmar**: nenhuma amostra real
-  guardada neste projeto mostra a forma exata da string `startTime` que a Pulsescore envia (ex:
-  se vem com `Z`/offset UTC, ou uma string "ingénua" sem fuso). O `BET62_TIMEZONE` acima corrige
-  sempre a EXIBIÇÃO (mostra sempre a hora de Lisboa, seja qual for o instante recebido), mas só
-  se `new Date(startTime)` interpretar esse instante corretamente à partida — se a Pulsescore
-  alguma vez enviar uma string sem fuso (ex: `"2026-08-21T18:00:00"`, sem `Z`), o JavaScript
-  trata-a como hora LOCAL de quem está a correr o código (o browser do utilizador, não o
-  servidor), o que voltaria a introduzir o mesmo tipo de erro só no lado dos dados, não da
-  exibição. Confirmar com uma amostra real assim que possível (mesma metodologia já usada no
-  resto desta integração).
+- **Correção seguinte**: o utilizador reportou continuar a ver hora errada (beisebol a mostrar
+  "12:00" quando já eram "14:00" em Portugal) mesmo depois da correção acima — exatamente o
+  sintoma previsto na nota NEEDS VALIDATION original: a EXIBIÇÃO já estava fixa a Lisboa, mas o
+  INSTANTE calculado por `new Date(startTime)` só está certo se `startTime` trouxer fuso
+  explícito (`Z`/offset). Sem confirmação real de que a Pulsescore o traz sempre (não foi
+  possível obter uma amostra ao vivo — `api.pulsescore.net` está bloqueado pelo proxy desta
+  sessão, confirmado com `curl -v`, e o domínio de produção do Railway devolve 403 do mesmo
+  proxy antes de chegar ao servidor), adicionou-se `parseServerDate()`: se a string não terminar
+  em `Z`/offset, assume-se UTC (acrescenta `Z`) antes de interpretar — mesma convenção já usada
+  no resto do projeto (`updatedAt: new Date().toISOString()` no backend é sempre UTC). Testado
+  com Playwright: uma string sem fuso (`"2026-08-21T18:00:00"`) produz agora a mesma hora de
+  Lisboa em qualquer fuso de dispositivo emulado (Europe/Lisbon, Asia/Tokyo, America/New_York),
+  tal como uma string já com `Z`.
+- ⚠️ **NEEDS VALIDATION — continua por confirmar**: a correção acima assume UTC quando falta o
+  fuso, que é a convenção mais provável mas **não confirmada com uma amostra real** da
+  Pulsescore. Se `startTime` vier na prática numa forma diferente (ex: hora local da bookmaker,
+  sem fuso, não-UTC — o que explicaria um desvio fixo tipo "sempre X horas a menos/mais" em vez
+  de aleatório), a hora mostrada continuaria errada por um desvio constante, e a correção certa
+  seria outra (aplicar um offset fixo dessa bookmaker, não assumir UTC). Confirmar assim que
+  houver acesso real à API (mesma metodologia já usada no resto desta integração) — idealmente
+  capturando a resposta bruta de `/live-events?sport=baseball` num pedido real e comparando o
+  `startTime` de um jogo conhecido com a sua hora real de início.
 
 ## Fallback de mercados/estatísticas entre bookmakers
 

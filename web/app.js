@@ -360,8 +360,24 @@ function lisbonDateKey(date) {
   return date.toLocaleDateString("en-CA", { timeZone: BET62_TIMEZONE });
 }
 
+// A hora fixa a Portugal em formatKickoff() só está correta se `new Date(d)` calcular o INSTANTE
+// certo à partida — e isso depende de `d` trazer o fuso explícito ("Z"/"+HH:MM"). SEM fuso
+// explícito, o JavaScript trata a string como hora LOCAL de quem a está a interpretar (o
+// dispositivo do utilizador), o que dá um instante diferente consoante o fuso desse dispositivo —
+// exatamente o tipo de "hora errada"/"várias horas diferentes para o mesmo jogo" que foi
+// reportado (ex: beisebol a aparecer com 2 horas de diferença da hora real). A Pulsescore nunca
+// confirmou com uma amostra real qual das duas formas envia (ver docs/SPORTS_DATA.md) — por
+// prudência, assume-se UTC quando falta o fuso (mesma convenção usada no resto deste projeto,
+// ex: `updatedAt: new Date().toISOString()` no backend, que é sempre UTC com "Z"), acrescentando
+// "Z" à string antes de a interpretar, em vez de deixar ao acaso do dispositivo de quem vê.
+function parseServerDate(d) {
+  if (typeof d !== "string") return new Date(d);
+  const hasExplicitTimezone = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(d.trim());
+  return new Date(hasExplicitTimezone ? d : `${d.trim()}Z`);
+}
+
 function formatKickoff(d) {
-  const date = new Date(d);
+  const date = parseServerDate(d);
   const now = new Date();
   const sameDay = lisbonDateKey(date) === lisbonDateKey(now);
   const time = date.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit", timeZone: BET62_TIMEZONE });
