@@ -676,6 +676,40 @@ jogo em ligas menores vs. até 47 em jogos populares, incluindo `CORNERS_RACE_TO
 enviar esses mercados para um jogo em concreto, continuam a não aparecer (nem no "Todos"),
 porque este projeto nunca inventa mercados/odds que a fonte de dados não devolveu.
 
+## Ordenação de desportos (Pré-jogo e Destaques)
+
+`web/app.js::SPORT_ORDER` fixa a ordem "futebol primeiro" (depois ténis, basquete, o resto pela
+ordem de `SPORTS_META`) — já usada em `renderLiveEvents()` (Ao Vivo). `renderPrematchList()`
+("Todos" os desportos na página Esportes) passou a aplicar o mesmo `sort()` explicitamente: os
+pedidos por desporto já resolviam nesta ordem por construção (`Promise.allSettled` preserva a
+ordem de `sports`, que começa em futebol), mas sem o `sort()` explícito bastaria futebol não ter
+nenhum jogo agendado nesse instante para o desporto seguinte com jogos (ex: beisebol) aparecer
+primeiro — foi o que o utilizador viu numa captura real de produção. O `sort()` garante o
+agrupamento por desporto (futebol primeiro, quando existir) independentemente de quantos jogos
+cada desporto tiver.
+
+## Destaques da página inicial (`web/app.js::renderDestaquesHighlights`)
+
+Pedido explícito do utilizador — a página Destaques (antiga só com banner promocional + cassino)
+passou a mostrar duas listas de jogos reais, ambas via a mesma Pulsescore já usada nas páginas
+Esportes/Ao Vivo (sem endpoints novos):
+
+- **Pré-jogo (5)**: junta o pré-jogo de todos os desportos (`GET /sports/prematch?sport=` por
+  desporto, como em `renderPrematchList()`) e ordena com preferência para ligas cujo nome contém
+  "UEFA" (Champions League, Europa League, Conference League — `/uefa/i` no nome da liga), depois
+  os restantes pela ordem em que chegaram; corta nos primeiros 5. Se não houver 5 jogos UEFA
+  disponíveis, os restantes lugares ficam com o que sobrar (qualquer desporto), nunca inventado.
+- **Ao vivo (5)**: 1 jogo de cada um dos 4 desportos-alvo (`DESTAQUES_LIVE_SPORTS = [football,
+  tennis, basketball, baseball]`) + 1 vaga "bónus". A vaga bónus E qualquer vaga de um destes 4
+  desportos sem jogo ao vivo neste momento são preenchidas com futebol extra (pedido explícito:
+  "se algum desses não tiver acrescenta em Futebol") — nunca ficam por preencher nem mostram um
+  jogo de outro desporto fora da lista-alvo nesse lugar. Busca tudo num só pedido
+  (`GET /sports/events`, sem `?sport=`, que devolve `hybridSportsService.snapshot()` já com todos
+  os desportos) em vez de 8 pedidos separados.
+
+Ambas as listas reutilizam os mesmos cartões (`live-card`) e a mesma lógica de odds suspensas já
+usada em Esportes/Ao Vivo — sem HTML/CSS novo, só reorganização dos dados já existentes.
+
 ## Antes de produção
 
 1. Confirmar o slug/bookmaker da Fórmula 1 (ver "Ainda por confirmar" acima).
