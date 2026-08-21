@@ -21,3 +21,7 @@ Thumbs.db
 
 TOKEN
 *.token
+
+# Documentos KYC enviados pelos utilizadores (dados sensíveis) — nunca no repositório, ver
+# docs/KYC_DOCUMENTS.md sobre armazenamento persistente em produção.
+server/uploads/

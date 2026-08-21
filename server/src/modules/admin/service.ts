@@ -107,6 +107,7 @@ export async function getUserDetail(userId: string) {
       wallet: true,
       limits: true,
       kycSubmissions: { orderBy: { createdAt: "desc" } },
+      kycDocuments: { orderBy: { uploadedAt: "desc" } },
       selfExclusions: { orderBy: { createdAt: "desc" } },
     },
   });

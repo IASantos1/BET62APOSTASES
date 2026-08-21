@@ -1,8 +1,10 @@
 import { Router } from "express";
+import multer from "multer";
 import { z } from "zod";
 import { asyncHandler } from "../../middleware/errorHandler";
 import { requireAuth, type AuthedRequest } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
+import { Errors } from "../../lib/errors";
 import {
   getProfile,
   selfExclude,
@@ -11,9 +13,14 @@ import {
   updatePersonalInfo,
   updatePreferences,
 } from "./service";
+import { getKycDocumentFile, listMyKycDocuments, saveKycDocument, MAX_FILE_SIZE_BYTES } from "./kycDocuments";
 
 const router = Router();
 router.use(requireAuth);
+
+// Memória, não disco temporário — os ficheiros são pequenos (imagem/PDF de um documento) e
+// saveKycDocument() já escreve o resultado final direto para KYC_UPLOAD_DIR.
+const kycUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_SIZE_BYTES } });
 
 router.get(
   "/me",
@@ -60,6 +67,38 @@ router.post(
   ),
   asyncHandler(async (req: AuthedRequest, res) => {
     res.status(201).json(await submitKyc(req.user!.id, req.body.docType, req.body.docNumber));
+  })
+);
+
+// Documento pessoal (identidade) e extrato bancário (para validar o IBAN) — ver
+// docs/KYC_DOCUMENTS.md. `type` vem no corpo multipart junto com o ficheiro em `file`.
+router.post(
+  "/me/kyc/documents",
+  kycUpload.single("file"),
+  asyncHandler(async (req: AuthedRequest, res) => {
+    if (!req.file) throw Errors.badRequest("Nenhum ficheiro enviado");
+    const type = req.body.type === "BANK_STATEMENT" ? "BANK_STATEMENT" : req.body.type === "ID_DOCUMENT" ? "ID_DOCUMENT" : null;
+    if (!type) throw Errors.badRequest('Parâmetro "type" tem de ser ID_DOCUMENT ou BANK_STATEMENT');
+    const doc = await saveKycDocument({ userId: req.user!.id, type, file: req.file });
+    res.status(201).json(doc);
+  })
+);
+
+router.get(
+  "/me/kyc/documents",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    res.json({ documents: await listMyKycDocuments(req.user!.id) });
+  })
+);
+
+router.get(
+  "/me/kyc/documents/:id/file",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    if (!req.params.id) throw Errors.badRequest("Parâmetro id em falta");
+    const { doc, absolutePath } = await getKycDocumentFile(req.params.id, req.user!.id);
+    res.setHeader("Content-Type", doc.mimeType);
+    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(doc.fileName)}"`);
+    res.sendFile(absolutePath);
   })
 );
 

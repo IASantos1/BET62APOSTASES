@@ -45,6 +45,12 @@ const envSchema = z.object({
   API_FOOTBALL_KEY: z.string().default(""),
   API_FOOTBALL_BASE_URL: z.string().default("https://v3.football.api-sports.io"),
 
+  // --- Documentos KYC (upload de documento pessoal + extrato bancário) ---
+  // Caminho local (relativo à raiz do processo) onde os ficheiros ficam guardados — NEEDS
+  // VALIDATION antes de produção: sem um volume persistente do Railway montado neste caminho,
+  // um redeploy apaga tudo (o sistema de ficheiros do container é efémero). Ver docs/KYC_DOCUMENTS.md.
+  KYC_UPLOAD_DIR: z.string().default("uploads/kyc"),
+
   // --- Cassino Gold Palace / goldslotpalase.com (slots, seamless wallet) ---
   // Confirmado via Swagger real (https://agent.goldslotpalase.com/swagger/v4/swagger.json,
   // OpenAPI 3.0.4, "Agent API Documentation" v4): callbacks Win/Cancel/Status que o provedor

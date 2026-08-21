@@ -397,7 +397,7 @@ function quickOddsHtml(e, group, isLive) {
       }
       const key = `${e.id}|${group.market}|${label}`;
       const picked = betslipSelections.has(key);
-      const selection = { eventId: e.id, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
+      const selection = { eventId: e.id, sport: e.sport, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
       const arrow = isLive ? oddsArrowHtml(key, sel.odd) : "";
       return `<div class="${picked ? "picked" : ""}" onclick='quickPick(event, ${JSON.stringify(key)}, ${JSON.stringify(selection)})'>${label}<br>${sel.odd.toFixed(2)}${arrow}</div>`;
     })
@@ -653,6 +653,47 @@ function renderProfile() {
     (p.kycStatus === "APPROVED" ? "status-ok" : p.kycStatus === "REJECTED" ? "status-bad" : "status-pending");
 
   refreshWithdrawalsList();
+  refreshMyBetsList();
+  refreshKycDocumentsList();
+}
+
+const BET_STATUS_LABELS = { PENDING: "Em curso", WON: "Ganha", LOST: "Perdida", VOID: "Anulada", NEEDS_REVIEW: "Em revisão" };
+const BET_STATUS_CLASS = { WON: "status-ok", LOST: "status-bad", PENDING: "status-pending", VOID: "status-pending", NEEDS_REVIEW: "status-pending" };
+
+async function refreshMyBetsList() {
+  const container = document.getElementById("my-bets-list");
+  if (!container || !Bet62Api.isAuthenticated()) return;
+  try {
+    const { bets } = await Bet62Api.listMyBets();
+    if (!bets.length) {
+      container.innerHTML = '<div class="empty-note">Sem apostas ainda</div>';
+      return;
+    }
+    container.innerHTML = bets
+      .map((b) => {
+        const selectionsHtml = b.selections
+          .map((s) => `<div class="bs-row-sel" style="margin:2px 0">${s.home} vs ${s.away} — ${s.market}: <b>${s.selection}</b> @ ${Number(s.odd).toFixed(2)}</div>`)
+          .join("");
+        const resultLine =
+          b.status === "WON" || b.status === "VOID"
+            ? `<div style="font-weight:700;color:var(--gold)">€ ${Number(b.payout).toFixed(2)}</div>`
+            : b.status === "LOST"
+              ? `<div style="color:var(--muted)">€ 0.00</div>`
+              : `<div style="color:var(--muted)">Retorno potencial € ${Number(b.potentialReturn).toFixed(2)}</div>`;
+        return `
+        <div class="limit-row" style="flex-direction:column;align-items:stretch;gap:6px;padding:12px 0">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span>${b.type === "MULTIPLA" ? "Múltipla" : "Simples"} — € ${Number(b.stake).toFixed(2)}</span>
+            <span class="status-badge ${BET_STATUS_CLASS[b.status] || "status-pending"}">${BET_STATUS_LABELS[b.status] || b.status}</span>
+          </div>
+          ${selectionsHtml}
+          ${resultLine}
+        </div>`;
+      })
+      .join("");
+  } catch {
+    /* silencioso */
+  }
 }
 
 async function savePersonal() {
@@ -694,6 +735,46 @@ async function submitKYC() {
     alert("📄 Documentos enviados! A verificação pode demorar até 24h.");
   } catch (err) {
     alert("Erro: " + err.message);
+  }
+}
+
+const KYC_DOC_TYPE_LABELS = { ID_DOCUMENT: "Documento pessoal", BANK_STATEMENT: "Extrato bancário" };
+
+async function uploadKycFile(type, inputId) {
+  if (!requireLogin()) return;
+  const input = document.getElementById(inputId);
+  const file = input.files && input.files[0];
+  if (!file) return alert("Escolha um ficheiro primeiro.");
+  try {
+    await Bet62Api.uploadKycDocument(type, file);
+    input.value = "";
+    await refreshKycDocumentsList();
+    alert(`✅ ${KYC_DOC_TYPE_LABELS[type]} enviado!`);
+  } catch (err) {
+    alert("Erro: " + err.message);
+  }
+}
+
+async function refreshKycDocumentsList() {
+  const container = document.getElementById("kyc-documents-list");
+  if (!container || !Bet62Api.isAuthenticated()) return;
+  try {
+    const { documents } = await Bet62Api.listMyKycDocuments();
+    if (!documents.length) {
+      container.innerHTML = '<div class="empty-note">Nenhum documento enviado ainda</div>';
+      return;
+    }
+    container.innerHTML = documents
+      .map(
+        (d) => `
+      <div class="limit-row">
+        <div>${KYC_DOC_TYPE_LABELS[d.type] || d.type} <span style="color:var(--muted);font-size:.78rem">— ${d.fileName}</span></div>
+        <span class="status-badge status-ok">Enviado</span>
+      </div>`
+      )
+      .join("");
+  } catch {
+    /* silencioso */
   }
 }
 
@@ -789,6 +870,56 @@ async function refreshWithdrawalsList() {
   }
 }
 
+// Atalho no cabeçalho (ao lado do "+" de Depositar) — mesmas rotas de conta bancária/
+// levantamento já usadas em Perfil > Dados Bancários e Levantamentos, num único passo: se já
+// existir uma conta guardada com o mesmo IBAN reaproveita-a, senão cria uma nova antes de pedir
+// o levantamento.
+function openWithdraw() {
+  if (!Bet62Api.isAuthenticated()) return openAuth("login");
+  document.getElementById("withdraw-modal").classList.add("open");
+  document.getElementById("withdraw-error").classList.remove("show");
+}
+function closeWithdraw() {
+  document.getElementById("withdraw-modal").classList.remove("open");
+}
+async function submitWithdraw() {
+  const accountHolder = document.getElementById("w-name").value.trim();
+  const iban = document.getElementById("w-iban").value.replace(/\s+/g, "").trim();
+  const bic = document.getElementById("w-bic").value.trim();
+  const amountEur = Number(document.getElementById("w-amount").value);
+  const errEl = document.getElementById("withdraw-error");
+  errEl.classList.remove("show");
+
+  if (!accountHolder || !iban) {
+    errEl.textContent = "Indique o nome completo e o IBAN.";
+    errEl.classList.add("show");
+    return;
+  }
+  if (!amountEur || amountEur < 10) {
+    errEl.textContent = "Indique um valor válido (mínimo 10€).";
+    errEl.classList.add("show");
+    return;
+  }
+
+  const btn = document.getElementById("btn-withdraw-submit");
+  btn.disabled = true;
+  try {
+    const accounts = await Bet62Api.listBankAccounts();
+    let account = accounts.find((a) => a.iban.replace(/\s+/g, "").toUpperCase() === iban.toUpperCase());
+    if (!account) account = await Bet62Api.saveBankAccount({ accountHolder, iban, bic: bic || undefined });
+    await Bet62Api.requestWithdrawal(amountEur, account.id);
+    closeWithdraw();
+    alert("✅ Pedido de levantamento enviado para revisão de conformidade.");
+    await refreshWithdrawalsList();
+    await loadBalance();
+  } catch (err) {
+    errEl.textContent = err.message || "Não foi possível pedir o levantamento.";
+    errEl.classList.add("show");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function requireLogin() {
   if (!Bet62Api.isAuthenticated()) {
     alert("Faça login primeiro");
@@ -803,6 +934,7 @@ function updateHeader() {
   document.getElementById("btn-header-login").classList.toggle("hidden", authed);
   document.getElementById("balance-display").classList.toggle("hidden", !authed);
   document.getElementById("btn-header-deposit").classList.toggle("hidden", !authed);
+  document.getElementById("btn-header-withdraw").classList.toggle("hidden", !authed);
   document.getElementById("btn-avatar").classList.toggle("hidden", !authed);
 
   if (currentBalance) {
@@ -1695,7 +1827,7 @@ function renderMarketGroups(e) {
           }
           const key = `${e.id}|${group.market}|${label}`;
           const picked = betslipSelections.has(key);
-          const selection = { eventId: e.id, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
+          const selection = { eventId: e.id, sport: e.sport, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
           // Setas de subida/descida só em Ao Vivo — no pré-jogo o valor não costuma mudar
           // ao ponto de justificar o indicador, e não foi pedido para essa página.
           const arrow = isLive ? oddsArrowHtml(key, sel.odd) : "";
@@ -1835,27 +1967,81 @@ function renderBetslipPanel() {
         <div class="bs-tab ${betslipMode === "multipla" ? "active" : ""} ${canMultipla ? "" : "disabled"}" onclick="${canMultipla ? "setBetslipMode('multipla')" : ""}">Múltipla</div>
       </div>
       ${!canMultipla && selections.length >= 2 ? '<div class="field-hint" style="margin:8px 2px">Múltipla indisponível: há mais do que uma seleção do mesmo evento.</div>' : ""}
+      <div class="auth-error" id="bs-error"></div>
       <div class="bs-rows">${rowsHtml}</div>
       ${summaryHtml}
-      <button class="btn-save" onclick="placeBetDemo()">Confirmar Aposta</button>
+      <button class="btn-save" id="bs-submit-btn" onclick="submitBetslip()">Confirmar Aposta</button>
       <button class="btn-outline" onclick="clearBetslip()">Limpar Boletim</button>`;
   });
 }
 
-function placeBetDemo() {
+function showBetslipError(msg) {
+  const el = document.getElementById("bs-error");
+  if (el) {
+    el.textContent = msg;
+    el.classList.add("show");
+  } else {
+    alert(msg);
+  }
+}
+
+// Colocação real (débito atómico da carteira no servidor, ver server/src/modules/betting) — a
+// odd que aqui aparece é só a última vista pelo utilizador; o servidor revalida sempre contra a
+// odd atual antes de aceitar, nunca confia neste valor.
+async function submitBetslip() {
   if (!Bet62Api.isAuthenticated()) return openAuth("login");
   if (!betslipSelections.size) return alert("Escolha pelo menos uma seleção nos mercados para adicionar ao boletim.");
 
+  const entries = [...betslipSelections.entries()];
   if (betslipMode === "simples") {
-    const missing = [...betslipSelections.keys()].filter((key) => !(Number(betslipStakes.get(key)) > 0));
-    if (missing.length) return alert("Indique o valor da aposta em todas as seleções do boletim.");
+    const missing = entries.filter(([key]) => !(Number(betslipStakes.get(key)) > 0));
+    if (missing.length) return showBetslipError("Indique o valor da aposta em todas as seleções do boletim.");
   } else if (!(multiplaStake > 0)) {
-    return alert("Indique o valor da aposta múltipla.");
+    return showBetslipError("Indique o valor da aposta múltipla.");
   }
 
-  alert(
-    `🧾 Boletim ${betslipMode === "simples" ? "Simples" : "Múltipla"} com ${betslipSelections.size} seleção(ões).\n\nO motor de apostas (criação de bilhete, cálculo de retorno e liquidação) ainda não foi implementado nesta fase — esta é só a navegação de mercados e o boletim. As seleções foram mantidas.`
-  );
+  const btn = document.getElementById("bs-submit-btn");
+  if (btn) btn.disabled = true;
+
+  try {
+    if (betslipMode === "multipla") {
+      const selections = entries.map(([, s]) => ({ eventId: s.eventId, sport: s.sport, market: s.market, selection: s.selection, odd: s.odd }));
+      const { bets } = await Bet62Api.placeBets("MULTIPLA", selections, multiplaStake);
+      clearBetslip();
+      alert(`✅ Aposta Múltipla colocada!\nRetorno potencial: € ${Number(bets[0].potentialReturn).toFixed(2)}`);
+    } else {
+      const selections = entries.map(([key, s]) => ({
+        eventId: s.eventId,
+        sport: s.sport,
+        market: s.market,
+        selection: s.selection,
+        odd: s.odd,
+        stake: Number(betslipStakes.get(key)),
+      }));
+      const { bets, errors } = await Bet62Api.placeBets("SIMPLES", selections);
+      // Só remove do boletim as seleções que FORAM colocadas com sucesso — as que falharam
+      // (odd mudou entretanto, mercado suspenso) ficam para o utilizador ver o motivo e decidir.
+      const failedKeys = new Set(errors.map((e) => `${e.input.eventId}|${e.input.market}|${e.input.selection}`));
+      for (const [key] of entries) {
+        if (!failedKeys.has(key)) {
+          betslipSelections.delete(key);
+          betslipStakes.delete(key);
+        }
+      }
+      renderBetslipPanel();
+      if (errors.length) {
+        showBetslipError(`${bets.length} aposta(s) colocada(s). ${errors.length} não colocada(s): ${errors.map((e) => e.error).join(" ")}`);
+      } else {
+        alert(`✅ ${bets.length} aposta(s) colocada(s) com sucesso!`);
+      }
+    }
+    loadBalance();
+  } catch (err) {
+    showBetslipError(err.message || "Não foi possível colocar a aposta.");
+  } finally {
+    const stillThere = document.getElementById("bs-submit-btn");
+    if (stillThere) stillThere.disabled = false;
+  }
 }
 
 // ====================== INIT ======================

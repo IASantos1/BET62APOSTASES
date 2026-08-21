@@ -42,6 +42,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 .header-right{display:flex;align-items:center;gap:10px}
 .balance-pill{background:var(--surface2);border:1px solid var(--border);padding:6px 12px;border-radius:20px;font-size:.85rem;font-weight:700;color:var(--gold);font-variant-numeric:tabular-nums}
 .add-btn{width:34px;height:34px;border-radius:50%;background:var(--green);border:none;color:#fff;font-size:1.2rem;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.withdraw-btn{width:34px;height:34px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:1.2rem;display:flex;align-items:center;justify-content:center;cursor:pointer}
 .avatar-btn{width:34px;height:34px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:1.1rem;cursor:pointer;color:var(--text)}
 .login-btn{background:var(--red);color:#fff;border:none;padding:8px 18px;border-radius:20px;font-size:.85rem;font-weight:700;cursor:pointer}
 .top-nav{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;flex:1;justify-content:center}
@@ -368,7 +369,8 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
     <div class="header-right">
         <button class="login-btn hidden" id="btn-header-login" onclick="openAuth('login')">Entrar</button>
         <div class="balance-pill hidden" id="balance-display">€ 0.00</div>
-        <button class="add-btn hidden" id="btn-header-deposit" onclick="openDeposit()">+</button>
+        <button class="add-btn hidden" id="btn-header-deposit" onclick="openDeposit()" title="Depositar">+</button>
+        <button class="withdraw-btn hidden" id="btn-header-withdraw" onclick="openWithdraw()" title="Levantar">−</button>
         <button class="avatar-btn hidden" id="btn-avatar" onclick="showPage('profile')">👤</button>
     </div>
 </header>
@@ -454,6 +456,22 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
                     <div class="field"><label>Número do Documento</label><input type="text" id="f-doc-number" placeholder="Número"></div>
                     <button class="btn-save" onclick="submitKYC()">Enviar para Verificação</button>
                     <div class="field-hint">A verificação é obrigatória antes de qualquer levantamento (AML/KYC).</div>
+
+                    <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+                        <div style="font-weight:600;margin-bottom:10px">Documentos</div>
+                        <div class="field">
+                            <label>Documento pessoal (frente e verso, ou passaporte)</label>
+                            <input type="file" id="f-kyc-id-file" accept="image/jpeg,image/png,image/webp,application/pdf">
+                            <button class="btn-outline" style="margin-top:8px" onclick="uploadKycFile('ID_DOCUMENT', 'f-kyc-id-file')">Enviar Documento Pessoal</button>
+                        </div>
+                        <div class="field" style="margin-top:14px">
+                            <label>Extrato bancário (para validar o IBAN indicado nos levantamentos)</label>
+                            <input type="file" id="f-kyc-bank-file" accept="image/jpeg,image/png,image/webp,application/pdf">
+                            <button class="btn-outline" style="margin-top:8px" onclick="uploadKycFile('BANK_STATEMENT', 'f-kyc-bank-file')">Enviar Extrato Bancário</button>
+                        </div>
+                        <div class="field-hint">Formatos aceites: JPG, PNG, WEBP ou PDF, até 8MB.</div>
+                        <div id="kyc-documents-list" style="margin-top:12px"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -553,8 +571,24 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
             </div>
         </div>
 
-        <!-- Dados Bancários + Levantamento -->
+        <!-- As Minhas Apostas -->
         <div class="menu-item">
+            <div class="menu-header" onclick="toggleAccordion(this)">
+                <div class="menu-header-left">
+                    <div class="menu-icon"><i class="fas fa-receipt"></i></div>
+                    <div class="menu-title">As Minhas Apostas</div>
+                </div>
+                <i class="fas fa-chevron-down menu-arrow"></i>
+            </div>
+            <div class="menu-body">
+                <div class="menu-body-inner">
+                    <div id="my-bets-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dados Bancários + Levantamento -->
+        <div class="menu-item" id="withdraw-menu-item">
             <div class="menu-header" onclick="toggleAccordion(this)">
                 <div class="menu-header-left">
                     <div class="menu-icon"><i class="fas fa-university"></i></div>
@@ -769,6 +803,25 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
                  entidade/referência Multibanco) — tudo no nosso próprio layout, nunca uma segunda
                  página. Preenchido por renderDepositResult() em app.js. -->
             <div id="deposit-result" class="hidden"></div>
+        </div>
+    </div>
+</div>
+
+<!-- WITHDRAW MODAL — atalho rápido no cabeçalho, ao lado do Depositar. Reaproveita as mesmas
+     rotas de conta bancária/levantamento já usadas em Perfil > Dados Bancários e Levantamentos,
+     só que tudo num único passo (titular + IBAN + valor) sem precisar de navegar até lá. -->
+<div class="auth-overlay" id="withdraw-modal">
+    <div class="auth-box">
+        <div class="auth-tabs"><div class="auth-tab active" style="cursor:default">Levantar</div></div>
+        <div class="auth-body">
+            <div class="auth-error" id="withdraw-error"></div>
+            <div class="field-hint" style="margin-bottom:12px">Requer verificação de identidade (KYC) aprovada. Processado via Revolut Business após revisão de conformidade.</div>
+            <div class="form-group"><label>Nome Completo (titular da conta)</label><input type="text" id="w-name" placeholder="Nome completo"></div>
+            <div class="form-group"><label>IBAN</label><input type="text" id="w-iban" placeholder="PT50 0000 0000 0000 0000 0000 0"></div>
+            <div class="form-group"><label>BIC/SWIFT (opcional)</label><input type="text" id="w-bic" placeholder="XXXXPTXX"></div>
+            <div class="form-group"><label>Valor a levantar (€)</label><input type="number" id="w-amount" min="10" placeholder="Mínimo 10€"></div>
+            <button class="auth-submit" id="btn-withdraw-submit" onclick="submitWithdraw()">SOLICITAR LEVANTAMENTO</button>
+            <button class="btn-outline" onclick="closeWithdraw()">Cancelar</button>
         </div>
     </div>
 </div>

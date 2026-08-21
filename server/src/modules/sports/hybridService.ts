@@ -88,7 +88,13 @@ class HybridSportsService extends EventEmitter {
     for (const [id, evt] of this.events) {
       if (evt.sport === sport && !incomingIds.has(id)) {
         this.events.delete(id);
-        this.emit("remove", id);
+        // Segundo argumento (o último estado conhecido, com o placar final) adicionado para a
+        // liquidação de apostas (betting/settlement.ts) — a Pulsescore nunca reporta um estado
+        // "finished" explícito neste feed, o jogo simplesmente desaparece do próximo snapshot,
+        // por isso este é o único momento em que o placar final ainda está disponível.
+        // Aditivo: quem só ouvia `(id)` (ex: websocket/gateway.ts) continua a funcionar sem
+        // alterações.
+        this.emit("remove", id, evt);
       }
     }
     for (const evt of events) this.ingest(evt);
