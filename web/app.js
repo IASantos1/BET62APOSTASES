@@ -1691,6 +1691,7 @@ const MARKET_FILTER_CATEGORIES = {
     { label: "Escanteios", test: (m) => /corner/i.test(m) },
     { label: "Cartões", test: (m) => /\bcard|booking/i.test(m) },
     { label: "Ambas Marcam", test: (m) => /both teams to score|\bbtts\b|both to score/i.test(m) },
+    { label: "Marcador", test: (m) => /goalscorer|\bscorer\b|first to score|last to score|to score first|to score last|player.*(to score|goals)/i.test(m) },
     { label: "Placar Exato", test: (m) => /correct score|exact score/i.test(m) },
     { label: "Handicap", test: (m) => /handicap|spread|asian/i.test(m) },
     { label: "Mais/Menos", test: (m) => /over\/?under|total goals|\bo\/u\b/i.test(m) },

@@ -658,6 +658,24 @@ VALIDATION**: confirmar os padrões contra nomes de mercado reais de cada despor
 houver amostras (a mesma metodologia já usada no resto do projeto) — um nome de mercado muito
 fora do comum pode cair no filtro errado ou não bater em nenhum.
 
+**"Escanteios"/"Cartões"/"Marcador" parecem estar em falta**: o utilizador reportou não ver
+mercados de escanteios/cartões/marcador num evento. Investigado: nenhum código do backend
+filtra mercados por nome/tipo — `client.ts`/`wsClient.ts` normalizam e reenviam TODOS os
+mercados que a bookmaker devolveu para aquele evento, sem lista fixa (ver comentário em
+`withSyntheticMoneyline()`). O filtro "Todos" da barra de chips também não esconde nada — só as
+categorias específicas (ex: clicar em "Escanteios") restringem a lista. Já existiam categorias
+"Escanteios" (`/corner/i`) e "Cartões" (`/\bcard|booking/i`) para futebol; faltava uma categoria
+dedicada para mercados de marcador (ex: "Anytime Goalscorer", "First Goalscorer") — esses caíam
+no balde "Especiais" em vez de terem o seu próprio chip, o que os tornava fáceis de não notar.
+Adicionada a categoria "Marcador" (`/goalscorer|\bscorer\b|first to score|last to score|to
+score first|to score last|player.*(to score|goals)/i`), a seguir a "Ambas Marcam" na lista.
+**Continua a não ser garantido que estes mercados existam para um evento específico** — a
+cobertura de mercados por jogo varia com a popularidade da liga (confirmado: 5–17 mercados por
+jogo em ligas menores vs. até 47 em jogos populares, incluindo `CORNERS_RACE_TO`,
+`PLAYER_CARDS`, `ANYTIME_GOALSCORER` como `canonicalMarket` — ver client.ts). Se a bookmaker não
+enviar esses mercados para um jogo em concreto, continuam a não aparecer (nem no "Todos"),
+porque este projeto nunca inventa mercados/odds que a fonte de dados não devolveu.
+
 ## Antes de produção
 
 1. Confirmar o slug/bookmaker da Fórmula 1 (ver "Ainda por confirmar" acima).
