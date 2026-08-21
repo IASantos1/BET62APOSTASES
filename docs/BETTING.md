@@ -1,11 +1,12 @@
 # Motor de apostas — colocação, débito e liquidação
 
 Ficheiros: `server/src/modules/betting/{service,settlement,settlementRules,routes}.ts`,
-`web/app.js` (secção `DEPOSIT`... procurar `submitBetslip`).
+`web/app.js` (secção `DEPOSIT`... procurar `submitBetslip`; Bet Builder é uma secção à parte,
+procurar `BET BUILDER`).
 
 ## Colocação
 
-`POST /api/bets` — `{ mode: "SIMPLES"|"MULTIPLA", selections: [...], stake? }`.
+`POST /api/bets` — `{ mode: "SIMPLES"|"MULTIPLA"|"BET_BUILDER", selections: [...], stake? }`.
 
 - **Simples**: cada seleção do boletim vira o seu próprio `Bet` (1 seleção, stake próprio,
   vindo de `selections[].stake`). Uma seleção pode falhar (odd mudou entretanto, mercado
@@ -14,7 +15,30 @@ Ficheiros: `server/src/modules/betting/{service,settlement,settlementRules,route
 - **Múltipla**: todas as seleções combinadas num único `Bet` (stake combinado, vindo do campo
   `stake` de topo), odd total = produto das odds individuais. Tudo-ou-nada: uma seleção
   inválida (odd mudou, mercado suspenso, duas seleções do mesmo evento) rejeita o pedido
-  inteiro, nada é colocado.
+  inteiro, nada é colocado. **Proíbe** duas seleções do mesmo evento (resultados
+  correlacionados não são aceites numa Múltipla normal).
+- **Bet Builder**: pedido explícito do utilizador — 1 a 4 seleções combinadas do **MESMO**
+  evento (o oposto da Múltipla), odd total = produto das odds individuais (mesma fórmula,
+  simplificação conhecida: matematicamente a odd real de seleções correlacionadas do mesmo jogo
+  devia ser mais baixa do que a simples multiplicação, mas sem preços combinados reais da
+  bookmaker esta é a aproximação que a maioria dos bet builders simplificados usa). Duas
+  validações extra, sempre feitas de novo no servidor (nunca confia no que o cliente diz):
+  - **Categoria permitida**: `settlementRules.ts::classifyForBetBuilder()` só aceita mercados
+    que caiam numa das 5 categorias que o motor de liquidação automática já sabe resolver
+    sozinho — Resultado (Match Result/Double Chance/Draw No Bet), Golos (Over/Under), BTTS,
+    Escanteios (Over/Under), Cartões (Over/Under). Qualquer outro mercado (Handicap, Placar
+    Exato, e sobretudo mercados de JOGADOR — remates, assistências, faltas, impedimentos,
+    passes) é **rejeitado no momento de apostar**, não aceite e deixado pendurado: este projeto
+    nunca recebeu, em nenhuma amostra real, dados por jogador que permitissem liquidar essas
+    apostas sem inventar o resultado — ver "Fora do Bet Builder" abaixo.
+  - **Uma seleção por categoria**: duas seleções da mesma categoria (ex: "Over 2.5" e "Under
+    1.5" golos) seriam contraditórias — rejeitado.
+  - `web/app.js::classifyForBetBuilder()` espelha a mesma heurística no frontend só para não
+    mostrar ao utilizador uma opção que o servidor ia recusar — nunca é a fonte de verdade.
+  - Liquidação: **nenhuma mudança** foi precisa em `settlement.ts` — como todas as seleções de
+    um Bet Builder pertencem ao mesmo evento, `settleEventFinished()` já as liquida todas de
+    uma vez quando esse evento termina (mesmo código que já existia, só nunca antes recebia
+    várias seleções do mesmo evento dentro do mesmo `Bet`).
 
 Antes de debitar, cada seleção é revalidada contra os dados **atuais** (ao vivo via
 `hybridSportsService`, ou pré-jogo via `getPrematchEvents`) — a odd que o cliente mandou nunca
@@ -87,10 +111,26 @@ num restart, por isso o evento `"remove"` desse jogo específico nunca chegaria 
 Marca para revisão manual (nunca inventa um resultado) qualquer `BetSelection` ainda `PENDING`
 cujo `kickoffAt` já passou há mais de 6 horas.
 
+## Fora do Bet Builder (mercados de jogador)
+
+Pedido do utilizador incluía Jogadores/Remates/Assistências/Faltas/Impedimentos/Passes como
+categorias do Bet Builder. Decisão explícita do utilizador, depois de confrontado com a
+limitação: **de fora**, até haver uma fonte de dados por jogador real. Nem a Pulsescore (que só
+dá cartões/cantos por EQUIPA, nunca por jogador, em nenhuma amostra real desta integração) nem a
+forma como este projeto já usa a API-Football (`/fixtures/statistics`, também por equipa)
+trazem isto. A API-Football tem um endpoint separado (`/fixtures/players`) com estatísticas por
+jogador, mas nunca foi testado nem confirmado neste projeto — precisaria de: confirmar se o
+plano subscrito o inclui, e construir um motor de correspondência nome→jogador (a partir do
+rótulo da seleção, ex: "Bruno Fernandes 1+ remate no alvo") semelhante ao já existente para
+equipas (`mapping/teamMatcher.ts`). Tarefa à parte, maior, ainda não iniciada.
+
 ## Testado
 
 Contra Postgres de teste (sem rede): colocação Simples/Múltipla com débito atómico, rejeição
 por odd desatualizada, rejeição por saldo insuficiente (rollback completo), liquidação
 1X2/Dupla Chance/Mais-Menos/Ambas Marcam/Placar Exato/Empate Anula Aposta, idempotência
 (reenviar o mesmo evento não credita duas vezes), mercado não reconhecido → NEEDS_REVIEW →
-resolução manual do admin com payout correto.
+resolução manual do admin com payout correto. Bet Builder: colocação com 4 seleções do mesmo
+jogo e odd combinada correta, rejeição de mercado de jogador (Anytime Goalscorer), rejeição de
+duas seleções da mesma categoria, rejeição de seleções de eventos diferentes, liquidação
+automática de todas as seleções de uma vez (mesmo evento) com payout correto.

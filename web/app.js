@@ -1477,6 +1477,8 @@ function openMarket(eventId, isLive) {
   currentMarketEvent = event;
   currentMarketEvent._isLive = isLive;
   selectedMarketFilter = null; // volta a "Todos" a cada novo evento aberto
+  betBuilderPicks.clear();
+  betBuilderStake = 0;
   showPage("market");
   renderMarketPage();
 
@@ -1515,7 +1517,11 @@ function renderMarketPage() {
   document.getElementById("market-title").textContent = `${e.home} vs ${e.away}`;
   renderMatchTracker(e);
   renderMarketFilterBar(e);
-  renderMarketGroups(e);
+  if (selectedMarketFilter === BET_BUILDER_LABEL) {
+    renderBetBuilder(e);
+  } else {
+    renderMarketGroups(e);
+  }
 }
 
 function renderMatchTracker(e) {
@@ -1862,6 +1868,12 @@ const FOOTBALL_CATCHALL_LABEL = "Especiais";
 
 let selectedMarketFilter = null; // null = "Todos"
 
+// Pedido explícito do utilizador: um chip "Bet Builder" entre "Todos" e "1º Tempo" (só futebol —
+// as suas 5 categorias, ver BET_BUILDER_CATEGORIES abaixo, são todas conceitos de futebol). Não
+// é um filtro como os outros (não estreita a lista de mercados existente) — troca a página inteira
+// para o modo de construção de apostas combinadas do mesmo jogo, ver renderBetBuilder().
+const BET_BUILDER_LABEL = "Bet Builder";
+
 function renderMarketFilterBar(e) {
   const el = document.getElementById("market-filter-bar");
   if (!el) return;
@@ -1870,16 +1882,26 @@ function renderMarketFilterBar(e) {
     el.innerHTML = "";
     return;
   }
-  const labels = ["Todos", ...categories.map((c) => c.label)];
+  const labels = ["Todos"];
+  if (e.sport === "football") labels.push(BET_BUILDER_LABEL);
+  labels.push(...categories.map((c) => c.label));
   if (e.sport === "football") labels.push(FOOTBALL_CATCHALL_LABEL);
   el.innerHTML = labels
-    .map((label) => `<div class="mf-chip ${(selectedMarketFilter ?? "Todos") === label ? "active" : ""}" onclick='selectMarketFilter(${JSON.stringify(label)})'>${label}</div>`)
+    .map((label) =>
+      label === BET_BUILDER_LABEL
+        ? `<div class="mf-chip mf-chip-bet-builder ${selectedMarketFilter === label ? "active" : ""}" onclick='selectMarketFilter(${JSON.stringify(label)})'><i class="fas fa-database"></i> ${label}</div>`
+        : `<div class="mf-chip ${(selectedMarketFilter ?? "Todos") === label ? "active" : ""}" onclick='selectMarketFilter(${JSON.stringify(label)})'>${label}</div>`
+    )
     .join("");
 }
 function selectMarketFilter(label) {
   selectedMarketFilter = label === "Todos" ? null : label;
   renderMarketFilterBar(currentMarketEvent);
-  renderMarketGroups(currentMarketEvent);
+  if (label === BET_BUILDER_LABEL) {
+    renderBetBuilder(currentMarketEvent);
+  } else {
+    renderMarketGroups(currentMarketEvent);
+  }
 }
 // Classifica um mercado numa ÚNICA categoria (a primeira, pela ordem da lista, cujo teste
 // bata — ver comentário em MARKET_FILTER_CATEGORIES) em vez de testar cada categoria de forma
@@ -1959,6 +1981,163 @@ function renderMarketGroups(e) {
       return `<div class="market-group"><h4>${group.market}${suspendedBadge}</h4><div class="selection-row">${rows}</div></div>`;
     })
     .join("");
+}
+
+// ====================== BET BUILDER (apostas combinadas do MESMO jogo) ======================
+// Pedido explícito do utilizador: até 4 seleções combinadas (odd total = produto das odds
+// individuais, mesma fórmula da Múltipla) do MESMO evento, mas só nas 5 categorias que o motor
+// de liquidação automática já sabe resolver sozinho — Resultado/Golos/Ambas Marcam (BTTS)/
+// Escanteios/Cartões. Mercados de jogador (remates, assistências, faltas, impedimentos, passes)
+// ficam de fora: este projeto nunca recebeu, em nenhuma amostra real, dados por jogador que
+// permitissem liquidar essas apostas sem inventar o resultado (ver docs/BETTING.md).
+//
+// classifyForBetBuilder() espelha EXATAMENTE server/src/modules/betting/settlementRules.ts
+// (classifyMarket + classifyForBetBuilder) — o servidor nunca confia neste espelho e reclassifica
+// tudo de novo a partir do zero antes de aceitar a aposta; isto só existe para não mostrar ao
+// utilizador uma seleção que o servidor ia recusar de qualquer forma.
+const BET_BUILDER_PERIOD_RE =
+  /1st half|first half|2nd half|second half|half.?time|\bht\b|1st quarter|first quarter|2nd quarter|3rd quarter|4th quarter|\bq[1-4]\b|1st period|first period|2nd period|3rd period|period\s*\d|1st set|first set/i;
+
+function classifyForBetBuilder(marketName) {
+  const m = marketName;
+  if (BET_BUILDER_PERIOD_RE.test(m)) return null;
+  if (/draw no bet/i.test(m)) return "RESULTADO";
+  if (/double chance/i.test(m)) return "RESULTADO";
+  const isOverUnder = /over\/?under|total/i.test(m);
+  if (/corner/i.test(m)) return isOverUnder ? "ESCANTEIOS" : null;
+  if (/\bcard|booking/i.test(m)) return isOverUnder ? "CARTOES" : null;
+  if (/both teams to score|\bbtts\b/i.test(m)) return "BTTS";
+  if (/correct score|exact score/i.test(m)) return null; // fora das 5 categorias pedidas
+  if (isOverUnder || /total (goals|points|games|runs)/i.test(m)) return "GOLS";
+  if (/handicap|spread|asian/i.test(m)) return null;
+  if (/match odds|\b1x2\b|to win|winner|money.?line|full time result|3.?way/i.test(m)) return "RESULTADO";
+  return null;
+}
+
+const BET_BUILDER_CATEGORIES = [
+  { key: "RESULTADO", label: "Resultado" },
+  { key: "GOLS", label: "Golos" },
+  { key: "BTTS", label: "Ambas Marcam" },
+  { key: "ESCANTEIOS", label: "Escanteios" },
+  { key: "CARTOES", label: "Cartões" },
+];
+const BET_BUILDER_MAX_SELECTIONS = 4;
+
+let betBuilderPicks = new Map(); // categoria (RESULTADO/GOLS/...) -> { market, selection, odd, label }
+let betBuilderStake = 0;
+
+function betBuilderCombinedOdd() {
+  return [...betBuilderPicks.values()].reduce((acc, p) => acc * p.odd, 1);
+}
+
+function toggleBetBuilderPick(category, market, label, odd) {
+  const existing = betBuilderPicks.get(category);
+  if (existing && existing.market === market && existing.selection === label) {
+    betBuilderPicks.delete(category); // clicar na já escolhida desmarca-a
+  } else {
+    // Nova vaga precisa de espaço livre (a categoria já ocupada não conta como "nova vaga" — só
+    // troca a seleção dentro da mesma categoria, sempre permitido).
+    if (!existing && betBuilderPicks.size >= BET_BUILDER_MAX_SELECTIONS) return;
+    betBuilderPicks.set(category, { market, selection: label, odd });
+  }
+  renderBetBuilder(currentMarketEvent);
+}
+
+function renderBetBuilder(e) {
+  const el = document.getElementById("market-groups");
+  if (!el) return;
+  if (!e.odds || !e.odds.length) {
+    el.innerHTML = '<div class="empty-note">Sem mercados disponíveis para este evento</div>';
+    return;
+  }
+
+  const sectionsHtml = BET_BUILDER_CATEGORIES.map((cat) => {
+    // Todas as seleções ativas e com odd válida de QUALQUER mercado desta categoria (pode haver
+    // mais do que um mercado bruto na mesma categoria, ex: duas linhas diferentes de "Total
+    // Corners") — cada botão sabe a que mercado bruto pertence, para submeter certo.
+    const options = [];
+    for (const group of e.odds) {
+      if (classifyForBetBuilder(group.market) !== cat.key) continue;
+      for (const [label, sel] of Object.entries(group.selections ?? {})) {
+        if (!sel.isActive || !Number.isFinite(sel.odd)) continue;
+        options.push({ market: group.market, label, odd: sel.odd });
+      }
+    }
+    if (!options.length) {
+      return `<div class="market-group bb-category"><h4>${cat.label}</h4><div class="empty-note" style="padding:6px 2px">Sem mercados disponíveis nesta categoria</div></div>`;
+    }
+    const picked = betBuilderPicks.get(cat.key);
+    const rows = options
+      .map(({ market, label, odd }) => {
+        const isPicked = picked && picked.market === market && picked.selection === label;
+        return `<div class="selection-btn ${isPicked ? "picked" : ""}" onclick='toggleBetBuilderPick(${JSON.stringify(cat.key)}, ${JSON.stringify(market)}, ${JSON.stringify(label)}, ${odd})'>
+          <span class="sel-label">${label}</span><span class="sel-odd">${odd.toFixed(2)}</span>
+        </div>`;
+      })
+      .join("");
+    return `<div class="market-group bb-category"><h4>${cat.label}</h4><div class="selection-row">${rows}</div></div>`;
+  }).join("");
+
+  const count = betBuilderPicks.size;
+  const combinedOdd = betBuilderCombinedOdd();
+  const stakeValue = betBuilderStake > 0 ? betBuilderStake : "";
+  const potentialReturn = betBuilderStake > 0 ? (betBuilderStake * combinedOdd).toFixed(2) : "0.00";
+
+  el.innerHTML = `
+    <div class="bb-intro">
+      <i class="fas fa-database"></i> Combine até ${BET_BUILDER_MAX_SELECTIONS} seleções deste jogo — uma por categoria.
+    </div>
+    ${sectionsHtml}
+    <div class="bb-summary">
+      <div class="bb-summary-row"><span>${count}/${BET_BUILDER_MAX_SELECTIONS} seleções</span><span>Odd combinada: <b>${count ? combinedOdd.toFixed(2) : "—"}</b></span></div>
+      <div class="bb-summary-row">
+        <input type="number" min="0.5" step="0.5" placeholder="Valor (€)" value="${stakeValue}" oninput="setBetBuilderStake(this.value)">
+        <button class="btn-save" style="width:auto;margin-top:0" ${count ? "" : "disabled"} onclick="submitBetBuilder()">Adicionar Aposta</button>
+      </div>
+      <div class="bb-summary-row" style="color:var(--muted);font-size:.82rem">Retorno potencial: € ${potentialReturn}</div>
+      <div id="bb-error" class="auth-error"></div>
+    </div>`;
+}
+
+function setBetBuilderStake(value) {
+  betBuilderStake = Number(value) || 0;
+  // Só atualiza o texto do retorno potencial (não refaz o innerHTML todo — perderia o foco do
+  // <input> a cada tecla, mesmo bug já evitado no boletim principal, ver setStake()).
+  const combinedOdd = betBuilderCombinedOdd();
+  const row = document.querySelector("#market-groups .bb-summary-row:last-of-type");
+  if (row) row.textContent = `Retorno potencial: € ${betBuilderStake > 0 ? (betBuilderStake * combinedOdd).toFixed(2) : "0.00"}`;
+}
+
+function showBetBuilderError(msg) {
+  const el = document.getElementById("bb-error");
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add("show");
+}
+
+async function submitBetBuilder() {
+  const errEl = document.getElementById("bb-error");
+  if (errEl) errEl.classList.remove("show");
+
+  if (!betBuilderPicks.size) return;
+  if (!(betBuilderStake > 0)) return showBetBuilderError("Indique o valor da aposta.");
+
+  const e = currentMarketEvent;
+  const selections = [...betBuilderPicks.values()].map((p) => ({ eventId: e.id, sport: e.sport, market: p.market, selection: p.selection, odd: p.odd }));
+
+  const btn = document.querySelector("#market-groups .bb-summary button");
+  if (btn) btn.disabled = true;
+  try {
+    const { bets } = await Bet62Api.placeBets("BET_BUILDER", selections, betBuilderStake);
+    betBuilderPicks.clear();
+    betBuilderStake = 0;
+    renderBetBuilder(currentMarketEvent);
+    alert(`✅ Bet Builder colocado!\nRetorno potencial: € ${Number(bets[0].potentialReturn).toFixed(2)}`);
+    loadBalance();
+  } catch (err) {
+    showBetBuilderError(err.message || "Não foi possível colocar a aposta.");
+    if (btn) btn.disabled = false;
+  }
 }
 
 function toggleSelection(key, selection) {

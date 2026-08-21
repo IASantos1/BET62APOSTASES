@@ -217,6 +217,13 @@ model LedgerEntry {
 enum BetType {
   SIMPLES
   MULTIPLA
+  BET_BUILDER // seleções combinadas do MESMO evento (ex: "United vence" + "Over 2.5 golos" +
+  // "Ambas Marcam") — ao contrário da Múltipla, que proíbe expressamente duas seleções do mesmo
+  // evento (resultados correlacionados). Só permitido nas 5 categorias que o motor de liquidação
+  // automática já sabe resolver sozinho (Resultado/Golos/BTTS/Escanteios/Cartões — ver
+  // betting/settlementRules.ts::classifyForBetBuilder) — mercados de jogador (remates,
+  // assistências, faltas, impedimentos, passes) ficam de fora por não haver, em lado nenhum
+  // desta integração, dados por jogador para os liquidar sem inventar o resultado.
 }
 
 enum BetStatus {

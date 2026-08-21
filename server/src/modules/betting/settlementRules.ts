@@ -16,7 +16,7 @@ export type SettlementOutcome = "WON" | "LOST" | "VOID" | "UNRESOLVABLE";
 const PERIOD_SPECIFIC_RE =
   /1st half|first half|2nd half|second half|half.?time|\bht\b|1st quarter|first quarter|2nd quarter|3rd quarter|4th quarter|\bq[1-4]\b|1st period|first period|2nd period|3rd period|period\s*\d|1st set|first set|1st inning|\binning\b/i;
 
-type MarketCategory =
+export type MarketCategory =
   | "MATCH_RESULT"
   | "DOUBLE_CHANCE"
   | "DRAW_NO_BET"
@@ -27,7 +27,7 @@ type MarketCategory =
   | "CORRECT_SCORE"
   | "UNKNOWN";
 
-function classifyMarket(market: string): MarketCategory {
+export function classifyMarket(market: string): MarketCategory {
   if (PERIOD_SPECIFIC_RE.test(market)) return "UNKNOWN";
   if (/draw no bet/i.test(market)) return "DRAW_NO_BET";
   if (/double chance/i.test(market)) return "DOUBLE_CHANCE";
@@ -151,6 +151,32 @@ export function resolveBetSelectionOutcome(sel: SelectionContext, stats: FinalSt
     default:
       return "UNRESOLVABLE";
   }
+}
+
+// ============ Bet Builder (server/src/modules/betting/service.ts) ============
+// As 5 categorias do Bet Builder mapeiam diretamente para as categorias de MarketCategory que o
+// motor de liquidação automática já sabe resolver sozinho (classifyMarket() acima) — pedido
+// explícito do utilizador: só entram no Bet Builder mercados que já liquidam sozinhos, nunca os
+// de jogador (remates, assistências, faltas, impedimentos, passes), para os quais este projeto
+// nunca recebeu, em nenhuma amostra real, dados por jogador que permitissem decidir o resultado
+// sem inventar. CORRECT_SCORE fica de fora do Bet Builder por não estar na lista das 5
+// categorias pedidas (Resultado/Golos/BTTS/Escanteios/Cartões), mesmo já sabendo liquidar-se.
+export type BetBuilderCategory = "RESULTADO" | "GOLS" | "BTTS" | "ESCANTEIOS" | "CARTOES";
+
+const BET_BUILDER_CATEGORY_BY_MARKET: Partial<Record<MarketCategory, BetBuilderCategory>> = {
+  MATCH_RESULT: "RESULTADO",
+  DOUBLE_CHANCE: "RESULTADO",
+  DRAW_NO_BET: "RESULTADO",
+  OVER_UNDER_GOALS: "GOLS",
+  BTTS: "BTTS",
+  OVER_UNDER_CORNERS: "ESCANTEIOS",
+  OVER_UNDER_CARDS: "CARTOES",
+};
+
+/** Classifica um mercado bruto numa categoria de Bet Builder, ou `null` se não for permitido
+ * (fora das 5 categorias aprovadas, ou período específico — ver PERIOD_SPECIFIC_RE acima). */
+export function classifyForBetBuilder(market: string): BetBuilderCategory | null {
+  return BET_BUILDER_CATEGORY_BY_MARKET[classifyMarket(market)] ?? null;
 }
 
 // Desportos onde homeScore/awayScore do LiveEvent é diretamente o resultado final do jogo

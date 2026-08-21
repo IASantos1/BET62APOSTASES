@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "BetType" ADD VALUE 'BET_BUILDER';

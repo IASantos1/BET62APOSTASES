@@ -7,6 +7,7 @@ import { hybridSportsService } from "../sports/hybridService";
 import { getPrematchEvents } from "../sports/prematch/service";
 import { ALL_SPORTS, type LiveEvent, type Sport } from "../sports/types";
 import { applyFinalOutcome } from "./settlement";
+import { classifyForBetBuilder } from "./settlementRules";
 
 const MIN_STAKE_EUR = 0.5;
 
@@ -73,14 +74,55 @@ function betSelectionCreateData(v: ValidatedSelection) {
 
 export interface PlaceBetsParams {
   userId: string;
-  mode: "SIMPLES" | "MULTIPLA";
+  mode: "SIMPLES" | "MULTIPLA" | "BET_BUILDER";
   selections: SelectionInput[];
-  stake?: number; // combinado — só para MULTIPLA
+  stake?: number; // combinado — só para MULTIPLA/BET_BUILDER
 }
+
+const BET_BUILDER_MAX_SELECTIONS = 4;
 
 export interface PlaceBetsResult {
   bets: Bet[];
   errors: Array<{ input: SelectionInput; error: string }>;
+}
+
+/** Cria um único Bet combinado (várias seleções, um só stake, odd total = produto das odds) —
+ * partilhado por MULTIPLA e BET_BUILDER, que só diferem nas regras de validação antes disto. */
+async function createCombinedBet(
+  userId: string,
+  walletId: string,
+  type: "MULTIPLA" | "BET_BUILDER",
+  validated: ValidatedSelection[],
+  stake: number
+): Promise<Bet> {
+  const totalOdd = validated.reduce((acc, v) => acc.mul(v.odd), new Prisma.Decimal(1));
+  const stakeDecimal = new Prisma.Decimal(stake);
+
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.bet.create({
+      data: {
+        userId,
+        walletId,
+        type,
+        stake: stakeDecimal,
+        totalOdd,
+        potentialReturn: stakeDecimal.mul(totalOdd),
+        status: "PENDING",
+        selections: { create: validated.map(betSelectionCreateData) },
+      },
+      include: { selections: true },
+    });
+    await applyLedgerMovement({
+      walletId,
+      type: "BET_PLACED",
+      amount: stakeDecimal.neg(),
+      referenceType: "bet",
+      referenceId: created.id,
+      metadata: { mode: type, selections: validated.length },
+      tx,
+    });
+    return created;
+  });
 }
 
 export async function placeBets(params: PlaceBetsParams): Promise<PlaceBetsResult> {
@@ -105,35 +147,47 @@ export async function placeBets(params: PlaceBetsParams): Promise<PlaceBetsResul
       validated.push(result);
     }
 
-    const totalOdd = validated.reduce((acc, v) => acc.mul(v.odd), new Prisma.Decimal(1));
-    const stakeDecimal = new Prisma.Decimal(stake);
+    const bet = await createCombinedBet(params.userId, wallet.id, "MULTIPLA", validated, stake);
+    return { bets: [bet], errors: [] };
+  }
 
-    const bet = await prisma.$transaction(async (tx) => {
-      const created = await tx.bet.create({
-        data: {
-          userId: params.userId,
-          walletId: wallet.id,
-          type: "MULTIPLA",
-          stake: stakeDecimal,
-          totalOdd,
-          potentialReturn: stakeDecimal.mul(totalOdd),
-          status: "PENDING",
-          selections: { create: validated.map(betSelectionCreateData) },
-        },
-        include: { selections: true },
-      });
-      await applyLedgerMovement({
-        walletId: wallet.id,
-        type: "BET_PLACED",
-        amount: stakeDecimal.neg(),
-        referenceType: "bet",
-        referenceId: created.id,
-        metadata: { mode: "MULTIPLA", selections: validated.length },
-        tx,
-      });
-      return created;
-    });
+  if (params.mode === "BET_BUILDER") {
+    if (params.selections.length < 1 || params.selections.length > BET_BUILDER_MAX_SELECTIONS) {
+      throw Errors.badRequest(`O Bet Builder aceita entre 1 e ${BET_BUILDER_MAX_SELECTIONS} seleções.`);
+    }
+    const uniqueEvents = new Set(params.selections.map((s) => s.eventId));
+    if (uniqueEvents.size !== 1) {
+      throw Errors.badRequest("O Bet Builder só combina seleções do MESMO jogo.");
+    }
+    const stake = params.stake;
+    if (!stake || stake < MIN_STAKE_EUR) throw Errors.badRequest(`O valor mínimo da aposta é ${MIN_STAKE_EUR.toFixed(2)}€.`);
 
+    // Nunca confia na categoria que o cliente diz que cada mercado é — reclassifica aqui a
+    // partir do nome bruto do mercado (mesma heurística que decide a liquidação automática),
+    // exatamente como a odd nunca é confiada em validateSelection() abaixo. Duas seleções da
+    // MESMA categoria (ex: "Over 2.5" e "Under 1.5" golos) seriam contraditórias — proibido.
+    const usedCategories = new Set<string>();
+    for (const s of params.selections) {
+      const category = classifyForBetBuilder(s.market);
+      if (!category) {
+        throw Errors.badRequest(
+          `"${s.market}" não está disponível no Bet Builder — só Resultado, Golos, Ambas Marcam, Escanteios e Cartões (mercados de jogador ainda não têm liquidação automática).`
+        );
+      }
+      if (usedCategories.has(category)) {
+        throw Errors.badRequest("O Bet Builder só permite uma seleção por categoria (ex: não pode escolher duas opções de Golos).");
+      }
+      usedCategories.add(category);
+    }
+
+    const validated: ValidatedSelection[] = [];
+    for (const s of params.selections) {
+      const result = await validateSelection(s);
+      if ("error" in result) throw Errors.badRequest(result.error);
+      validated.push(result);
+    }
+
+    const bet = await createCombinedBet(params.userId, wallet.id, "BET_BUILDER", validated, stake);
     return { bets: [bet], errors: [] };
   }
 
