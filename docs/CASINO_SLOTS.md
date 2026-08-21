@@ -161,6 +161,41 @@ consistentes por jogo, iniciais + nome legíveis), cache de falha confirmado (se
 mesmo jogo instantâneo, ~8ms). Assim que o IP da Railway for autorizado pelo provedor, as
 imagens reais passam a aparecer sozinhas, sem precisar de mais nenhuma alteração de código.
 
+## Diagnóstico: "Callback Erro" ao abrir um jogo em produção
+
+O utilizador reportou o mesmo `CALLBACK_ERROR` já documentado acima a voltar a acontecer em
+produção (jogo não abre, alerta mostra "Callback Erro"). Como isto já tinha sido corrigido uma
+vez (URL único de callback), a causa mais provável agora é de **configuração**, não de código:
+o painel de agente do provedor ainda a apontar para o URL/segredo errado, ou
+`CASINO_CALLBACK_TOKEN` não estar preenchido no Railway — mas sem visibilidade nenhuma sobre o
+que o provedor realmente envia ao chamar o nosso callback, não era possível confirmar qual.
+
+**Adicionado** (`routes.ts`): log de cada callback recebido — `path`, `command`, `account` — a
+INFO logo à entrada (antes de qualquer verificação, para saber mesmo que a verificação do token
+falhe), mais o `result` devolvido, e um aviso específico quando `CASINO_CALLBACK_TOKEN` falta
+configurar vs. quando o token recebido não bate com o configurado (duas causas distintas, antes
+indistinguíveis nos logs). **Próxima vez que isto acontecer, os logs do Railway (`GET
+/api/casino/*` ou o painel de logs do serviço) vão mostrar exatamente**:
+- Se o pedido do provedor sequer chega a este endpoint (nada nos logs = URL configurado errado
+  no painel deles, ou bloqueio de rede/IP — o mesmo tipo de problema já confirmado com as
+  imagens dos jogos).
+- Se chega mas o token não bate (aviso `CASINO_CALLBACK_TOKEN não está configurado` ou `não bate
+  com CASINO_CALLBACK_TOKEN`) — confirma/descarta um problema de configuração do segredo.
+- Se chega com token certo mas `account` não reconhecido (`result: 21`) — nesse caso o log
+  mostra o valor exato de `account` que o provedor enviou, permitindo confirmar se corresponde
+  ao formato que geramos (`accountForUser()`, `u` + UUID sem hífens) ou se o provedor está a
+  usar outro identificador (ex: o `user_code` numérico deles) que `userIdFromAccount()` não
+  reconheceria — nesse caso o parsing teria de mudar.
+
+Testado localmente (Postgres de teste): token errado/em falta → `result: 100` com o aviso certo
+nos logs; conta desconhecida com token certo → `result: 21` com `account` visível no log.
+
+⚠️ **Ainda por confirmar**: sem acesso aos logs reais de produção nem ao painel de agente do
+provedor, não foi possível confirmar qual das causas acima é a real — os logs adicionados são o
+próximo passo para isso, não uma correção definitiva. Se o utilizador conseguir colar os logs do
+Railway depois da próxima tentativa (ou confirmar se `CASINO_CALLBACK_TOKEN`/o URL no painel
+deles estão corretos), a causa fica confirmada.
+
 ## Testado nesta build
 
 - ✅ Servidor local com Postgres real: `GET /api/casino/games` (490 jogos), `.../highlighted`
