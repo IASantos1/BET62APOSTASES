@@ -21,7 +21,7 @@ router.post(
   requireAuth,
   validateBody(
     z.object({
-      mode: z.enum(["SIMPLES", "MULTIPLA"]),
+      mode: z.enum(["SIMPLES", "MULTIPLA", "BET_BUILDER"]),
       selections: z.array(selectionSchema).min(1).max(20),
       stake: z.number().positive().optional(),
     })
