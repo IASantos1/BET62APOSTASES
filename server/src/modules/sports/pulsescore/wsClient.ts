@@ -3,7 +3,7 @@ import WebSocket from "ws";
 import { env } from "../../../config/env";
 import { logger } from "../../../lib/logger";
 import type { LiveEvent, LiveOdds, LiveSelection, Sport } from "../types";
-import { SPORT_SLUGS, bookmakerFor, orderMarketsWithPrimaryFirst, fetchLiveSportsWithEvents } from "./client";
+import { SPORT_SLUGS, bookmakerFor, orderMarketsWithPrimaryFirst, sortNumericMarketFamilies, fetchLiveSportsWithEvents } from "./client";
 
 /**
  * Real-time WebSocket feed — confirmed via the official Pulsescore documentation (not
@@ -150,7 +150,7 @@ function normalizeWsMarket(m: WsMarket): LiveOdds {
 }
 
 function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
-  const markets = orderMarketsWithPrimaryFirst(e.markets ?? []);
+  const markets = sortNumericMarketFamilies(orderMarketsWithPrimaryFirst(e.markets ?? []));
   const football = e.statistics?.football;
   const sets = e.statistics?.sets;
   return {

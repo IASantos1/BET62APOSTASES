@@ -870,24 +870,16 @@ async function refreshWithdrawalsList() {
   }
 }
 
-// Atalho no cabeçalho (ao lado do "+" de Depositar) — mesmas rotas de conta bancária/
-// levantamento já usadas em Perfil > Dados Bancários e Levantamentos, num único passo: se já
-// existir uma conta guardada com o mesmo IBAN reaproveita-a, senão cria uma nova antes de pedir
-// o levantamento.
-function openWithdraw() {
-  if (!Bet62Api.isAuthenticated()) return openAuth("login");
-  document.getElementById("withdraw-modal").classList.add("open");
-  document.getElementById("withdraw-error").classList.remove("show");
-}
-function closeWithdraw() {
-  document.getElementById("withdraw-modal").classList.remove("open");
-}
+// Aba "Levantar" do mesmo modal do Depositar (ver switchMoneyModal/openDeposit) — mesmas rotas
+// de conta bancária/levantamento já usadas em Perfil > Dados Bancários e Levantamentos, num
+// único passo: se já existir uma conta guardada com o mesmo IBAN reaproveita-a, senão cria uma
+// nova antes de pedir o levantamento.
 async function submitWithdraw() {
   const accountHolder = document.getElementById("w-name").value.trim();
   const iban = document.getElementById("w-iban").value.replace(/\s+/g, "").trim();
   const bic = document.getElementById("w-bic").value.trim();
   const amountEur = Number(document.getElementById("w-amount").value);
-  const errEl = document.getElementById("withdraw-error");
+  const errEl = document.getElementById("deposit-error");
   errEl.classList.remove("show");
 
   if (!accountHolder || !iban) {
@@ -908,7 +900,7 @@ async function submitWithdraw() {
     let account = accounts.find((a) => a.iban.replace(/\s+/g, "").toUpperCase() === iban.toUpperCase());
     if (!account) account = await Bet62Api.saveBankAccount({ accountHolder, iban, bic: bic || undefined });
     await Bet62Api.requestWithdrawal(amountEur, account.id);
-    closeWithdraw();
+    closeDeposit();
     alert("✅ Pedido de levantamento enviado para revisão de conformidade.");
     await refreshWithdrawalsList();
     await loadBalance();
@@ -934,7 +926,6 @@ function updateHeader() {
   document.getElementById("btn-header-login").classList.toggle("hidden", authed);
   document.getElementById("balance-display").classList.toggle("hidden", !authed);
   document.getElementById("btn-header-deposit").classList.toggle("hidden", !authed);
-  document.getElementById("btn-header-withdraw").classList.toggle("hidden", !authed);
   document.getElementById("btn-avatar").classList.toggle("hidden", !authed);
 
   if (currentBalance) {
@@ -980,20 +971,29 @@ function mountCardElementIfNeeded() {
   cardElement.mount("#card-element");
 }
 
+// Um único modal para Depositar/Levantar, com abas — pedido explícito para não ter um ícone
+// próprio de Levantar no cabeçalho, o levantamento vive dentro deste mesmo modal.
 function openDeposit() {
   if (!Bet62Api.isAuthenticated()) return openAuth("login");
   document.getElementById("deposit-modal").classList.add("open");
-  document.getElementById("deposit-error").classList.remove("show");
   document.getElementById("deposit-form-fields").classList.remove("hidden");
   const resultEl = document.getElementById("deposit-result");
   resultEl.classList.add("hidden");
   resultEl.innerHTML = "";
   document.getElementById("btn-deposit").disabled = false;
   selectDepositMethod(selectedDepositMethod || "STRIPE_CARD");
+  switchMoneyModal("deposit");
 }
 function closeDeposit() {
   document.getElementById("deposit-modal").classList.remove("open");
   stopDepositPolling();
+}
+function switchMoneyModal(tab) {
+  document.getElementById("deposit-error").classList.remove("show");
+  document.getElementById("money-tab-deposit").classList.toggle("active", tab === "deposit");
+  document.getElementById("money-tab-withdraw").classList.toggle("active", tab === "withdraw");
+  document.getElementById("deposit-section").classList.toggle("hidden", tab !== "deposit");
+  document.getElementById("withdraw-section").classList.toggle("hidden", tab !== "withdraw");
 }
 const DEPOSIT_METHOD_HINTS = {
   STRIPE_CARD: "Os dados do cartão ficam só neste campo seguro da Stripe — nunca passam pelo nosso servidor.",
