@@ -198,6 +198,24 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .dm-btn.active{border-color:var(--red);color:var(--text);background:rgba(230,48,39,.08)}
 .dm-icon{width:100%;height:26px;display:flex;align-items:center;justify-content:center}
 .dm-icon svg{height:22px;width:auto}
+/* Card Element da Stripe (montado dentro do nosso modal, ver deposit-card-group) — mesma
+   moldura visual dos outros inputs do formulário (.field input), o iframe cresce por dentro. */
+.card-element-mount{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 13px}
+.card-element-mount.StripeElement--focus{border-color:var(--red)}
+.card-element-mount.StripeElement--invalid{border-color:var(--red-dim)}
+/* Estado pós-submissão do depósito (a processar / à espera de aprovação MB WAY / voucher
+   Multibanco) — tudo dentro do mesmo modal, nunca uma página nova. */
+.deposit-result{text-align:center;padding:6px 0}
+.deposit-result .dr-icon{font-size:2.2rem;margin-bottom:10px}
+.deposit-result .dr-title{font-weight:700;font-size:1.02rem;margin-bottom:6px}
+.deposit-result .dr-note{color:var(--muted);font-size:.82rem;line-height:1.5}
+.mb-voucher{background:var(--surface2);border:1px dashed var(--border);border-radius:12px;padding:16px;margin:14px 0;text-align:left}
+.mb-voucher-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:.88rem}
+.mb-voucher-row + .mb-voucher-row{border-top:1px solid var(--border)}
+.mb-voucher-label{color:var(--muted)}
+.mb-voucher-value{font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:.5px}
+.spinner-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--red);animation:spinner-pulse 1s ease-in-out infinite}
+@keyframes spinner-pulse{0%,100%{opacity:.3}50%{opacity:1}}
 .empty-note{color:var(--muted);text-align:center;padding:20px 0;font-size:.85rem}
 /* Market page + Match Tracker */
 .market-header{margin-bottom:16px}
@@ -323,7 +341,11 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 <!-- Gerado em runtime por web/server.js a partir de BET62_API_BASE / BET62_WS_BASE
      (variáveis de ambiente do serviço "web" no Railway). Faz fallback para localhost
      se aberto diretamente como ficheiro estático sem esse servidor. -->
-<script src="/config.js" onerror="window.BET62_CONFIG = { API_BASE: localStorage.getItem('bet62_api_base') || 'http://localhost:4000/api', WS_BASE: localStorage.getItem('bet62_ws_base') || 'ws://localhost:4000' };"></script>
+<script src="/config.js" onerror="window.BET62_CONFIG = { API_BASE: localStorage.getItem('bet62_api_base') || 'http://localhost:4000/api', WS_BASE: localStorage.getItem('bet62_ws_base') || 'ws://localhost:4000', STRIPE_PUBLISHABLE_KEY: '' };"></script>
+<!-- Só para o Card Element do depósito (dados do cartão nunca podem tocar o nosso servidor/JS,
+     exigência de PCI-DSS) — MB WAY e Multibanco são confirmados no nosso próprio backend, sem
+     Stripe.js nenhum, ver docs/PAYMENTS.md. -->
+<script src="https://js.stripe.com/v3/"></script>
 
 <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawers()"></div>
 
@@ -708,9 +730,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
             <div class="auth-error" id="deposit-error"></div>
             <!-- Ícones próprios (não os logótipos oficiais registados da MB WAY/Multibanco — este
                  ambiente não teve acesso à internet para obter os ficheiros de marca reais);
-                 servem para indicar visualmente o método, cores aproximadas da marca. O ecrã de
-                 pagamento real (Stripe Checkout, depois de "Continuar") já mostra os logótipos
-                 oficiais da própria Stripe. -->
+                 servem só para indicar visualmente o método, cores aproximadas da marca. -->
             <div class="deposit-methods">
                 <div class="dm-btn active" data-method="STRIPE_CARD" onclick="selectDepositMethod('STRIPE_CARD')">
                     <span class="dm-icon"><svg viewBox="0 0 32 22" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="30" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="1" y="6" width="30" height="4" fill="currentColor"/><rect x="4" y="15" width="8" height="2.2" rx="1.1" fill="currentColor"/></svg></span>
@@ -725,10 +745,30 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
                     Multibanco
                 </div>
             </div>
-            <div class="form-group"><label>Valor (€)</label><input type="number" id="deposit-amount" min="10" max="5000" placeholder="Mínimo 10€"></div>
-            <div class="field-hint" id="deposit-method-hint" style="margin:-6px 0 10px"></div>
-            <button class="auth-submit" id="btn-deposit" onclick="submitDeposit()">CONTINUAR</button>
-            <button class="btn-outline" onclick="closeDeposit()">Cancelar</button>
+            <div id="deposit-form-fields">
+                <div class="form-group"><label>Valor (€)</label><input type="number" id="deposit-amount" min="10" max="5000" placeholder="Mínimo 10€"></div>
+                <!-- Cartão: campo da própria Stripe (iframe do Card Element), montado aqui dentro
+                     do nosso modal — nunca uma página à parte. Os dados do cartão nunca tocam o
+                     nosso servidor/JS (exigência de PCI-DSS), só o número/validade/CVC ficam
+                     dentro deste iframe isolado. -->
+                <div class="form-group hidden" id="deposit-card-group">
+                    <label>Dados do cartão</label>
+                    <div id="card-element" class="card-element-mount"></div>
+                </div>
+                <!-- MB WAY: o número fica no NOSSO formulário — não há redirecionamento nenhum,
+                     a confirmação acontece na app MB WAY do próprio telemóvel do cliente. -->
+                <div class="form-group hidden" id="deposit-mbway-group">
+                    <label>Número de telemóvel MB WAY</label>
+                    <input type="tel" id="deposit-phone" placeholder="912345678" inputmode="tel" autocomplete="tel">
+                </div>
+                <div class="field-hint" id="deposit-method-hint" style="margin:-6px 0 10px"></div>
+                <button class="auth-submit" id="btn-deposit" onclick="submitDeposit()">CONTINUAR</button>
+                <button class="btn-outline" onclick="closeDeposit()">Cancelar</button>
+            </div>
+            <!-- Estado pós-submissão (cartão a processar, à espera de aprovação MB WAY, ou a
+                 entidade/referência Multibanco) — tudo no nosso próprio layout, nunca uma segunda
+                 página. Preenchido por renderDepositResult() em app.js. -->
+            <div id="deposit-result" class="hidden"></div>
         </div>
     </div>
 </div>

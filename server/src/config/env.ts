@@ -18,6 +18,11 @@ const envSchema = z.object({
   STRIPE_SECRET_KEY: z.string().default(""),
   STRIPE_WEBHOOK_SECRET: z.string().default(""),
   STRIPE_MODE: z.enum(["sandbox", "live"]).default("sandbox"),
+  // Publishable (pk_test_/pk_live_) — safe to expose to the frontend by design (never secret),
+  // needed by Stripe.js/Elements to mount the card field in our own deposit modal (see
+  // GET /config.js in app.ts). Only card needs Stripe.js at all — MB WAY/Multibanco are
+  // confirmed server-side (see payments/stripe/service.ts), no client-side Stripe involved.
+  STRIPE_PUBLISHABLE_KEY: z.string().default(""),
 
   // --- Revolut Business (withdrawals / payouts) ---
   REVOLUT_ENV: z.enum(["sandbox", "live"]).default("sandbox"),

@@ -7,62 +7,52 @@ construção. Cada secção assinala com **NEEDS VALIDATION** os pontos que têm
 confirmados manualmente antes de ligar chaves reais em produção. O código já está escrito
 para esse formato — só os nomes exatos de parâmetros/endpoints precisam de confirmação.
 
-## Depósitos — Stripe (Checkout Sessions)
+## Depósitos — Stripe (PaymentIntents, confirmados dentro do próprio layout)
 
-Ficheiros: `server/src/modules/payments/stripe/{client,service,routes}.ts`
+Ficheiros: `server/src/modules/payments/stripe/{client,service,routes}.ts`,
+`web/{index.html,app.js,api.js}` (secção `#deposit-modal`/`DEPOSIT`).
 
-**Mudança de arquitetura**: a primeira versão usava `PaymentIntents` diretamente, o que exige
-Stripe.js/Elements no frontend para confirmar o cartão (3DS) e para ler
-`next_action.multibanco_display_details` e mostrar o voucher — essa parte do frontend nunca
-chegou a ser implementada (ficava só um alert a dizer "ainda não configurado"), por isso os
-depósitos não funcionavam de ponta a ponta. Trocado para **Checkout Sessions**: uma página
-paga hospedada pela própria Stripe, que já trata do 3DS, do pedido do número de telemóvel da
-MB WAY, e da apresentação da entidade/referência Multibanco — o frontend só precisa de
-redirecionar para `checkoutUrl`, sem Stripe.js nem chave publicável nenhuma.
+**Mudança de arquitetura (2ª vez)**: a versão anterior usava Checkout Sessions — uma página
+hospedada pela Stripe, para onde a app inteira redirecionava (`window.location.href =
+checkoutUrl`). Funcionava, mas o utilizador pediu explicitamente para **nunca abrir uma segunda
+página** — o número de telemóvel MB WAY, os dados do cartão e a entidade/referência Multibanco
+têm de aparecer dentro do próprio layout da BET62. Reescrito para **PaymentIntents diretas**,
+uma abordagem diferente por método consoante o que cada um realmente precisa do browser:
 
-Métodos suportados, mapeados para `payment_method_types` do Stripe Checkout:
-
-| Bet62 (`DepositProvider`) | Stripe `payment_method_types` | Notas |
+| Bet62 (`DepositProvider`) | Como confirma | Precisa de Stripe.js no browser? |
 |---|---|---|
-| `STRIPE_CARD` | `card` | Os dados do cartão são inseridos na própria página da Stripe (3DS tratado lá também) — nunca no nosso formulário, por exigência de PCI-DSS (ver "Cartão/MB WAY/Multibanco aparecem no nosso formulário?" abaixo). |
-| `STRIPE_MBWAY` | `mb_way` | O número de telemóvel é pedido na página da Stripe, não no nosso formulário. **CONFIRMADO**: `mb_way` existe em `Checkout.SessionCreateParams.PaymentMethodType` no SDK `stripe@22.5.0` instalado (grepado diretamente no `.d.ts` do pacote — a versão anteriormente instalada, 16.12.0, não o listava, daí a dúvida inicial; não é uma limitação da Stripe, era só o SDK desatualizado). Falta só **NEEDS VALIDATION**: confirmar que o MB WAY está ativado na conta Stripe (Dashboard → Settings → Payment methods) — se não estiver, a Stripe descarta-o silenciosamente da página de Checkout mesmo estando no pedido. |
-| `STRIPE_MULTIBANCO` | `multibanco` | Voucher-based (entidade + referência), moeda EUR obrigatória, liquidação diferida (o cliente paga num prazo, tipicamente até 7 dias) — a entidade/referência são geradas e mostradas na própria página da Stripe, não por nós. |
+| `STRIPE_CARD` | Cliente, com `stripe.confirmCardPayment()` usando um Card Element montado dentro do nosso modal (`#card-element`). | **Sim** — é o único caso: o número do cartão tem de nascer e morrer num iframe da própria Stripe (exigência de PCI-DSS, o nosso JS/servidor nunca o vê), mas esse iframe fica dentro do nosso modal, não numa página à parte. Um eventual desafio 3DS aparece como sobreposição na mesma página. |
+| `STRIPE_MBWAY` | Servidor, com `confirm:true` + `billing_details.phone` (formato E.164, ex: `+351912345678` — **confirmado** via pesquisa à documentação pública, já que `docs.stripe.com` está bloqueado neste ambiente de build). | **Não.** A "confirmação" acontece na app MB WAY do telemóvel do cliente, não no browser — por isso o número fica só no nosso formulário e o pedido é confirmado diretamente no backend. O frontend passa a sondar `GET /deposits/:id` (a cada 3s, até ~90s) à espera que o cliente aprove. |
+| `STRIPE_MULTIBANCO` | Servidor, com `confirm:true` + `billing_details.email` (o e-mail da própria conta BET62 do utilizador, sem pedir de novo). | **Não.** É um voucher estático — a resposta já vem com `next_action.multibanco_display_details.{entity,reference,expires_at}` (**confirmado** via `.d.ts` do SDK `stripe@22.5.0`), mostrado diretamente no nosso layout. Propositadamente **não** se usa `stripe.confirmMultibancoPayment()` no cliente — essa função de Stripe.js abre automaticamente o seu próprio modal com o voucher, o que voltaria a fugir do nosso layout. |
 
-### Cartão/MB WAY/Multibanco aparecem no nosso formulário?
-
-Não — e é intencional. O nosso modal de depósito (`web/index.html#deposit-modal`) só pede
-**método + valor**; ao clicar "Continuar" a app sai da SPA e vai para a página hospedada da
-Stripe (`checkoutUrl`, `web/app.js::submitDeposit`), que **é onde** o número de telemóvel MB
-WAY, os dados do cartão, ou a entidade/referência Multibanco realmente aparecem — não é uma
-funcionalidade em falta, é a arquitetura de Checkout Sessions: a Stripe processa esses dados
-diretamente na sua própria página para que o cartão nunca passe pelo nosso servidor/frontend
-(exigência de PCI-DSS SAQ A — a alternativa, coletar esses campos no nosso próprio formulário
-com Stripe Elements, exige um nível de conformidade PCI muito mais pesado, SAQ A-EP). O
-`DEPOSIT_METHOD_HINTS` em `web/app.js` mostra uma frase por método a avisar disto antes de
-clicar em Continuar.
+Em nenhum dos três casos o crédito da carteira acontece na resposta síncrona — mesmo quando o
+estado já vem `"succeeded"` — só o webhook credita (`creditDepositFromIntent`), fonte única de
+verdade idempotente (regra herdada da versão anterior, só mudou o nome dos campos).
 
 Fluxo implementado:
 
-1. `POST /api/payments/stripe/deposits` — cria um registo `Deposit` (`PENDING`), depois uma
-   `checkout.sessions.create` na Stripe (`mode: "payment"`, `locale: "pt"`), atualiza o
-   `Deposit` para `PROCESSING` e devolve `{ depositId, checkoutUrl }`. O frontend
-   (`web/app.js::submitDeposit`) redireciona a página inteira para `checkoutUrl`.
-2. `success_url`/`cancel_url` apontam de volta para a própria SPA
-   (`/?deposit=success&session_id=...` / `/?deposit=cancel`), lidos no arranque
-   (`web/app.js::handleDepositRedirect`) só para mostrar uma mensagem — **nunca creditam o
-   saldo por si só** (ver regra de segurança abaixo).
+1. `POST /api/payments/stripe/deposits` — recebe `{ provider, amountEur, phone? }` (`phone` só
+   para `STRIPE_MBWAY`, validado/normalizado para E.164 antes de qualquer chamada à Stripe —
+   um formato inválido nunca chega a criar um registo `Deposit`). Cria o `Deposit` (`PENDING`
+   → `PROCESSING`) e devolve conforme o método:
+   - Cartão: `{ depositId, clientSecret }`.
+   - MB WAY: `{ depositId, status }` (`status` = estado da `PaymentIntent`, tipicamente
+     `"processing"` — a aguardar aprovação no telemóvel).
+   - Multibanco: `{ depositId, entity, reference, expiresAt }`.
+2. `GET /api/payments/stripe/deposits/:id` — estado atual do depósito, sondado pelo frontend
+   enquanto espera a aprovação MB WAY (`web/app.js::pollDepositStatus`).
 3. Webhook `POST /api/payments/stripe/webhook` (montado com `express.raw` antes do
-   `express.json`, ver `app.ts`) — valida a assinatura com `STRIPE_WEBHOOK_SECRET`, e em
-   `checkout.session.completed` (quando `payment_status:"paid"`, cobre cartão/MB WAY) ou
-   `checkout.session.async_payment_succeeded` (cobre Multibanco, que só confirma dias
-   depois), credita a carteira do utilizador através do ledger (`applyLedgerMovement`).
-   `checkout.session.async_payment_failed`/`checkout.session.expired` marcam o depósito como
+   `express.json`, ver `app.ts`) — valida a assinatura com `STRIPE_WEBHOOK_SECRET`; em
+   `payment_intent.succeeded` credita a carteira via ledger (`applyLedgerMovement`);
+   `payment_intent.payment_failed`/`payment_intent.canceled` marcam o depósito
    falhado/cancelado.
-4. Proteções antes de creditar: idempotência (ignora se o depósito já estiver `SUCCEEDED` —
-   a Stripe pode reenviar o mesmo evento), e confere o valor/moeda do evento contra o
-   depósito guardado antes de aplicar o crédito.
-5. Regras de jogo responsável aplicadas antes de criar a sessão: montante entre 10€ e 5000€,
-   dentro do limite diário de depósito do utilizador, conta não autoexcluída.
+4. Proteções antes de creditar: idempotência (ignora se o depósito já estiver `SUCCEEDED` — a
+   Stripe pode reenviar o mesmo evento), e confere o valor/moeda da `PaymentIntent` contra o
+   depósito guardado antes de aplicar o crédito. Testado (Postgres de teste + assinatura HMAC
+   gerada localmente, sem depender de rede): crédito correto, reenvio do mesmo evento não
+   duplica, e um valor adulterado no evento não credita.
+5. Regras de jogo responsável aplicadas antes de criar a `PaymentIntent`: montante entre 10€ e
+   5000€, dentro do limite diário de depósito do utilizador, conta não autoexcluída.
 6. `client.ts::getStripeClient()` recusa arrancar se `STRIPE_MODE` (sandbox/live) não bater
    certo com o prefixo da chave configurada (`sk_test_`/`sk_live_`) — protege contra ligar a
    plataforma ao modo errado sem dar por isso.
@@ -72,14 +62,20 @@ Fluxo implementado:
 1. **Aprovação de gambling na Stripe primeiro** (ver `docs/COMPLIANCE.md`) — sem isso a conta
    Stripe pode nem aceitar processar estes pagamentos, mesmo com chaves live.
 2. No [Stripe Dashboard](https://dashboard.stripe.com) → **Developers → API keys**: copiar
-   `sk_live_...` para `STRIPE_SECRET_KEY` nas variáveis de ambiente do Railway (nunca no
-   código, nunca colado em chat/commit).
+   `sk_live_...` para `STRIPE_SECRET_KEY` **e** `pk_live_...` para `STRIPE_PUBLISHABLE_KEY`
+   nas variáveis de ambiente do Railway (a chave publicável não é secreta — é servida ao
+   browser via `GET /config.js` — mas a secreta nunca deve ir para o código nem ser colada em
+   chat/commit). Sem `STRIPE_PUBLISHABLE_KEY`, o Card Element não monta e o depósito por
+   cartão falha com uma mensagem clara ("Pagamento por cartão indisponível") em vez de um
+   comportamento estranho.
 3. **Developers → Webhooks → Add endpoint**: apontar para
    `https://<domínio-real-em-produção>/api/payments/stripe/webhook` (confirma o domínio
    exato que está ligado no Railway — ver `docs/DEPLOY_RAILWAY.md`), selecionar os eventos
-   `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
-   `checkout.session.async_payment_failed`, `checkout.session.expired`. Copiar o
-   `whsec_...` gerado para `STRIPE_WEBHOOK_SECRET`.
+   `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled`.
+   Copiar o `whsec_...` gerado para `STRIPE_WEBHOOK_SECRET`. **Se a conta ainda tiver o
+   endpoint antigo criado para Checkout Sessions** (eventos `checkout.session.*`), atualizar
+   os eventos selecionados nesse mesmo endpoint em vez de criar um segundo — os eventos
+   `checkout.session.*` agora são só ignorados pelo código (`default:` no switch do webhook).
 4. Mudar `STRIPE_MODE=live` no Railway (tem de bater certo com `sk_live_`, ver ponto 6 acima
    — o servidor recusa arrancar depósitos se não bater).
 5. `apiVersion` do Stripe fixado em `2026-07-29.dahlia` no `client.ts` — lido diretamente de
@@ -87,11 +83,14 @@ Fluxo implementado:
    docs.stripe.com/o dashboard não são alcançáveis deste ambiente de build. Continua a valer
    a pena confirmar contra o dashboard antes de produção, caso a conta tenha uma versão fixada
    diferente.
-6. Fazer um depósito real pequeno (10€, o mínimo) com cada um dos 3 métodos antes de anunciar
+6. **MB WAY e Multibanco têm de estar ativados na conta** (Dashboard → Settings → Payment
+   methods) — como agora são confirmados diretamente no servidor (`confirm:true`), um método
+   desativado na conta faz a chamada `paymentIntents.create()` falhar de imediato (o utilizador
+   vê o erro na hora, o depósito fica `FAILED`), não silenciosamente como acontecia com
+   Checkout Sessions.
+7. Fazer um depósito real pequeno (10€, o mínimo) com cada um dos 3 métodos antes de anunciar
    a plataforma como "live" — confirmar que o webhook chega, credita o saldo, e que reenviar o
    mesmo evento (dashboard → Webhooks → esse evento → "Resend") não credita a segunda vez.
-   Para o MB WAY especificamente, confirmar primeiro que está ativado em Dashboard → Settings
-   → Payment methods (ver nota na tabela acima).
 
 ### Ícones dos métodos de pagamento
 
@@ -99,11 +98,11 @@ Fluxo implementado:
 Multibanco) no seletor da BET62 — **não são os logótipos oficiais registados** da MB WAY/
 Multibanco (este ambiente de build não teve acesso à internet para obter os ficheiros de
 marca reais), são badges próprios em cores aproximadas da marca, só para indicar visualmente
-o método antes de avançar. A página de pagamento real que o cliente vê a seguir
-(`checkoutUrl`, hospedada pela Stripe) já mostra os logótipos oficiais geridos pela própria
-Stripe. Se quiseres os logótipos exatos no nosso próprio seletor, os ficheiros de marca
-oficiais (SVG) podem ser obtidos em sites de imprensa/marca da SIBS (Multibanco/MB WAY) e
-trocados diretamente no HTML.
+o método. Como agora tudo acontece dentro do nosso próprio modal (sem página da Stripe a
+seguir), estes são os únicos ícones que o cliente vê no processo inteiro — só o Card Element
+do cartão (`#card-element`) é um iframe da própria Stripe, sem logótipo próprio visível. Se
+quiseres os logótipos exatos no nosso seletor, os ficheiros de marca oficiais (SVG) podem ser
+obtidos em sites de imprensa/marca da SIBS (Multibanco/MB WAY) e trocados diretamente no HTML.
 
 ## Levantamentos — Revolut Business
 

@@ -124,10 +124,15 @@ const Bet62Api = (() => {
     getTransactions: (cursor) => request(`/wallet/transactions${cursor ? `?cursor=${cursor}` : ""}`),
 
     // Payments
-    // Devolve { depositId, checkoutUrl } — checkoutUrl é a página hospedada da própria Stripe
-    // (Checkout Session), que já trata do 3DS do cartão, do pedido de telemóvel da MB WAY e da
-    // apresentação da entidade/referência Multibanco, sem o frontend precisar de Stripe.js.
-    createDeposit: (provider, amountEur) => request("/payments/stripe/deposits", { method: "POST", body: { provider, amountEur } }),
+    // Tudo confirmado dentro do nosso próprio layout, nunca uma segunda página:
+    // - STRIPE_CARD: devolve { depositId, clientSecret } — o frontend confirma com
+    //   stripe.confirmCardPayment() usando o Card Element montado no nosso modal.
+    // - STRIPE_MBWAY (precisa de `phone`): já vem confirmado no servidor, devolve
+    //   { depositId, status } — "processing" = a aguardar aprovação na app MB WAY do cliente.
+    // - STRIPE_MULTIBANCO: já vem confirmado no servidor, devolve
+    //   { depositId, entity, reference, expiresAt } para mostrar no nosso próprio layout.
+    createDeposit: (provider, amountEur, phone) => request("/payments/stripe/deposits", { method: "POST", body: { provider, amountEur, phone } }),
+    getDepositStatus: (depositId) => request(`/payments/stripe/deposits/${encodeURIComponent(depositId)}`),
     saveBankAccount: (payload) => request("/payments/revolut/bank-accounts", { method: "POST", body: payload }),
     listBankAccounts: () => request("/payments/revolut/bank-accounts"),
     requestWithdrawal: (amountEur, bankAccountId) =>

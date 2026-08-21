@@ -816,24 +816,65 @@ function updateHeader() {
 }
 
 // ====================== DEPOSIT ======================
+// Tudo confirmado dentro do próprio modal da BET62 — nunca uma segunda página (pedido
+// explícito do utilizador). Só o CARTÃO precisa de Stripe.js (o campo do cartão tem de ser um
+// iframe da própria Stripe, exigência de PCI-DSS — nunca o nosso JS a tocar no número do
+// cartão), montado aqui dentro do nosso modal, não numa página à parte. MB WAY e Multibanco são
+// confirmados diretamente no nosso backend (ver payments/stripe/service.ts) — nenhum dos dois
+// precisa de Stripe.js: MB WAY porque a "confirmação" acontece na app do telemóvel do cliente,
+// não no browser; Multibanco porque é um voucher estático (entidade+referência), sem nenhuma
+// interação necessária no browser para o gerar.
+let stripeJsClient = null;
+let cardElement = null;
+function getStripeJsClient() {
+  if (stripeJsClient) return stripeJsClient;
+  const pk = window.BET62_CONFIG.STRIPE_PUBLISHABLE_KEY;
+  if (!pk || typeof Stripe !== "function") return null;
+  stripeJsClient = Stripe(pk);
+  return stripeJsClient;
+}
+// Montado uma única vez e reutilizado entre aberturas do modal — só precisa de existir quando o
+// método Cartão está selecionado. Não segue mudanças de tema claro/escuro depois de montado
+// (limitação conhecida, secundária: o modal costuma ficar aberto pouco tempo).
+function mountCardElementIfNeeded() {
+  if (cardElement) return;
+  const stripe = getStripeJsClient();
+  if (!stripe) return;
+  const textColor = getComputedStyle(document.documentElement).getPropertyValue("--text").trim() || "#000";
+  const mutedColor = getComputedStyle(document.documentElement).getPropertyValue("--muted").trim() || "#999";
+  cardElement = stripe.elements().create("card", {
+    style: { base: { fontSize: "15px", color: textColor, "::placeholder": { color: mutedColor } }, invalid: { color: "#e63027" } },
+  });
+  cardElement.mount("#card-element");
+}
+
 function openDeposit() {
   if (!Bet62Api.isAuthenticated()) return openAuth("login");
   document.getElementById("deposit-modal").classList.add("open");
   document.getElementById("deposit-error").classList.remove("show");
+  document.getElementById("deposit-form-fields").classList.remove("hidden");
+  const resultEl = document.getElementById("deposit-result");
+  resultEl.classList.add("hidden");
+  resultEl.innerHTML = "";
+  document.getElementById("btn-deposit").disabled = false;
   selectDepositMethod(selectedDepositMethod || "STRIPE_CARD");
 }
 function closeDeposit() {
   document.getElementById("deposit-modal").classList.remove("open");
+  stopDepositPolling();
 }
 const DEPOSIT_METHOD_HINTS = {
-  STRIPE_CARD: "Ao continuar, é reencaminhado para a página segura da Stripe para inserir os dados do cartão.",
-  STRIPE_MBWAY: "Ao continuar, é reencaminhado para a página segura da Stripe, onde insere o número de telemóvel MB WAY.",
-  STRIPE_MULTIBANCO: "Ao continuar, é reencaminhado para a página segura da Stripe, que gera a entidade e referência Multibanco para pagar no Multibanco/homebanking.",
+  STRIPE_CARD: "Os dados do cartão ficam só neste campo seguro da Stripe — nunca passam pelo nosso servidor.",
+  STRIPE_MBWAY: "Vai receber um pedido de confirmação na app MB WAY do número indicado.",
+  STRIPE_MULTIBANCO: "Vamos gerar aqui mesmo a entidade e referência para pagar no Multibanco ou homebanking.",
 };
 function selectDepositMethod(method) {
   selectedDepositMethod = method;
   document.querySelectorAll(".dm-btn").forEach((b) => b.classList.toggle("active", b.dataset.method === method));
   document.getElementById("deposit-method-hint").textContent = DEPOSIT_METHOD_HINTS[method] || "";
+  document.getElementById("deposit-card-group").classList.toggle("hidden", method !== "STRIPE_CARD");
+  document.getElementById("deposit-mbway-group").classList.toggle("hidden", method !== "STRIPE_MBWAY");
+  if (method === "STRIPE_CARD") mountCardElementIfNeeded();
 }
 async function submitDeposit() {
   const amountEur = Number(document.getElementById("deposit-amount").value);
@@ -849,11 +890,9 @@ async function submitDeposit() {
   const btn = document.getElementById("btn-deposit");
   btn.disabled = true;
   try {
-    const { checkoutUrl } = await Bet62Api.createDeposit(selectedDepositMethod, amountEur);
-    // Sai da SPA para a página de pagamento hospedada da própria Stripe — volta sozinho para
-    // aqui (?deposit=success|cancel, ver handleDepositRedirect() no init) assim que o cliente
-    // terminar ou cancelar.
-    window.location.href = checkoutUrl;
+    if (selectedDepositMethod === "STRIPE_CARD") await submitCardDeposit(amountEur);
+    else if (selectedDepositMethod === "STRIPE_MBWAY") await submitMbWayDeposit(amountEur);
+    else await submitMultibancoDeposit(amountEur);
   } catch (err) {
     errEl.textContent = err.message || "Não foi possível iniciar o depósito.";
     errEl.classList.add("show");
@@ -861,20 +900,107 @@ async function submitDeposit() {
   }
 }
 
-// Lê ?deposit=success|cancel devolvido pelo Stripe Checkout (success_url/cancel_url em
-// payments/stripe/service.ts) — o crédito em si só acontece quando o webhook confirmar (nunca
-// só por o cliente ter voltado a esta página, ver nota de segurança no service.ts), por isso
-// esta mensagem é só informativa; o saldo atualiza-se sozinho no próximo refresh do perfil.
-function handleDepositRedirect() {
-  const params = new URLSearchParams(location.search);
-  const status = params.get("deposit");
-  if (!status) return;
-  history.replaceState(null, "", location.pathname);
-  if (status === "success") {
-    alert("Pagamento em processamento. O saldo é atualizado assim que a Stripe confirmar (pode demorar alguns minutos, ou até alguns dias no caso do Multibanco).");
-  } else if (status === "cancel") {
-    alert("Depósito cancelado.");
+async function submitCardDeposit(amountEur) {
+  const stripe = getStripeJsClient();
+  if (!stripe || !cardElement) throw new Error("Pagamento por cartão indisponível neste momento.");
+  const { clientSecret } = await Bet62Api.createDeposit("STRIPE_CARD", amountEur);
+  // confirmCardPayment trata de um eventual desafio 3DS com uma sobreposição na própria
+  // página (a própria Stripe injeta o iframe do desafio por cima do nosso modal) — nunca uma
+  // navegação para outro sítio.
+  const result = await stripe.confirmCardPayment(clientSecret, {
+    payment_method: { card: cardElement, billing_details: currentProfile?.email ? { email: currentProfile.email } : {} },
+  });
+  if (result.error) throw new Error(result.error.message || "O pagamento não foi autorizado.");
+  showDepositResult("success", { note: "Pagamento aprovado! O saldo atualiza-se em poucos instantes." });
+  loadBalance();
+}
+
+async function submitMbWayDeposit(amountEur) {
+  const phone = document.getElementById("deposit-phone").value.trim();
+  if (!phone) throw new Error("Indique o número de telemóvel MB WAY.");
+  const { depositId } = await Bet62Api.createDeposit("STRIPE_MBWAY", amountEur, phone);
+  showDepositResult("waiting-mbway", {});
+  pollDepositStatus(depositId);
+}
+
+async function submitMultibancoDeposit(amountEur) {
+  const { entity, reference, expiresAt } = await Bet62Api.createDeposit("STRIPE_MULTIBANCO", amountEur);
+  showDepositResult("multibanco", { entity, reference, expiresAt, amountEur });
+}
+
+function showDepositResult(kind, data) {
+  document.getElementById("deposit-form-fields").classList.add("hidden");
+  const el = document.getElementById("deposit-result");
+  el.classList.remove("hidden");
+  if (kind === "success") {
+    el.innerHTML = `
+      <div class="deposit-result"><div class="dr-icon">✅</div><div class="dr-title">Depósito enviado</div><div class="dr-note">${data.note}</div></div>
+      <button class="auth-submit" onclick="closeDeposit()">FECHAR</button>`;
+  } else if (kind === "failed") {
+    el.innerHTML = `
+      <div class="deposit-result"><div class="dr-icon">❌</div><div class="dr-title">Pagamento não concluído</div><div class="dr-note">${data.note}</div></div>
+      <button class="auth-submit" onclick="closeDeposit()">FECHAR</button>`;
+  } else if (kind === "waiting-mbway") {
+    el.innerHTML = `
+      <div class="deposit-result"><div class="dr-icon">📱</div><div class="dr-title">A aguardar aprovação</div>
+        <div class="dr-note">Abra a app MB WAY no seu telemóvel e confirme o pagamento. <span class="spinner-dot"></span></div></div>
+      <button class="btn-outline" onclick="closeDeposit()">Fechar (o saldo atualiza-se sozinho)</button>`;
+  } else if (kind === "multibanco") {
+    const expires = data.expiresAt ? new Date(data.expiresAt).toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" }) : null;
+    el.innerHTML = `
+      <div class="deposit-result">
+        <div class="dr-icon">🏧</div>
+        <div class="dr-title">Pague no Multibanco ou homebanking</div>
+        <div class="mb-voucher">
+          <div class="mb-voucher-row"><span class="mb-voucher-label">Entidade</span><span class="mb-voucher-value">${data.entity}</span></div>
+          <div class="mb-voucher-row"><span class="mb-voucher-label">Referência</span><span class="mb-voucher-value">${data.reference}</span></div>
+          <div class="mb-voucher-row"><span class="mb-voucher-label">Valor</span><span class="mb-voucher-value">${data.amountEur.toFixed(2)}€</span></div>
+        </div>
+        <div class="dr-note">${expires ? `Válido até ${expires}. ` : ""}O saldo é atualizado automaticamente assim que o pagamento for confirmado.</div>
+      </div>
+      <button class="auth-submit" onclick='copyMultibancoReference(${JSON.stringify(data.entity)}, ${JSON.stringify(data.reference)})'>COPIAR ENTIDADE E REFERÊNCIA</button>
+      <button class="btn-outline" onclick="closeDeposit()">Fechar</button>`;
   }
+}
+function copyMultibancoReference(entity, reference) {
+  navigator.clipboard?.writeText(`Entidade: ${entity}  Referência: ${reference}`).catch(() => {});
+}
+
+let depositPollTimer = null;
+function stopDepositPolling() {
+  if (depositPollTimer) {
+    clearTimeout(depositPollTimer);
+    depositPollTimer = null;
+  }
+}
+// MB WAY não tem nenhum retorno visual síncrono — a aprovação acontece na app do telemóvel do
+// cliente, fora do nosso controlo — por isso sondamos o nosso próprio GET /deposits/:id em vez
+// de bloquear à espera. Desiste ao fim de ~90s (30x3s) para não prender o utilizador no modal
+// indefinidamente; o saldo continua a atualizar-se sozinho via webhook mesmo depois de fechar.
+function pollDepositStatus(depositId, attempt = 0) {
+  stopDepositPolling();
+  depositPollTimer = setTimeout(async () => {
+    try {
+      const { status } = await Bet62Api.getDepositStatus(depositId);
+      if (status === "SUCCEEDED") {
+        showDepositResult("success", { note: "Pagamento aprovado! O saldo atualiza-se em poucos instantes." });
+        loadBalance();
+        return;
+      }
+      if (status === "FAILED" || status === "CANCELLED") {
+        showDepositResult("failed", { note: "O pedido MB WAY foi recusado ou expirou. Tente novamente." });
+        return;
+      }
+    } catch {
+      /* falha transitória a sondar — tenta outra vez no próximo ciclo */
+    }
+    if (attempt < 29) {
+      pollDepositStatus(depositId, attempt + 1);
+    } else {
+      const note = document.querySelector("#deposit-result .dr-note");
+      if (note) note.innerHTML = "Ainda não recebemos a confirmação. Pode fechar esta janela — o saldo atualiza-se sozinho assim que aprovar na app.";
+    }
+  }, 3000);
 }
 
 // ====================== CASINO ======================
@@ -1740,7 +1866,6 @@ function placeBetDemo() {
   renderSportsMenu();
   renderCompetitions();
   renderBetslipPanel();
-  handleDepositRedirect();
   if (Bet62Api.isAuthenticated()) {
     await loadProfile();
   }
