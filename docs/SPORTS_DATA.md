@@ -443,6 +443,23 @@ ficar em primeiro por acaso. Testado com a amostra real: nos 5 eventos de beiseb
 "Game Lines" já vinha primeiro por acaso (não tem empate), por isso o comportamento visível não
 mudou nesta amostra específica — mas a proteção evita que aconteça com outra ordem de array.
 
+### Mercados "Mais/Menos X.5" fora de ordem numérica
+
+Reportado pelo utilizador com captura de ecrã real: os mercados "Over/Under 0.5 Goals",
+"Over/Under 1.5 Goals" etc. (uma linha diferente por mercado, não um único mercado com várias
+linhas) apareciam na página de Mercados na ordem "0.5, 1.5, 4.5, 2.5, 3.5" — a bookmaker não
+garante nenhuma ordem numérica entre estas variantes, cada uma chega como um mercado
+independente na posição em que a API decidiu devolver.
+
+Corrigido com `sortNumericMarketFamilies()` (`pulsescore/client.ts`, aplicado tanto no caminho
+REST — `normalizeEvent()` — como no WebSocket — `wsClient.ts::normalizeWsEvent()`): agrupa
+mercados com o mesmo nome depois de remover o número (ex: "Over/Under Goals") e ordena cada
+grupo pelo número ascendente, mantendo esse grupo exatamente na posição onde o seu primeiro
+membro apareceu — nunca reordena mercados sem número nem mistura duas famílias diferentes (ex:
+"Total Corners" e "Over/Under Goals" continuam cada uma com a sua própria ordem, independente
+uma da outra). Testado com a sequência exata da captura ("0.5, 1.5, 4.5, 2.5, 3.5, 5.5") e com
+famílias intercaladas.
+
 ⚠️ **Nota**: mesmo com esta correção, "Game Lines" (o mercado que acaba por ser mostrado como
 pré-visualização) continua a ser um mercado misto (Run Line + Total + Money juntos), não um
 1X2/moneyline limpo — a bet365 não expõe um mercado moneyline autónomo para este jogo.

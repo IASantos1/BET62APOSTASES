@@ -555,6 +555,48 @@ export function orderMarketsWithPrimaryFirst<T extends { canonicalMarket?: strin
   return withoutTie.length ? [...withoutTie, ...withTie] : markets;
 }
 
+// A ordem dos mercados dentro de uma "família" (a mesma linha de Mais/Menos repetida para
+// vários valores, ex: "Over/Under 0.5 Goals"/"Over/Under 1.5 Goals"/...) vinda da bookmaker é
+// arbitrária — CONFIRMADO numa captura real: chegou "0.5, 1.5, 4.5, 2.5, 3.5", fora de ordem.
+// Agrupa mercados que têm o mesmo nome com o número removido (ex: "Over/Under X Goals") e
+// ordena cada grupo pelo número ascendente — mantém o grupo na posição onde o seu primeiro
+// membro apareceu, nunca reordena mercados sem número nem os move para perto de outra família.
+function extractMarketLine(name: string): number | null {
+  const m = name.match(/(\d+(?:\.\d+)?)/);
+  return m?.[1] ? parseFloat(m[1]) : null;
+}
+
+export function sortNumericMarketFamilies<T extends { rawName?: string; canonicalMarket?: string }>(markets: T[]): T[] {
+  const nameOf = (m: T) => m.rawName ?? m.canonicalMarket ?? "";
+  const baseNameOf = (name: string) => name.replace(/\d+(?:\.\d+)?/, "").trim();
+
+  const groups = new Map<string, T[]>();
+  const firstIndexByBaseName: string[] = [];
+  markets.forEach((m) => {
+    const base = baseNameOf(nameOf(m));
+    if (!groups.has(base)) {
+      groups.set(base, []);
+      firstIndexByBaseName.push(base);
+    }
+    groups.get(base)!.push(m);
+  });
+
+  const result: T[] = [];
+  for (const base of firstIndexByBaseName) {
+    const group = groups.get(base)!;
+    if (group.length > 1) {
+      group.sort((a, b) => {
+        const la = extractMarketLine(nameOf(a));
+        const lb = extractMarketLine(nameOf(b));
+        if (la === null || lb === null) return 0;
+        return la - lb;
+      });
+    }
+    result.push(...group);
+  }
+  return result;
+}
+
 // "H"/"A" score strings -> number when both sides parse cleanly (futebol, basquetebol, etc.).
 // CONFIRMED shape for paddypower: { home: "1", away: "1" }. No ténis, os pontos do jogo atual
 // nem sempre são numéricos (ex: esperava-se "AD" em vantagem) — nesse caso passa-se a string tal
@@ -640,7 +682,7 @@ function withSyntheticMoneyline(markets: PulsescoreMarket[]): PulsescoreMarket[]
 function normalizeEvent(e: PulsescoreEvent, sport: Sport): LiveEvent {
   // Já não filtra mercados inativos aqui — passam para o frontend com isActive:false para
   // aparecerem suspensos (não clicáveis) em vez de desaparecerem silenciosamente.
-  const orderedMarkets = orderMarketsWithPrimaryFirst(withSyntheticMoneyline(e.markets));
+  const orderedMarkets = sortNumericMarketFamilies(orderMarketsWithPrimaryFirst(withSyntheticMoneyline(e.markets)));
   return {
     id: `pulsescore:${e.eventId}`,
     sport,
