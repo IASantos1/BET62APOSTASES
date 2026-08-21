@@ -84,6 +84,33 @@ const Bet62Api = (() => {
     return data;
   }
 
+  // Só para upload de ficheiro (documentos KYC) — FormData, nunca JSON.stringify, e sem
+  // "Content-Type" manual (o browser define o boundary do multipart sozinho).
+  async function requestMultipart(path, formData, retry = true) {
+    const headers = {};
+    const { accessToken } = getTokens();
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+
+    const res = await fetch(`${API_BASE}${path}`, { method: "POST", headers, body: formData });
+
+    if (res.status === 401 && retry) {
+      try {
+        await refreshAccessToken();
+        return requestMultipart(path, formData, false);
+      } catch {
+        clearTokens();
+        throw new ApiError(401, "UNAUTHORIZED", "Sessão expirada. Faça login novamente.");
+      }
+    }
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = data?.error ?? { code: "UNKNOWN", message: "Erro desconhecido" };
+      throw new ApiError(res.status, err.code, err.message, err.details);
+    }
+    return data;
+  }
+
   class ApiError extends Error {
     constructor(status, code, message, details) {
       super(message);
@@ -116,6 +143,15 @@ const Bet62Api = (() => {
     updatePersonal: (payload) => request("/users/me", { method: "PATCH", body: payload }),
     updatePreferences: (payload) => request("/users/me/preferences", { method: "PATCH", body: payload }),
     submitKyc: (docType, docNumber) => request("/users/me/kyc", { method: "POST", body: { docType, docNumber } }),
+    // type: "ID_DOCUMENT" | "BANK_STATEMENT" — documento pessoal e extrato bancário (para
+    // validar o IBAN indicado no levantamento), ver docs/KYC_DOCUMENTS.md.
+    uploadKycDocument: (type, file) => {
+      const formData = new FormData();
+      formData.append("type", type);
+      formData.append("file", file);
+      return requestMultipart("/users/me/kyc/documents", formData);
+    },
+    listMyKycDocuments: () => request("/users/me/kyc/documents"),
     updateLimits: (payload) => request("/users/me/limits", { method: "PATCH", body: payload }),
     selfExclude: (days, reason) => request("/users/me/self-exclusion", { method: "POST", body: { days, reason } }),
 
@@ -124,15 +160,28 @@ const Bet62Api = (() => {
     getTransactions: (cursor) => request(`/wallet/transactions${cursor ? `?cursor=${cursor}` : ""}`),
 
     // Payments
-    // Devolve { depositId, checkoutUrl } — checkoutUrl é a página hospedada da própria Stripe
-    // (Checkout Session), que já trata do 3DS do cartão, do pedido de telemóvel da MB WAY e da
-    // apresentação da entidade/referência Multibanco, sem o frontend precisar de Stripe.js.
-    createDeposit: (provider, amountEur) => request("/payments/stripe/deposits", { method: "POST", body: { provider, amountEur } }),
+    // Tudo confirmado dentro do nosso próprio layout, nunca uma segunda página:
+    // - STRIPE_CARD: devolve { depositId, clientSecret } — o frontend confirma com
+    //   stripe.confirmCardPayment() usando o Card Element montado no nosso modal.
+    // - STRIPE_MBWAY (precisa de `phone`): já vem confirmado no servidor, devolve
+    //   { depositId, status } — "processing" = a aguardar aprovação na app MB WAY do cliente.
+    // - STRIPE_MULTIBANCO: já vem confirmado no servidor, devolve
+    //   { depositId, entity, reference, expiresAt } para mostrar no nosso próprio layout.
+    createDeposit: (provider, amountEur, phone) => request("/payments/stripe/deposits", { method: "POST", body: { provider, amountEur, phone } }),
+    getDepositStatus: (depositId) => request(`/payments/stripe/deposits/${encodeURIComponent(depositId)}`),
     saveBankAccount: (payload) => request("/payments/revolut/bank-accounts", { method: "POST", body: payload }),
     listBankAccounts: () => request("/payments/revolut/bank-accounts"),
     requestWithdrawal: (amountEur, bankAccountId) =>
       request("/payments/revolut/withdrawals", { method: "POST", body: { amountEur, bankAccountId } }),
     listWithdrawals: () => request("/payments/revolut/withdrawals"),
+
+    // Apostas
+    // mode: "SIMPLES" (cada seleção vira o seu próprio bilhete, precisa de stake por seleção)
+    // ou "MULTIPLA" (todas as seleções combinadas num único bilhete, stake combinado). Devolve
+    // { bets, errors } — numa Simples parcialmente inválida (ex: uma odd mudou entretanto),
+    // as seleções válidas são colocadas na mesma e "errors" identifica as que falharam.
+    placeBets: (mode, selections, stake) => request("/bets", { method: "POST", body: { mode, selections, stake } }),
+    listMyBets: (cursor) => request(`/bets${cursor ? `?cursor=${cursor}` : ""}`),
 
     // Sports
     getLiveEvents: (sport) => request(`/sports/events${sport ? `?sport=${sport}` : ""}`, { auth: false }),

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../../../middleware/errorHandler";
 import { requireAuth, type AuthedRequest } from "../../../middleware/auth";
 import { validateBody } from "../../../middleware/validate";
-import { createDepositCheckout, handleStripeWebhookEvent } from "./service";
+import { createCardDepositIntent, createMbWayDeposit, createMultibancoDeposit, getDepositStatus, handleStripeWebhookEvent } from "./service";
 import { Errors } from "../../../lib/errors";
 
 const router = Router();
@@ -15,14 +15,36 @@ router.post(
     z.object({
       provider: z.enum(["STRIPE_CARD", "STRIPE_MBWAY", "STRIPE_MULTIBANCO"]),
       amountEur: z.number().positive(),
+      phone: z.string().optional(), // só STRIPE_MBWAY
     })
   ),
   asyncHandler(async (req: AuthedRequest, res) => {
-    // origin do próprio pedido (nunca fixo no código) — mesmo domínio de onde o frontend fez
-    // este pedido, funciona tanto no domínio final (bet62.plus) como no subdomínio do Railway.
-    const origin = `${req.protocol}://${req.get("host")}`;
-    const result = await createDepositCheckout({ userId: req.user!.id, origin, ...req.body });
+    const { provider, amountEur, phone } = req.body as { provider: string; amountEur: number; phone?: string };
+    const userId = req.user!.id;
+
+    if (provider === "STRIPE_CARD") {
+      const result = await createCardDepositIntent({ userId, amountEur });
+      return res.status(201).json(result);
+    }
+    if (provider === "STRIPE_MBWAY") {
+      if (!phone) throw Errors.badRequest("Número de telemóvel obrigatório para MB WAY");
+      const result = await createMbWayDeposit({ userId, amountEur, phone });
+      return res.status(201).json(result);
+    }
+    const result = await createMultibancoDeposit({ userId, amountEur });
     res.status(201).json(result);
+  })
+);
+
+// Sondado pelo frontend enquanto espera aprovação MB WAY na app do cliente (a confirmação
+// final é assíncrona, fora do nosso controlo — o cliente tem de abrir a app e aprovar).
+router.get(
+  "/deposits/:id",
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    if (!req.params.id) throw Errors.badRequest("Parâmetro id em falta");
+    const result = await getDepositStatus(req.user!.id, req.params.id);
+    res.json(result);
   })
 );
 

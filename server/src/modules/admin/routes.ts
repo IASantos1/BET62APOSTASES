@@ -5,6 +5,8 @@ import { requireAuth, requireRole, type AuthedRequest } from "../../middleware/a
 import { validateBody } from "../../middleware/validate";
 import { Errors } from "../../lib/errors";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
+import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
+import { getKycDocumentFile } from "../users/kycDocuments";
 import { getAgentInfo } from "../casino/apiClient";
 import {
   getDashboardStats,
@@ -119,6 +121,21 @@ router.patch(
   })
 );
 
+// Documento pessoal/extrato bancário enviado pelo utilizador (ver getUserDetail — já vêm
+// listados em user.kycDocuments) — só o conteúdo do ficheiro em si precisa de rota própria.
+// null em vez do userId: o admin pode ver o documento de qualquer utilizador, ao contrário de
+// GET /users/me/kyc/documents/:id/file (só o dono).
+router.get(
+  "/kyc/documents/:id/file",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    if (!req.params.id) throw Errors.badRequest("Parâmetro id em falta");
+    const { doc, absolutePath } = await getKycDocumentFile(req.params.id, null);
+    res.setHeader("Content-Type", doc.mimeType);
+    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(doc.fileName)}"`);
+    res.sendFile(absolutePath);
+  })
+);
+
 // --- Levantamentos (aprovação/rejeição reaproveita payments/revolut/service.ts) ---
 
 router.get(
@@ -141,6 +158,25 @@ router.post(
   validateBody(z.object({ reason: z.string().min(3).max(500) })),
   asyncHandler(async (req: AuthedRequest, res) => {
     res.json(await rejectWithdrawal(requireParamId(req.params.id), req.user!.id, req.body.reason));
+  })
+);
+
+// --- Apostas presas em revisão manual (mercados que o motor de liquidação automática não sabe
+// resolver com segurança — ver betting/settlementRules.ts) ---
+
+router.get(
+  "/bets/needs-review",
+  asyncHandler(async (_req: AuthedRequest, res) => {
+    res.json({ bets: await listBetsNeedingReview() });
+  })
+);
+
+router.post(
+  "/bets/selections/:id/settle",
+  validateBody(z.object({ outcome: z.enum(["WON", "LOST", "VOID"]) })),
+  asyncHandler(async (req: AuthedRequest, res) => {
+    await manualSettleSelection(requireParamId(req.params.id), req.body.outcome, req.user!.id);
+    res.json({ ok: true });
   })
 );
 

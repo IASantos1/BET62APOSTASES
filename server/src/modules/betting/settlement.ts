@@ -1,0 +1,164 @@
+import { Prisma, type Bet, type BetSelection, type BetSelectionStatus, type BetStatus } from "@prisma/client";
+import { prisma } from "../../lib/prisma";
+import { logger } from "../../lib/logger";
+import { applyLedgerMovement } from "../wallet/service";
+import type { LiveEvent } from "../sports/types";
+import { resolveBetSelectionOutcome, SCORE_SETTLEABLE_SPORTS, type SettlementOutcome } from "./settlementRules";
+
+/**
+ * Liquidação de apostas — ver docs/BETTING.md. Disparada quando um evento desaparece do feed
+ * ao vivo (hybridSportsService "remove", único momento em que o placar final ainda está
+ * disponível — a Pulsescore nunca reporta um estado "finished" explícito) e por uma vassoura
+ * periódica de segurança (sweepStaleBets) para o caso raro de o processo reiniciar a meio de um
+ * jogo e nunca chegar a ver o "remove" desse evento em particular.
+ */
+export async function settleEventFinished(event: LiveEvent) {
+  const pendingSelections = await prisma.betSelection.findMany({
+    where: { eventId: event.id, status: "PENDING" },
+  });
+  if (!pendingSelections.length) return;
+
+  const scoreSettleable = SCORE_SETTLEABLE_SPORTS.has(event.sport);
+  const homeScore = typeof event.homeScore === "number" ? event.homeScore : Number(event.homeScore);
+  const awayScore = typeof event.awayScore === "number" ? event.awayScore : Number(event.awayScore);
+  const hasValidScore = scoreSettleable && Number.isFinite(homeScore) && Number.isFinite(awayScore);
+
+  const stats = {
+    homeScore,
+    awayScore,
+    homeCorners: event.statistics?.home.corners,
+    awayCorners: event.statistics?.away.corners,
+    homeCards: event.statistics ? (event.statistics.home.yellowCards ?? 0) + (event.statistics.home.redCards ?? 0) : undefined,
+    awayCards: event.statistics ? (event.statistics.away.yellowCards ?? 0) + (event.statistics.away.redCards ?? 0) : undefined,
+  };
+
+  const affectedBetIds = new Set<string>();
+
+  for (const sel of pendingSelections) {
+    const outcome: SettlementOutcome = hasValidScore
+      ? resolveBetSelectionOutcome({ market: sel.market, selection: sel.selection, home: sel.home, away: sel.away }, stats)
+      : "UNRESOLVABLE";
+
+    await prisma.betSelection.update({
+      where: { id: sel.id },
+      data: {
+        status: outcomeToSelectionStatus(outcome),
+        finalHomeScore: hasValidScore ? Math.trunc(homeScore) : null,
+        finalAwayScore: hasValidScore ? Math.trunc(awayScore) : null,
+        settledAt: new Date(),
+      },
+    });
+    affectedBetIds.add(sel.betId);
+  }
+
+  logger.info(
+    { eventId: event.id, sport: event.sport, selectionsSettled: pendingSelections.length, hasValidScore },
+    "[BETTING] seleções liquidadas para o evento terminado"
+  );
+
+  for (const betId of affectedBetIds) {
+    await finalizeBetIfComplete(betId);
+  }
+}
+
+function outcomeToSelectionStatus(outcome: SettlementOutcome): BetSelectionStatus {
+  if (outcome === "UNRESOLVABLE") return "NEEDS_REVIEW";
+  return outcome;
+}
+
+/** Reavalia um Bet depois de uma ou mais das suas seleções terem sido liquidadas — só decide
+ * algo quando TODAS as seleções já saíram de PENDING (numa Múltipla, os outros jogos podem
+ * ainda estar a decorrer). Idempotente: só mexe num Bet que ainda esteja PENDING. */
+async function finalizeBetIfComplete(betId: string) {
+  await prisma.$transaction(async (tx) => {
+    const bet = await tx.bet.findUniqueOrThrow({ where: { id: betId }, include: { selections: true } });
+    if (bet.status !== "PENDING") return; // já liquidado (idempotência) ou já em NEEDS_REVIEW
+
+    const stillPending = bet.selections.some((s) => s.status === "PENDING");
+    if (stillPending) return;
+
+    const anyNeedsReview = bet.selections.some((s) => s.status === "NEEDS_REVIEW");
+    if (anyNeedsReview) {
+      await tx.bet.update({ where: { id: bet.id }, data: { status: "NEEDS_REVIEW" } });
+      return;
+    }
+
+    await applyFinalOutcome(tx, bet, bet.selections);
+  });
+}
+
+/** Calcula e aplica o resultado final de um Bet cujas seleções estão TODAS decididas (WON/LOST/
+ * VOID, nenhuma PENDING/NEEDS_REVIEW) — usado tanto pela liquidação automática como pela
+ * correção manual do admin depois de resolver uma seleção NEEDS_REVIEW à mão. */
+export async function applyFinalOutcome(tx: Prisma.TransactionClient, bet: Bet, selections: BetSelection[]) {
+  const anyLost = selections.some((s) => s.status === "LOST");
+  const allVoid = selections.every((s) => s.status === "VOID");
+
+  let status: BetStatus;
+  let payout: Prisma.Decimal;
+  let ledgerType: "BET_WON" | "BET_REFUND" | null = null;
+
+  if (anyLost) {
+    status = "LOST";
+    payout = new Prisma.Decimal(0);
+  } else if (allVoid) {
+    status = "VOID";
+    payout = bet.stake; // stake inteiro devolvido — evento(s) cancelado(s)/adiado(s)
+    ledgerType = "BET_REFUND";
+  } else {
+    // Só WON e VOID (nenhum LOST, nenhum PENDING/NEEDS_REVIEW): as seleções VOID saem do
+    // cálculo da odd (tratadas como 1.0 — "empate anula aposta" na Múltipla), as WON decidem.
+    status = "WON";
+    const effectiveOdd = selections.filter((s) => s.status === "WON").reduce((acc, s) => acc.mul(s.odd), new Prisma.Decimal(1));
+    payout = bet.stake.mul(effectiveOdd);
+    ledgerType = "BET_WON";
+  }
+
+  await tx.bet.update({ where: { id: bet.id }, data: { status, payout, settledAt: new Date() } });
+
+  if (ledgerType) {
+    await applyLedgerMovement({
+      walletId: bet.walletId,
+      type: ledgerType,
+      amount: payout, // positivo — crédito
+      referenceType: "bet",
+      referenceId: bet.id,
+      metadata: { betType: bet.type, stake: bet.stake.toString() },
+      tx,
+    });
+  }
+
+  logger.info({ betId: bet.id, userId: bet.userId, status, payout: payout.toString() }, "[BETTING] aposta liquidada");
+}
+
+/**
+ * Vassoura de segurança — corre periodicamente (ver server.ts). Cobre o caso raro de o processo
+ * reiniciar a meio de um jogo (perde o evento "remove" desse jogo específico para sempre, já
+ * que hybridSportsService reconstrói o seu mapa em memória do zero). Nunca inventa um
+ * resultado: só marca para revisão manual do admin as seleções cujo evento já devia ter
+ * terminado há muito (kickoff + margem generosa) e continuam PENDING sem que o caminho normal
+ * as tenha liquidado.
+ */
+const STALE_GRACE_HOURS = 6;
+
+export async function sweepStaleBets() {
+  const cutoff = new Date(Date.now() - STALE_GRACE_HOURS * 60 * 60 * 1000);
+  const stale = await prisma.betSelection.findMany({
+    where: { status: "PENDING", kickoffAt: { not: null, lt: cutoff } },
+  });
+  if (!stale.length) return;
+
+  logger.warn(
+    { count: stale.length, eventIds: stale.map((s) => s.eventId) },
+    "[BETTING] vassoura: seleções presas em PENDING muito depois do kickoff — a marcar para revisão manual"
+  );
+
+  const affectedBetIds = new Set<string>();
+  for (const sel of stale) {
+    await prisma.betSelection.update({ where: { id: sel.id }, data: { status: "NEEDS_REVIEW", settledAt: new Date() } });
+    affectedBetIds.add(sel.betId);
+  }
+  for (const betId of affectedBetIds) {
+    await finalizeBetIfComplete(betId);
+  }
+}

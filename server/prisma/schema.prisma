@@ -44,6 +44,7 @@ model User {
 
   wallet             Wallet?
   kycSubmissions     KycSubmission[]
+  kycDocuments       KycDocument[]
   refreshTokens      RefreshToken[]
   bankAccounts       BankAccount[]
   withdrawals        Withdrawal[]
@@ -51,6 +52,7 @@ model User {
   limits             ResponsibleGamblingLimits?
   selfExclusions     SelfExclusion[]
   auditLogs          AuditLog[]
+  bets               Bet[]
 
   @@index([status])
 }
@@ -99,6 +101,31 @@ model KycSubmission {
 
   @@index([userId])
   @@index([status])
+}
+
+enum KycDocumentType {
+  ID_DOCUMENT    // documento de identificação pessoal (cartão de cidadão/passaporte/carta)
+  BANK_STATEMENT // extrato bancário — prova de que o IBAN indicado pertence ao utilizador
+}
+
+// Ficheiros enviados pelo utilizador para a verificação KYC/AML — em complemento a
+// KycSubmission (que só guarda o tipo/número do documento, texto). Guardado em disco local
+// (uploads/kyc/, ver users/service.ts) — NEEDS VALIDATION antes de produção: um redeploy no
+// Railway sem volume persistente configurado apaga ficheiros locais; produção real precisa de
+// um volume persistente do Railway ou armazenamento externo (S3/R2), documentado em
+// docs/KYC_DOCUMENTS.md.
+model KycDocument {
+  id          String          @id @default(uuid())
+  userId      String
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        KycDocumentType
+  fileName    String // nome original enviado pelo utilizador (só para exibição, nunca usado como caminho no disco)
+  storagePath String // caminho relativo dentro da pasta de uploads
+  mimeType    String
+  sizeBytes   Int
+  uploadedAt  DateTime        @default(now())
+
+  @@index([userId])
 }
 
 // ============ RESPONSIBLE GAMBLING ============
@@ -161,6 +188,7 @@ model Wallet {
   deposits           Deposit[]
   withdrawals        Withdrawal[]
   casinoTransactions CasinoTransaction[]
+  bets               Bet[]
 }
 
 model LedgerEntry {
@@ -178,6 +206,77 @@ model LedgerEntry {
 
   @@index([walletId, createdAt])
   @@index([referenceType, referenceId])
+}
+
+// ============ SPORTS BETTING ============
+// Simples = cada seleção do boletim vira o seu próprio Bet (1 seleção, stake próprio) — nunca
+// combinadas. Múltipla = todas as seleções do boletim viram UM único Bet com N BetSelection e
+// um stake combinado (odd total = produto das odds individuais), nunca duas seleções do mesmo
+// evento (resultados correlacionados). Ver betting/service.ts.
+
+enum BetType {
+  SIMPLES
+  MULTIPLA
+}
+
+enum BetStatus {
+  PENDING      // a aguardar o fim do(s) evento(s)
+  WON
+  LOST
+  VOID         // evento cancelado/adiado — stake devolvido, nunca contado como ganho nem perda
+  NEEDS_REVIEW // o mercado não é de um tipo que o motor de liquidação automática sabe resolver (ver betting/settlement.ts) — fica visível na fila de revisão manual do admin
+}
+
+enum BetSelectionStatus {
+  PENDING
+  WON
+  LOST
+  VOID
+  NEEDS_REVIEW
+}
+
+model Bet {
+  id              String    @id @default(uuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  walletId        String
+  wallet          Wallet    @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  type            BetType
+  stake           Decimal   @db.Decimal(14, 2)
+  totalOdd        Decimal   @db.Decimal(10, 3) // produto das odds das seleções (Múltipla) ou a odd única (Simples) no momento da colocação
+  potentialReturn Decimal   @db.Decimal(14, 2) // stake * totalOdd, calculado na colocação — informativo, o payout real é recalculado na liquidação (ver nota em settlement.ts sobre seleções VOID)
+  status          BetStatus @default(PENDING)
+  payout          Decimal?  @db.Decimal(14, 2) // valor realmente creditado (WON) ou devolvido (VOID) — null enquanto PENDING
+  settledAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  selections BetSelection[]
+
+  @@index([userId, status])
+  @@index([status])
+}
+
+model BetSelection {
+  id             String              @id @default(uuid())
+  betId          String
+  bet            Bet                 @relation(fields: [betId], references: [id], onDelete: Cascade)
+  eventId        String // LiveEvent.id (ex: "pulsescore:12345") — efémero, não há tabela de eventos própria
+  sport          String
+  league         String
+  home           String
+  away           String
+  market         String // nome bruto do mercado tal como veio da Pulsescore no momento da aposta (ex: "Match Odds")
+  selection      String // rótulo da seleção escolhida (ex: "1", "Over", "Sim")
+  odd            Decimal             @db.Decimal(10, 3) // odd travada no momento da aposta — nunca recalculada depois
+  kickoffAt      DateTime? // event.startTime no momento da aposta — usado só pela vassoura de segurança (settlement.ts) para saber quando um evento já devia ter terminado há muito e nunca chegou o evento "remove" (ex: reinício do servidor a meio do jogo)
+  status         BetSelectionStatus  @default(PENDING)
+  finalHomeScore Int?
+  finalAwayScore Int?
+  settledAt      DateTime?
+
+  @@index([betId])
+  @@index([eventId])
+  @@index([status])
 }
 
 // ============ CASINO (slots — Cassino Gold Palace, seamless wallet) ============

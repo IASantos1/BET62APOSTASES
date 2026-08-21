@@ -397,7 +397,7 @@ function quickOddsHtml(e, group, isLive) {
       }
       const key = `${e.id}|${group.market}|${label}`;
       const picked = betslipSelections.has(key);
-      const selection = { eventId: e.id, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
+      const selection = { eventId: e.id, sport: e.sport, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
       const arrow = isLive ? oddsArrowHtml(key, sel.odd) : "";
       return `<div class="${picked ? "picked" : ""}" onclick='quickPick(event, ${JSON.stringify(key)}, ${JSON.stringify(selection)})'>${label}<br>${sel.odd.toFixed(2)}${arrow}</div>`;
     })
@@ -653,6 +653,47 @@ function renderProfile() {
     (p.kycStatus === "APPROVED" ? "status-ok" : p.kycStatus === "REJECTED" ? "status-bad" : "status-pending");
 
   refreshWithdrawalsList();
+  refreshMyBetsList();
+  refreshKycDocumentsList();
+}
+
+const BET_STATUS_LABELS = { PENDING: "Em curso", WON: "Ganha", LOST: "Perdida", VOID: "Anulada", NEEDS_REVIEW: "Em revisão" };
+const BET_STATUS_CLASS = { WON: "status-ok", LOST: "status-bad", PENDING: "status-pending", VOID: "status-pending", NEEDS_REVIEW: "status-pending" };
+
+async function refreshMyBetsList() {
+  const container = document.getElementById("my-bets-list");
+  if (!container || !Bet62Api.isAuthenticated()) return;
+  try {
+    const { bets } = await Bet62Api.listMyBets();
+    if (!bets.length) {
+      container.innerHTML = '<div class="empty-note">Sem apostas ainda</div>';
+      return;
+    }
+    container.innerHTML = bets
+      .map((b) => {
+        const selectionsHtml = b.selections
+          .map((s) => `<div class="bs-row-sel" style="margin:2px 0">${s.home} vs ${s.away} — ${s.market}: <b>${s.selection}</b> @ ${Number(s.odd).toFixed(2)}</div>`)
+          .join("");
+        const resultLine =
+          b.status === "WON" || b.status === "VOID"
+            ? `<div style="font-weight:700;color:var(--gold)">€ ${Number(b.payout).toFixed(2)}</div>`
+            : b.status === "LOST"
+              ? `<div style="color:var(--muted)">€ 0.00</div>`
+              : `<div style="color:var(--muted)">Retorno potencial € ${Number(b.potentialReturn).toFixed(2)}</div>`;
+        return `
+        <div class="limit-row" style="flex-direction:column;align-items:stretch;gap:6px;padding:12px 0">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span>${b.type === "MULTIPLA" ? "Múltipla" : "Simples"} — € ${Number(b.stake).toFixed(2)}</span>
+            <span class="status-badge ${BET_STATUS_CLASS[b.status] || "status-pending"}">${BET_STATUS_LABELS[b.status] || b.status}</span>
+          </div>
+          ${selectionsHtml}
+          ${resultLine}
+        </div>`;
+      })
+      .join("");
+  } catch {
+    /* silencioso */
+  }
 }
 
 async function savePersonal() {
@@ -694,6 +735,46 @@ async function submitKYC() {
     alert("📄 Documentos enviados! A verificação pode demorar até 24h.");
   } catch (err) {
     alert("Erro: " + err.message);
+  }
+}
+
+const KYC_DOC_TYPE_LABELS = { ID_DOCUMENT: "Documento pessoal", BANK_STATEMENT: "Extrato bancário" };
+
+async function uploadKycFile(type, inputId) {
+  if (!requireLogin()) return;
+  const input = document.getElementById(inputId);
+  const file = input.files && input.files[0];
+  if (!file) return alert("Escolha um ficheiro primeiro.");
+  try {
+    await Bet62Api.uploadKycDocument(type, file);
+    input.value = "";
+    await refreshKycDocumentsList();
+    alert(`✅ ${KYC_DOC_TYPE_LABELS[type]} enviado!`);
+  } catch (err) {
+    alert("Erro: " + err.message);
+  }
+}
+
+async function refreshKycDocumentsList() {
+  const container = document.getElementById("kyc-documents-list");
+  if (!container || !Bet62Api.isAuthenticated()) return;
+  try {
+    const { documents } = await Bet62Api.listMyKycDocuments();
+    if (!documents.length) {
+      container.innerHTML = '<div class="empty-note">Nenhum documento enviado ainda</div>';
+      return;
+    }
+    container.innerHTML = documents
+      .map(
+        (d) => `
+      <div class="limit-row">
+        <div>${KYC_DOC_TYPE_LABELS[d.type] || d.type} <span style="color:var(--muted);font-size:.78rem">— ${d.fileName}</span></div>
+        <span class="status-badge status-ok">Enviado</span>
+      </div>`
+      )
+      .join("");
+  } catch {
+    /* silencioso */
   }
 }
 
@@ -789,6 +870,56 @@ async function refreshWithdrawalsList() {
   }
 }
 
+// Atalho no cabeçalho (ao lado do "+" de Depositar) — mesmas rotas de conta bancária/
+// levantamento já usadas em Perfil > Dados Bancários e Levantamentos, num único passo: se já
+// existir uma conta guardada com o mesmo IBAN reaproveita-a, senão cria uma nova antes de pedir
+// o levantamento.
+function openWithdraw() {
+  if (!Bet62Api.isAuthenticated()) return openAuth("login");
+  document.getElementById("withdraw-modal").classList.add("open");
+  document.getElementById("withdraw-error").classList.remove("show");
+}
+function closeWithdraw() {
+  document.getElementById("withdraw-modal").classList.remove("open");
+}
+async function submitWithdraw() {
+  const accountHolder = document.getElementById("w-name").value.trim();
+  const iban = document.getElementById("w-iban").value.replace(/\s+/g, "").trim();
+  const bic = document.getElementById("w-bic").value.trim();
+  const amountEur = Number(document.getElementById("w-amount").value);
+  const errEl = document.getElementById("withdraw-error");
+  errEl.classList.remove("show");
+
+  if (!accountHolder || !iban) {
+    errEl.textContent = "Indique o nome completo e o IBAN.";
+    errEl.classList.add("show");
+    return;
+  }
+  if (!amountEur || amountEur < 10) {
+    errEl.textContent = "Indique um valor válido (mínimo 10€).";
+    errEl.classList.add("show");
+    return;
+  }
+
+  const btn = document.getElementById("btn-withdraw-submit");
+  btn.disabled = true;
+  try {
+    const accounts = await Bet62Api.listBankAccounts();
+    let account = accounts.find((a) => a.iban.replace(/\s+/g, "").toUpperCase() === iban.toUpperCase());
+    if (!account) account = await Bet62Api.saveBankAccount({ accountHolder, iban, bic: bic || undefined });
+    await Bet62Api.requestWithdrawal(amountEur, account.id);
+    closeWithdraw();
+    alert("✅ Pedido de levantamento enviado para revisão de conformidade.");
+    await refreshWithdrawalsList();
+    await loadBalance();
+  } catch (err) {
+    errEl.textContent = err.message || "Não foi possível pedir o levantamento.";
+    errEl.classList.add("show");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function requireLogin() {
   if (!Bet62Api.isAuthenticated()) {
     alert("Faça login primeiro");
@@ -803,6 +934,7 @@ function updateHeader() {
   document.getElementById("btn-header-login").classList.toggle("hidden", authed);
   document.getElementById("balance-display").classList.toggle("hidden", !authed);
   document.getElementById("btn-header-deposit").classList.toggle("hidden", !authed);
+  document.getElementById("btn-header-withdraw").classList.toggle("hidden", !authed);
   document.getElementById("btn-avatar").classList.toggle("hidden", !authed);
 
   if (currentBalance) {
@@ -816,24 +948,65 @@ function updateHeader() {
 }
 
 // ====================== DEPOSIT ======================
+// Tudo confirmado dentro do próprio modal da BET62 — nunca uma segunda página (pedido
+// explícito do utilizador). Só o CARTÃO precisa de Stripe.js (o campo do cartão tem de ser um
+// iframe da própria Stripe, exigência de PCI-DSS — nunca o nosso JS a tocar no número do
+// cartão), montado aqui dentro do nosso modal, não numa página à parte. MB WAY e Multibanco são
+// confirmados diretamente no nosso backend (ver payments/stripe/service.ts) — nenhum dos dois
+// precisa de Stripe.js: MB WAY porque a "confirmação" acontece na app do telemóvel do cliente,
+// não no browser; Multibanco porque é um voucher estático (entidade+referência), sem nenhuma
+// interação necessária no browser para o gerar.
+let stripeJsClient = null;
+let cardElement = null;
+function getStripeJsClient() {
+  if (stripeJsClient) return stripeJsClient;
+  const pk = window.BET62_CONFIG.STRIPE_PUBLISHABLE_KEY;
+  if (!pk || typeof Stripe !== "function") return null;
+  stripeJsClient = Stripe(pk);
+  return stripeJsClient;
+}
+// Montado uma única vez e reutilizado entre aberturas do modal — só precisa de existir quando o
+// método Cartão está selecionado. Não segue mudanças de tema claro/escuro depois de montado
+// (limitação conhecida, secundária: o modal costuma ficar aberto pouco tempo).
+function mountCardElementIfNeeded() {
+  if (cardElement) return;
+  const stripe = getStripeJsClient();
+  if (!stripe) return;
+  const textColor = getComputedStyle(document.documentElement).getPropertyValue("--text").trim() || "#000";
+  const mutedColor = getComputedStyle(document.documentElement).getPropertyValue("--muted").trim() || "#999";
+  cardElement = stripe.elements().create("card", {
+    style: { base: { fontSize: "15px", color: textColor, "::placeholder": { color: mutedColor } }, invalid: { color: "#e63027" } },
+  });
+  cardElement.mount("#card-element");
+}
+
 function openDeposit() {
   if (!Bet62Api.isAuthenticated()) return openAuth("login");
   document.getElementById("deposit-modal").classList.add("open");
   document.getElementById("deposit-error").classList.remove("show");
+  document.getElementById("deposit-form-fields").classList.remove("hidden");
+  const resultEl = document.getElementById("deposit-result");
+  resultEl.classList.add("hidden");
+  resultEl.innerHTML = "";
+  document.getElementById("btn-deposit").disabled = false;
   selectDepositMethod(selectedDepositMethod || "STRIPE_CARD");
 }
 function closeDeposit() {
   document.getElementById("deposit-modal").classList.remove("open");
+  stopDepositPolling();
 }
 const DEPOSIT_METHOD_HINTS = {
-  STRIPE_CARD: "Ao continuar, é reencaminhado para a página segura da Stripe para inserir os dados do cartão.",
-  STRIPE_MBWAY: "Ao continuar, é reencaminhado para a página segura da Stripe, onde insere o número de telemóvel MB WAY.",
-  STRIPE_MULTIBANCO: "Ao continuar, é reencaminhado para a página segura da Stripe, que gera a entidade e referência Multibanco para pagar no Multibanco/homebanking.",
+  STRIPE_CARD: "Os dados do cartão ficam só neste campo seguro da Stripe — nunca passam pelo nosso servidor.",
+  STRIPE_MBWAY: "Vai receber um pedido de confirmação na app MB WAY do número indicado.",
+  STRIPE_MULTIBANCO: "Vamos gerar aqui mesmo a entidade e referência para pagar no Multibanco ou homebanking.",
 };
 function selectDepositMethod(method) {
   selectedDepositMethod = method;
   document.querySelectorAll(".dm-btn").forEach((b) => b.classList.toggle("active", b.dataset.method === method));
   document.getElementById("deposit-method-hint").textContent = DEPOSIT_METHOD_HINTS[method] || "";
+  document.getElementById("deposit-card-group").classList.toggle("hidden", method !== "STRIPE_CARD");
+  document.getElementById("deposit-mbway-group").classList.toggle("hidden", method !== "STRIPE_MBWAY");
+  if (method === "STRIPE_CARD") mountCardElementIfNeeded();
 }
 async function submitDeposit() {
   const amountEur = Number(document.getElementById("deposit-amount").value);
@@ -849,11 +1022,9 @@ async function submitDeposit() {
   const btn = document.getElementById("btn-deposit");
   btn.disabled = true;
   try {
-    const { checkoutUrl } = await Bet62Api.createDeposit(selectedDepositMethod, amountEur);
-    // Sai da SPA para a página de pagamento hospedada da própria Stripe — volta sozinho para
-    // aqui (?deposit=success|cancel, ver handleDepositRedirect() no init) assim que o cliente
-    // terminar ou cancelar.
-    window.location.href = checkoutUrl;
+    if (selectedDepositMethod === "STRIPE_CARD") await submitCardDeposit(amountEur);
+    else if (selectedDepositMethod === "STRIPE_MBWAY") await submitMbWayDeposit(amountEur);
+    else await submitMultibancoDeposit(amountEur);
   } catch (err) {
     errEl.textContent = err.message || "Não foi possível iniciar o depósito.";
     errEl.classList.add("show");
@@ -861,20 +1032,107 @@ async function submitDeposit() {
   }
 }
 
-// Lê ?deposit=success|cancel devolvido pelo Stripe Checkout (success_url/cancel_url em
-// payments/stripe/service.ts) — o crédito em si só acontece quando o webhook confirmar (nunca
-// só por o cliente ter voltado a esta página, ver nota de segurança no service.ts), por isso
-// esta mensagem é só informativa; o saldo atualiza-se sozinho no próximo refresh do perfil.
-function handleDepositRedirect() {
-  const params = new URLSearchParams(location.search);
-  const status = params.get("deposit");
-  if (!status) return;
-  history.replaceState(null, "", location.pathname);
-  if (status === "success") {
-    alert("Pagamento em processamento. O saldo é atualizado assim que a Stripe confirmar (pode demorar alguns minutos, ou até alguns dias no caso do Multibanco).");
-  } else if (status === "cancel") {
-    alert("Depósito cancelado.");
+async function submitCardDeposit(amountEur) {
+  const stripe = getStripeJsClient();
+  if (!stripe || !cardElement) throw new Error("Pagamento por cartão indisponível neste momento.");
+  const { clientSecret } = await Bet62Api.createDeposit("STRIPE_CARD", amountEur);
+  // confirmCardPayment trata de um eventual desafio 3DS com uma sobreposição na própria
+  // página (a própria Stripe injeta o iframe do desafio por cima do nosso modal) — nunca uma
+  // navegação para outro sítio.
+  const result = await stripe.confirmCardPayment(clientSecret, {
+    payment_method: { card: cardElement, billing_details: currentProfile?.email ? { email: currentProfile.email } : {} },
+  });
+  if (result.error) throw new Error(result.error.message || "O pagamento não foi autorizado.");
+  showDepositResult("success", { note: "Pagamento aprovado! O saldo atualiza-se em poucos instantes." });
+  loadBalance();
+}
+
+async function submitMbWayDeposit(amountEur) {
+  const phone = document.getElementById("deposit-phone").value.trim();
+  if (!phone) throw new Error("Indique o número de telemóvel MB WAY.");
+  const { depositId } = await Bet62Api.createDeposit("STRIPE_MBWAY", amountEur, phone);
+  showDepositResult("waiting-mbway", {});
+  pollDepositStatus(depositId);
+}
+
+async function submitMultibancoDeposit(amountEur) {
+  const { entity, reference, expiresAt } = await Bet62Api.createDeposit("STRIPE_MULTIBANCO", amountEur);
+  showDepositResult("multibanco", { entity, reference, expiresAt, amountEur });
+}
+
+function showDepositResult(kind, data) {
+  document.getElementById("deposit-form-fields").classList.add("hidden");
+  const el = document.getElementById("deposit-result");
+  el.classList.remove("hidden");
+  if (kind === "success") {
+    el.innerHTML = `
+      <div class="deposit-result"><div class="dr-icon">✅</div><div class="dr-title">Depósito enviado</div><div class="dr-note">${data.note}</div></div>
+      <button class="auth-submit" onclick="closeDeposit()">FECHAR</button>`;
+  } else if (kind === "failed") {
+    el.innerHTML = `
+      <div class="deposit-result"><div class="dr-icon">❌</div><div class="dr-title">Pagamento não concluído</div><div class="dr-note">${data.note}</div></div>
+      <button class="auth-submit" onclick="closeDeposit()">FECHAR</button>`;
+  } else if (kind === "waiting-mbway") {
+    el.innerHTML = `
+      <div class="deposit-result"><div class="dr-icon">📱</div><div class="dr-title">A aguardar aprovação</div>
+        <div class="dr-note">Abra a app MB WAY no seu telemóvel e confirme o pagamento. <span class="spinner-dot"></span></div></div>
+      <button class="btn-outline" onclick="closeDeposit()">Fechar (o saldo atualiza-se sozinho)</button>`;
+  } else if (kind === "multibanco") {
+    const expires = data.expiresAt ? new Date(data.expiresAt).toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" }) : null;
+    el.innerHTML = `
+      <div class="deposit-result">
+        <div class="dr-icon">🏧</div>
+        <div class="dr-title">Pague no Multibanco ou homebanking</div>
+        <div class="mb-voucher">
+          <div class="mb-voucher-row"><span class="mb-voucher-label">Entidade</span><span class="mb-voucher-value">${data.entity}</span></div>
+          <div class="mb-voucher-row"><span class="mb-voucher-label">Referência</span><span class="mb-voucher-value">${data.reference}</span></div>
+          <div class="mb-voucher-row"><span class="mb-voucher-label">Valor</span><span class="mb-voucher-value">${data.amountEur.toFixed(2)}€</span></div>
+        </div>
+        <div class="dr-note">${expires ? `Válido até ${expires}. ` : ""}O saldo é atualizado automaticamente assim que o pagamento for confirmado.</div>
+      </div>
+      <button class="auth-submit" onclick='copyMultibancoReference(${JSON.stringify(data.entity)}, ${JSON.stringify(data.reference)})'>COPIAR ENTIDADE E REFERÊNCIA</button>
+      <button class="btn-outline" onclick="closeDeposit()">Fechar</button>`;
   }
+}
+function copyMultibancoReference(entity, reference) {
+  navigator.clipboard?.writeText(`Entidade: ${entity}  Referência: ${reference}`).catch(() => {});
+}
+
+let depositPollTimer = null;
+function stopDepositPolling() {
+  if (depositPollTimer) {
+    clearTimeout(depositPollTimer);
+    depositPollTimer = null;
+  }
+}
+// MB WAY não tem nenhum retorno visual síncrono — a aprovação acontece na app do telemóvel do
+// cliente, fora do nosso controlo — por isso sondamos o nosso próprio GET /deposits/:id em vez
+// de bloquear à espera. Desiste ao fim de ~90s (30x3s) para não prender o utilizador no modal
+// indefinidamente; o saldo continua a atualizar-se sozinho via webhook mesmo depois de fechar.
+function pollDepositStatus(depositId, attempt = 0) {
+  stopDepositPolling();
+  depositPollTimer = setTimeout(async () => {
+    try {
+      const { status } = await Bet62Api.getDepositStatus(depositId);
+      if (status === "SUCCEEDED") {
+        showDepositResult("success", { note: "Pagamento aprovado! O saldo atualiza-se em poucos instantes." });
+        loadBalance();
+        return;
+      }
+      if (status === "FAILED" || status === "CANCELLED") {
+        showDepositResult("failed", { note: "O pedido MB WAY foi recusado ou expirou. Tente novamente." });
+        return;
+      }
+    } catch {
+      /* falha transitória a sondar — tenta outra vez no próximo ciclo */
+    }
+    if (attempt < 29) {
+      pollDepositStatus(depositId, attempt + 1);
+    } else {
+      const note = document.querySelector("#deposit-result .dr-note");
+      if (note) note.innerHTML = "Ainda não recebemos a confirmação. Pode fechar esta janela — o saldo atualiza-se sozinho assim que aprovar na app.";
+    }
+  }, 3000);
 }
 
 // ====================== CASINO ======================
@@ -1569,7 +1827,7 @@ function renderMarketGroups(e) {
           }
           const key = `${e.id}|${group.market}|${label}`;
           const picked = betslipSelections.has(key);
-          const selection = { eventId: e.id, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
+          const selection = { eventId: e.id, sport: e.sport, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
           // Setas de subida/descida só em Ao Vivo — no pré-jogo o valor não costuma mudar
           // ao ponto de justificar o indicador, e não foi pedido para essa página.
           const arrow = isLive ? oddsArrowHtml(key, sel.odd) : "";
@@ -1709,27 +1967,81 @@ function renderBetslipPanel() {
         <div class="bs-tab ${betslipMode === "multipla" ? "active" : ""} ${canMultipla ? "" : "disabled"}" onclick="${canMultipla ? "setBetslipMode('multipla')" : ""}">Múltipla</div>
       </div>
       ${!canMultipla && selections.length >= 2 ? '<div class="field-hint" style="margin:8px 2px">Múltipla indisponível: há mais do que uma seleção do mesmo evento.</div>' : ""}
+      <div class="auth-error" id="bs-error"></div>
       <div class="bs-rows">${rowsHtml}</div>
       ${summaryHtml}
-      <button class="btn-save" onclick="placeBetDemo()">Confirmar Aposta</button>
+      <button class="btn-save" id="bs-submit-btn" onclick="submitBetslip()">Confirmar Aposta</button>
       <button class="btn-outline" onclick="clearBetslip()">Limpar Boletim</button>`;
   });
 }
 
-function placeBetDemo() {
+function showBetslipError(msg) {
+  const el = document.getElementById("bs-error");
+  if (el) {
+    el.textContent = msg;
+    el.classList.add("show");
+  } else {
+    alert(msg);
+  }
+}
+
+// Colocação real (débito atómico da carteira no servidor, ver server/src/modules/betting) — a
+// odd que aqui aparece é só a última vista pelo utilizador; o servidor revalida sempre contra a
+// odd atual antes de aceitar, nunca confia neste valor.
+async function submitBetslip() {
   if (!Bet62Api.isAuthenticated()) return openAuth("login");
   if (!betslipSelections.size) return alert("Escolha pelo menos uma seleção nos mercados para adicionar ao boletim.");
 
+  const entries = [...betslipSelections.entries()];
   if (betslipMode === "simples") {
-    const missing = [...betslipSelections.keys()].filter((key) => !(Number(betslipStakes.get(key)) > 0));
-    if (missing.length) return alert("Indique o valor da aposta em todas as seleções do boletim.");
+    const missing = entries.filter(([key]) => !(Number(betslipStakes.get(key)) > 0));
+    if (missing.length) return showBetslipError("Indique o valor da aposta em todas as seleções do boletim.");
   } else if (!(multiplaStake > 0)) {
-    return alert("Indique o valor da aposta múltipla.");
+    return showBetslipError("Indique o valor da aposta múltipla.");
   }
 
-  alert(
-    `🧾 Boletim ${betslipMode === "simples" ? "Simples" : "Múltipla"} com ${betslipSelections.size} seleção(ões).\n\nO motor de apostas (criação de bilhete, cálculo de retorno e liquidação) ainda não foi implementado nesta fase — esta é só a navegação de mercados e o boletim. As seleções foram mantidas.`
-  );
+  const btn = document.getElementById("bs-submit-btn");
+  if (btn) btn.disabled = true;
+
+  try {
+    if (betslipMode === "multipla") {
+      const selections = entries.map(([, s]) => ({ eventId: s.eventId, sport: s.sport, market: s.market, selection: s.selection, odd: s.odd }));
+      const { bets } = await Bet62Api.placeBets("MULTIPLA", selections, multiplaStake);
+      clearBetslip();
+      alert(`✅ Aposta Múltipla colocada!\nRetorno potencial: € ${Number(bets[0].potentialReturn).toFixed(2)}`);
+    } else {
+      const selections = entries.map(([key, s]) => ({
+        eventId: s.eventId,
+        sport: s.sport,
+        market: s.market,
+        selection: s.selection,
+        odd: s.odd,
+        stake: Number(betslipStakes.get(key)),
+      }));
+      const { bets, errors } = await Bet62Api.placeBets("SIMPLES", selections);
+      // Só remove do boletim as seleções que FORAM colocadas com sucesso — as que falharam
+      // (odd mudou entretanto, mercado suspenso) ficam para o utilizador ver o motivo e decidir.
+      const failedKeys = new Set(errors.map((e) => `${e.input.eventId}|${e.input.market}|${e.input.selection}`));
+      for (const [key] of entries) {
+        if (!failedKeys.has(key)) {
+          betslipSelections.delete(key);
+          betslipStakes.delete(key);
+        }
+      }
+      renderBetslipPanel();
+      if (errors.length) {
+        showBetslipError(`${bets.length} aposta(s) colocada(s). ${errors.length} não colocada(s): ${errors.map((e) => e.error).join(" ")}`);
+      } else {
+        alert(`✅ ${bets.length} aposta(s) colocada(s) com sucesso!`);
+      }
+    }
+    loadBalance();
+  } catch (err) {
+    showBetslipError(err.message || "Não foi possível colocar a aposta.");
+  } finally {
+    const stillThere = document.getElementById("bs-submit-btn");
+    if (stillThere) stillThere.disabled = false;
+  }
 }
 
 // ====================== INIT ======================
@@ -1740,7 +2052,6 @@ function placeBetDemo() {
   renderSportsMenu();
   renderCompetitions();
   renderBetslipPanel();
-  handleDepositRedirect();
   if (Bet62Api.isAuthenticated()) {
     await loadProfile();
   }

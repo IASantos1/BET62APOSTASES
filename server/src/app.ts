@@ -13,6 +13,7 @@ import walletRoutes from "./modules/wallet/routes";
 import stripeRoutes, { stripeWebhookHandler } from "./modules/payments/stripe/routes";
 import revolutRoutes from "./modules/payments/revolut/routes";
 import sportsRoutes from "./modules/sports/routes";
+import bettingRoutes from "./modules/betting/routes";
 import casinoRoutes from "./modules/casino/routes";
 import adminRoutes from "./modules/admin/routes";
 import { maintenanceGate } from "./modules/admin/maintenanceGate";
@@ -60,6 +61,7 @@ export function createApp() {
   app.use("/api/payments/stripe", stripeRoutes);
   app.use("/api/payments/revolut", revolutRoutes);
   app.use("/api/sports", sportsRoutes);
+  app.use("/api/bets", bettingRoutes);
   app.use("/api/casino", casinoRoutes);
   app.use("/api/admin", adminRoutes);
 
@@ -71,7 +73,11 @@ export function createApp() {
     res.setHeader("Cache-Control", "no-cache, must-revalidate");
     res.send(
       "window.BET62_CONFIG = { API_BASE: '/api', " +
-        "WS_BASE: (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host };\n"
+        "WS_BASE: (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host, " +
+        // Publishable key — safe to ship to the browser by design (it's not the secret key),
+        // needed by Stripe.js to mount the card field inline in our own deposit modal instead
+        // of redirecting to a Stripe-hosted page (ver payments/stripe/service.ts).
+        `STRIPE_PUBLISHABLE_KEY: ${JSON.stringify(env.STRIPE_PUBLISHABLE_KEY)} };\n`
     );
   });
   // "no-cache, must-revalidate" em vez de deixar o express.static usar o seu default (que
