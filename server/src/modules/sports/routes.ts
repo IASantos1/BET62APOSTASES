@@ -4,11 +4,13 @@ import { hybridSportsService } from "./hybridService";
 import { getPrematchEvents } from "./prematch/service";
 import { getTodayCompetitions } from "./competitions/service";
 import { fetchEventById } from "./pulsescore/client";
+import { enrichEventFromOtherBookmakers } from "./pulsescore/crossBookmakerFallback";
 import { getHeadToHead, getPredictions, getStandings, type HeadToHeadMatch } from "./apifootball/client";
 import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent } from "./mapping/service";
 import { getUnifiedMatchData } from "./unified/service";
 import { ALL_SPORTS, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
+import { logger } from "../../lib/logger";
 
 const router = Router();
 
@@ -50,7 +52,16 @@ router.get(
     const rawId = req.params.id.startsWith("pulsescore:") ? req.params.id.slice("pulsescore:".length) : req.params.id;
     const event = await fetchEventById(sport as Sport, rawId);
     if (!event) throw Errors.notFound("Evento não encontrado na Pulsescore");
-    res.json({ event });
+    // Preenche mercados e estatísticas em falta (ex: Escanteios/Cartões/Marcador) indo buscá-los
+    // a outras bookmakers configuradas em marketRouting.ts — só aqui, quando o utilizador abre o
+    // Match Tracker de um evento em concreto, nunca durante o polling em massa (ver
+    // docs/SPORTS_DATA.md). Uma falha aqui nunca esconde o evento já obtido — o pior caso é
+    // devolvê-lo sem o preenchimento extra, exatamente como antes desta funcionalidade existir.
+    const completed = await enrichEventFromOtherBookmakers(sport as Sport, event).catch((err) => {
+      logger.warn({ err, eventId: rawId }, "Pulsescore: falha ao preencher mercados/estatísticas em falta via outras bookmakers");
+      return event;
+    });
+    res.json({ event: completed });
   })
 );
 

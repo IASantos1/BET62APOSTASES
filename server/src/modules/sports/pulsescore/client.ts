@@ -349,10 +349,10 @@ interface PulsescoreFlatEventsResponse {
   events?: PulsescoreEvent[];
 }
 
-async function fetchEventsFlatPage(sport: Sport, page: number, limit: number): Promise<PulsescoreFlatEventsResponse> {
+async function fetchEventsFlatPage(sport: Sport, page: number, limit: number, bookmaker?: string): Promise<PulsescoreFlatEventsResponse> {
   assertConfigured();
   const slug = SPORT_SLUGS[sport];
-  const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(bookmakerFor(sport))}/${slug}/events?page=${page}&limit=${limit}`;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(bookmaker ?? bookmakerFor(sport))}/${slug}/events?page=${page}&limit=${limit}`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -371,14 +371,14 @@ async function fetchEventsFlatPage(sport: Sport, page: number, limit: number): P
  * surfaced canonicalMarket values not seen before (CORNERS_OVER_UNDER, CORRECT_SCORE), handled
  * fine since markets are never filtered by a fixed whitelist.
  */
-export async function fetchEventsFlat(sport: Sport, opts: { maxPages?: number; limit?: number } = {}): Promise<LiveEvent[]> {
+export async function fetchEventsFlat(sport: Sport, opts: { maxPages?: number; limit?: number; bookmaker?: string } = {}): Promise<LiveEvent[]> {
   const maxPages = opts.maxPages ?? 3;
   const limit = opts.limit ?? 25;
   const events: LiveEvent[] = [];
 
   let page = 1;
   while (page <= maxPages) {
-    const data = await fetchEventsFlatPage(sport, page, limit);
+    const data = await fetchEventsFlatPage(sport, page, limit, opts.bookmaker);
     events.push(...extractEvents(data).map((evt) => normalizeEvent(evt, sport)));
     if (!data.hasNextPage) break;
     page += 1;
@@ -442,10 +442,10 @@ export async function fetchLiveSportsWithEvents(): Promise<Sport[]> {
   return data.sports.filter((s) => s.eventCount > 0 && SLUG_TO_SPORT[s.name]).map((s) => SLUG_TO_SPORT[s.name]!);
 }
 
-async function fetchLiveEventsPage(sport: Sport, page: number, limit: number): Promise<unknown> {
+async function fetchLiveEventsPage(sport: Sport, page: number, limit: number, bookmaker?: string): Promise<unknown> {
   assertConfigured();
   const slug = SPORT_SLUGS[sport];
-  const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(bookmakerFor(sport))}/live-events?page=${page}&limit=${limit}&sport=${slug}`;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(bookmaker ?? bookmakerFor(sport))}/live-events?page=${page}&limit=${limit}&sport=${slug}`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -461,14 +461,14 @@ async function fetchLiveEventsPage(sport: Sport, page: number, limit: number): P
  * Every event returned here is forced to `status: "live"` regardless of what the payload's
  * own `live` field says (or doesn't say) — that's implied by which endpoint it came from.
  */
-export async function fetchLiveEvents(sport: Sport, opts: { maxPages?: number; limit?: number } = {}): Promise<LiveEvent[]> {
+export async function fetchLiveEvents(sport: Sport, opts: { maxPages?: number; limit?: number; bookmaker?: string } = {}): Promise<LiveEvent[]> {
   const maxPages = opts.maxPages ?? 2;
   const limit = opts.limit ?? 25;
   const events: LiveEvent[] = [];
 
   let page = 1;
   while (page <= maxPages) {
-    const data = await fetchLiveEventsPage(sport, page, limit);
+    const data = await fetchLiveEventsPage(sport, page, limit, opts.bookmaker);
     const batch = extractEvents(data).map((evt) => normalizeEvent({ ...evt, live: true }, sport));
     events.push(...batch);
     const hasNextPage = (data as Record<string, unknown> | null)?.hasNextPage;
