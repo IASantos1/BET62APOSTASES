@@ -676,6 +676,71 @@ jogo em ligas menores vs. até 47 em jogos populares, incluindo `CORNERS_RACE_TO
 enviar esses mercados para um jogo em concreto, continuam a não aparecer (nem no "Todos"),
 porque este projeto nunca inventa mercados/odds que a fonte de dados não devolveu.
 
+## Fallback de mercados/estatísticas entre bookmakers
+
+Pedido explícito do utilizador (colou uma configuração `marketRouting` real, confirmada por ele
+contra a documentação da Pulsescore): quando a bookmaker principal (`paddypower`) não tem um
+mercado ou estatística para um jogo, ir buscá-lo a outra bookmaker da lista, **sem nunca
+duplicar** o que a principal já tem — só preenche o que está mesmo em falta.
+
+- `pulsescore/marketRouting.ts` — a configuração colada pelo utilizador, traduzida para TS:
+  `MARKET_ROUTING` (lista de bookmakers por tipo de mercado, pela ordem de preferência exata que
+  ele deu) e `classifyRoutingMarket()` (heurística por palavra-chave sobre o `rawName` do
+  mercado, mesma abordagem já usada em `web/app.js::MARKET_FILTER_CATEGORIES` e
+  `betting/settlementRules.ts` — não o `canonicalMarket`, cuja grafia já se mostrou inconsistente
+  entre a documentação e amostras reais nesta integração).
+  - ⚠️ **NEEDS VALIDATION — grafia dos ids de bookmaker**: este projeto já confirmou, com pedidos
+    reais, que o segmento de path correto é `"paddypower"` (sem underscore — ver
+    `PULSESCORE_BOOKMAKER` em env.ts), mas a configuração do utilizador escreve `"paddy_power"`
+    (com underscore) para a mesma bookmaker. Só 5 dos 30 ids têm confirmação própria nesta
+    integração (`paddy_power`→`paddypower`, `bet365`, `unibet_au`→`unibetau`,
+    `10bet_couk`→`10bet`, `pinnacle_ps3838`→`ps3838` — ver `ROUTING_ID_TO_PULSESCORE_SLUG`); os
+    outros 25 passam tal como vieram como segmento do path REST, sem confirmação própria. Se
+    algum estiver errado, o motor de fallback simplesmente não encontra nada nessa bookmaker
+    (404/erro tratado como "sem cobertura", nunca quebra nada) — os mercados dessa bookmaker só
+    vão mesmo aparecer depois de alguém confirmar o segmento real.
+- `pulsescore/crossBookmakerFallback.ts` — `enrichEventFromOtherBookmakers(sport, event)`, só
+  chamado em `GET /sports/events/:id/refresh` (quando o utilizador abre o Match Tracker de um
+  evento em concreto) — **nunca** durante o polling em massa de `hybridService.ts`, que teria de
+  repetir isto para todos os eventos ao vivo a cada ciclo (custo de pedidos multiplicado por até
+  30x). Duas peças:
+  1. **Casamento de jogo entre bookmakers**: cada bookmaker tem o seu próprio `eventId` para o
+     mesmo confronto real (não há um id partilhado) — `matchesSameFixture()` procura o jogo
+     equivalente por semelhança do nome das equipas (reaproveita
+     `mapping/normalize.ts::calculateTeamSimilarity()`, já usado no motor de mapeamento com a
+     API-Football) exigindo ≥72% de confiança em ambas as equipas (mesmo patamar de
+     `teamMatcher.ts::MIN_CONFIDENCE_TO_LINK`), mais proximidade de horário de kickoff no
+     pré-jogo (±20 min) — para nunca juntar mercados/estatísticas de um jogo diferente por
+     engano (testado com um caso deliberado de equipas diferentes, confirma que recusa juntar).
+  2. **Preenchimento mercado a mercado / campo a campo**: para cada mercado em falta (via
+     `classifyRoutingMarket`) ou campo de estatística em falta (`statistics.home/away.
+     {yellowCards,redCards,corners}` — só futebol, ver abaixo), percorre a lista de preferência
+     dessa entrada, bookmaker a bookmaker, até encontrar a primeira com dados válidos (seleções
+     com odd numérica, ou o campo numérico da estatística); para na primeira que encontrar.
+- **Estatísticas**: só preenchidas para futebol (`STATS_FALLBACK_SPORTS`) — é o único desporto
+  onde `event.statistics.home/away` (cartões/cantos) já foi confirmado em amostras reais de mais
+  do que uma bookmaker (`mapStatistics()` em client.ts só popula quando o payload bruto tem uma
+  chave `football` ou `sets`; basquetebol/hóquei/beisebol/MMA/Fórmula 1 nunca tiveram isto em
+  nenhuma amostra vista). `sets` (ténis/voleibol, jogos por set) **nunca** é preenchido por
+  fallback — tem de ficar sincronizado com o placar ao vivo já mostrado, e misturar um snapshot
+  de outra bookmaker (com o seu próprio ciclo de sondagem) arriscava um placar inconsistente.
+- **Controlo de custo** (a razão de isto só correr sob pedido, nunca em massa): cache de 60s por
+  (desporto, bookmaker, ao vivo/pré-jogo) partilhada entre TODOS os mercados/estatísticas em
+  falta de uma chamada — uma bookmaker só é mesmo pedida uma vez, mesmo que apareça na lista de
+  preferência de 20 mercados diferentes; um resultado vazio (bookmaker sem o jogo) também fica em
+  cache (não seria útil voltar a tentar de imediato) — testado explicitamente: uma segunda
+  chamada ao mesmo evento já completo faz **zero** pedidos extra. `MAX_BOOKMAKERS_TRIED_PER_ITEM`
+  (6) impede que um único mercado muito específico (ex: "assists", com poucas bookmakers reais a
+  cobri-lo) esgote sozinho o orçamento antes de sequer chegar a "Escanteios"/"Cartões"/"Marcador"
+  — o que o utilizador pediu para nunca faltar.
+- **Testado** (scripts locais com `fetch` simulado, sem rede real): mercados em falta preenchidos
+  corretamente sem duplicar os já existentes; recusa juntar mercados de um jogo com equipas
+  diferentes (guarda contra falsos positivos); estatísticas em falta preenchidas campo a campo
+  sem sobrescrever o que já existia; chamada repetida ao mesmo evento não faz pedidos extra.
+  ⛔ Não testável contra a Pulsescore real neste ambiente (ver "Testado nesta build" abaixo) — os
+  25 ids de bookmaker não confirmados precisam de validação com pedidos reais antes de se saber
+  quais realmente preenchem mercados na prática.
+
 ## Ordenação de desportos (Pré-jogo e Destaques)
 
 `web/app.js::SPORT_ORDER` fixa a ordem "futebol primeiro" (depois ténis, basquete, o resto pela
