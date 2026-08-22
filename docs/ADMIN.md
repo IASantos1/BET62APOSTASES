@@ -41,10 +41,6 @@ já entra em `/admin` com o mesmo email/password.
 - **Depósitos** — só leitura (o estado é dirigido pelo webhook do Stripe, não há ação manual
   aqui).
 - **Jogo Responsável** — lista de autoexclusões ativas, para monitorização.
-- **Cassino** — jogos: liga/desliga um jogo específico do catálogo (guarda uma exceção em
-  `CasinoGameOverride`, por cima do `games.json` estático do provedor — sem isto não havia
-  forma de tirar um jogo do ar sem editar o ficheiro à mão); transações: lista das
-  transações reais do provedor (bet/win/cancel).
 - **Audit Log** — todas as ações administrativas (e a maior parte das ações do jogador que
   já eram registadas) com filtro por utilizador/ação.
 - **Definições** — modo de manutenção (bloqueia `/api/*` para jogadores com 503, exceto

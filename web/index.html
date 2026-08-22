@@ -102,17 +102,6 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 .promo-banner h2{font-family:'Bebas Neue',sans-serif;font-size:2.2rem}
 .promo-banner .pct{color:var(--red);font-size:3rem}
 .section-title{font-family:'Bebas Neue',sans-serif;font-size:1.3rem;margin-bottom:12px;letter-spacing:.5px}
-.casino-row{display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;scrollbar-width:none}
-.casino-row::-webkit-scrollbar{display:none}
-.casino-game{flex:0 0 110px;text-align:center;cursor:pointer}
-.casino-game .thumb{width:110px;height:110px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:2.6rem;margin-bottom:6px;overflow:hidden;background:var(--card)}
-.casino-game .name{font-size:.72rem;font-weight:600}
-.casino-game .thumb img{width:100%;height:100%;object-fit:cover;border-radius:14px}
-.casino-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px}
-.casino-grid-item{cursor:pointer;text-align:center}
-.casino-grid-item .thumb{width:100%;aspect-ratio:216/160;border-radius:12px;overflow:hidden;background:var(--card);margin-bottom:6px}
-.casino-grid-item .thumb img{width:100%;height:100%;object-fit:cover;display:block}
-.casino-grid-item .name{font-size:.72rem;font-weight:600;line-height:1.25;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .auth-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:300;align-items:center;justify-content:center;padding:16px}
 .auth-overlay.open{display:flex}
 .auth-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;width:100%;max-width:400px;overflow:hidden;max-height:92vh;overflow-y:auto}
@@ -360,7 +349,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawers()"></div>
 
 <!-- HEADER: ocupa a largura toda da página, acima dos menus laterais. Em Web o menu superior
-     (Destaques/Esportes/Ao Vivo/Casino) fica na mesma linha que a marca BET62; em ecrãs
+     (Destaques/Esportes/Ao Vivo/Promoção) fica na mesma linha que a marca BET62; em ecrãs
      estreitos (telemóvel/PWA) desce para a linha de baixo (ver media query). -->
 <header class="header">
     <div class="header-left">
@@ -372,7 +361,6 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
         <div class="top-nav-item active" data-page="destaques" onclick="showPage('destaques')"><i class="fas fa-star"></i> DESTAQUES</div>
         <div class="top-nav-item" data-page="esportes" onclick="showPage('esportes')"><i class="fas fa-trophy"></i> ESPORTES</div>
         <div class="top-nav-item" data-page="aovivo" onclick="showPage('aovivo')"><i class="fas fa-broadcast-tower"></i> AO VIVO <span class="live-dot"></span></div>
-        <div class="top-nav-item" data-page="casino" onclick="showPage('casino')"><i class="fas fa-dice"></i> CASINO</div>
         <div class="top-nav-item" data-page="promocao" onclick="showPage('promocao')"><i class="fas fa-gift"></i> PROMOÇÃO</div>
     </div>
     <div class="header-right">
@@ -409,8 +397,6 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
     <div id="destaques-prematch-list"></div>
     <div class="section-title">AO VIVO EM DESTAQUE</div>
     <div id="destaques-live-list"></div>
-    <div class="section-title">CASSINO EM DESTAQUE</div>
-    <div class="casino-row" id="destaques-casino-row"></div>
 </div>
 
 <!-- ========== PERFIL ========== -->
@@ -708,13 +694,6 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
     <div id="market-groups"></div>
 </div>
 
-<div id="page-casino" class="page hidden">
-    <div class="section-title">CASSINO</div>
-    <input type="text" id="casino-search" class="casino-search-input" placeholder="Pesquisar jogo..." oninput="onCasinoSearch(this.value)" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--border);background:var(--card);color:var(--text);margin-bottom:14px;font-size:.9rem">
-    <div id="casino-grid" class="casino-grid"></div>
-    <div id="casino-grid-status" style="text-align:center;color:var(--muted);padding:16px;font-size:.85rem"></div>
-</div>
-
 <!-- ========== PROMOÇÃO ========== -->
 <div id="page-promocao" class="page hidden">
     <div class="promo-banner">
@@ -730,10 +709,6 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
         </div>
         <div class="menu-item" style="padding:18px">
             <div style="font-weight:700;margin-bottom:6px">⚽ Cashback Desportivo Semanal</div>
-            <div style="font-size:.85rem;color:var(--muted)">Em breve — detalhes a anunciar.</div>
-        </div>
-        <div class="menu-item" style="padding:18px">
-            <div style="font-weight:700;margin-bottom:6px">🎰 Rodadas Grátis no Cassino</div>
             <div style="font-size:.85rem;color:var(--muted)">Em breve — detalhes a anunciar.</div>
         </div>
     </div>

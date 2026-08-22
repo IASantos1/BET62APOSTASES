@@ -110,10 +110,6 @@ const AdminApi = (() => {
 
     listSelfExclusions: () => request(`/admin/self-exclusions`),
 
-    listCasinoGames: (qs) => request(`/admin/casino/games?${qs}`),
-    setCasinoGameOverride: (code, enabled) => request(`/admin/casino/games/${encodeURIComponent(code)}`, { method: "PATCH", body: { enabled } }),
-    listCasinoTx: (qs) => request(`/admin/casino/transactions?${qs}`),
-
     listAuditLogs: (qs) => request(`/admin/audit-logs?${qs}`),
 
     getSettings: () => request("/admin/settings"),
@@ -208,8 +204,6 @@ const AdminApp = (() => {
     kyc: { page: 1, limit: 20, total: 0, status: "PENDING" },
     withdrawals: { page: 1, limit: 20, total: 0, status: "" },
     deposits: { page: 1, limit: 20, total: 0, status: "" },
-    casinoGames: { page: 1, limit: 24, total: 0, search: "", category: "" },
-    casinoTxCursor: null,
     auditCursor: null,
     mappingTeams: { page: 1, limit: 20, total: 0, search: "", maxConfidence: "" },
     mappingLeagues: { page: 1, limit: 20, total: 0, search: "", maxConfidence: "" },
@@ -300,7 +294,7 @@ const AdminApp = (() => {
 
   const SECTION_TITLES = {
     dashboard: "Dashboard", users: "Utilizadores", kyc: "Verificação KYC", withdrawals: "Levantamentos",
-    deposits: "Depósitos", responsible: "Jogo Responsável", casino: "Cassino", mapping: "Mapeamento Pulsescore ↔ API-Football",
+    deposits: "Depósitos", responsible: "Jogo Responsável", mapping: "Mapeamento Pulsescore ↔ API-Football",
     audit: "Audit Log", settings: "Definições",
   };
   function showSection(name) {
@@ -316,7 +310,6 @@ const AdminApp = (() => {
       withdrawals: () => loadWithdrawals(1),
       deposits: () => loadDeposits(1),
       responsible: loadResponsible,
-      casino: () => loadCasinoGames(1),
       mapping: () => loadMappingTeams(1),
       audit: () => loadAudit(true),
       settings: loadSettings,
@@ -336,7 +329,6 @@ const AdminApp = (() => {
         <div class="kpi-card"><div class="kpi-label">Levantamentos pendentes</div><div class="kpi-value">${d.pendingWithdrawals}</div><div class="kpi-sub">revisão AML necessária</div></div>
         <div class="kpi-card"><div class="kpi-label">Depósitos hoje</div><div class="kpi-value">${fmtMoney(d.depositsToday.total)}</div><div class="kpi-sub">${d.depositsToday.count} transações</div></div>
         <div class="kpi-card"><div class="kpi-label">Levantamentos hoje</div><div class="kpi-value">${fmtMoney(d.withdrawalsToday.total)}</div><div class="kpi-sub">${d.withdrawalsToday.count} pagos</div></div>
-        <div class="kpi-card"><div class="kpi-label">Transações de cassino hoje</div><div class="kpi-value">${d.casinoTxToday}</div></div>
       </div>
       <div class="panel">
         <h2>Atividade recente</h2>
@@ -766,109 +758,6 @@ const AdminApp = (() => {
           }</tbody>
         </table></div>
       </div>`;
-  }
-
-  // --- Casino ---
-
-  let casinoTab = "games";
-  function setCasinoTab(tab) {
-    casinoTab = tab;
-    if (tab === "games") loadCasinoGames(1);
-    else loadCasinoTx(true);
-  }
-
-  async function loadCasinoGames(page) {
-    state.casinoGames.page = page;
-    const search = document.getElementById("casino-search")?.value ?? state.casinoGames.search;
-    state.casinoGames.search = search;
-    const qs = new URLSearchParams({ page, limit: state.casinoGames.limit });
-    if (search) qs.set("search", search);
-    const data = await AdminApi.listCasinoGames(qs.toString());
-    state.casinoGames.total = data.total;
-    renderCasino("games", data.games);
-  }
-
-  async function loadCasinoTx(reset) {
-    if (reset) state.casinoTxCursor = null;
-    const qs = new URLSearchParams({ limit: 30 });
-    if (state.casinoTxCursor) qs.set("cursor", state.casinoTxCursor);
-    const data = await AdminApi.listCasinoTx(qs.toString());
-    state.casinoTxCursor = data.nextCursor;
-    renderCasino("tx", data.entries, Boolean(data.nextCursor));
-  }
-
-  function renderCasino(tab, rows, hasMore) {
-    casinoTab = tab;
-    const el = document.getElementById("section-casino");
-    const tabsHtml = `<div class="toolbar">
-      <button class="btn small ${tab === "games" ? "" : "outline"}" onclick="AdminApp.setCasinoTab('games')">Jogos</button>
-      <button class="btn small ${tab === "tx" ? "" : "outline"}" onclick="AdminApp.setCasinoTab('tx')">Transações</button>
-    </div>`;
-
-    if (tab === "games") {
-      el.innerHTML = `<div class="panel">
-        ${tabsHtml}
-        <div class="toolbar">
-          <input id="casino-search" type="text" placeholder="Pesquisar jogo" value="${esc(state.casinoGames.search)}" onkeydown="if(event.key==='Enter') AdminApp.loadCasinoGames(1)">
-          <button class="btn small" onclick="AdminApp.loadCasinoGames(1)">Pesquisar</button>
-        </div>
-        <div class="table-wrap"><table>
-          <thead><tr><th>Jogo</th><th>Categoria</th><th>Catálogo</th><th>Override</th><th>Estado efetivo</th><th></th></tr></thead>
-          <tbody>${rows
-            .map(
-              (g) => `<tr>
-                <td><b>${esc(g.gameName)}</b><br><span class="mono" style="color:var(--muted)">${esc(g.gameCode)}</span></td>
-                <td>${esc(g.category)}</td>
-                <td>${g.catalogEnabled ? badge("ACTIVE") : badge("CLOSED")}</td>
-                <td>${g.overrideEnabled === null ? '<span class="badge muted">—</span>' : g.overrideEnabled ? badge("ACTIVE") : badge("CLOSED")}</td>
-                <td>${g.effectiveEnabled ? badge("ACTIVE") : badge("CLOSED")}</td>
-                <td>
-                  ${
-                    g.effectiveEnabled
-                      ? `<button class="btn small outline" onclick='AdminApp.toggleGame(${JSON.stringify(g.gameCode)}, false)'>Desativar</button>`
-                      : `<button class="btn small green" onclick='AdminApp.toggleGame(${JSON.stringify(g.gameCode)}, true)'>Ativar</button>`
-                  }
-                </td>
-              </tr>`
-            )
-            .join("")}</tbody>
-        </table></div>
-        ${pagerHtml(state.casinoGames, "total", "AdminApp.loadCasinoGames")}
-      </div>`;
-    } else {
-      el.innerHTML = `<div class="panel">
-        ${tabsHtml}
-        <div class="table-wrap"><table>
-          <thead><tr><th>Quando</th><th>Utilizador</th><th>Tipo</th><th>Jogo</th><th>Valor</th></tr></thead>
-          <tbody>${
-            rows.length
-              ? rows
-                  .map(
-                    (t) => `<tr>
-                <td class="mono">${fmtDate(t.createdAt)}</td>
-                <td>${esc(t.wallet?.user?.username || "—")}</td>
-                <td>${badge(t.type)}</td>
-                <td class="mono">${esc(t.gameCode)}</td>
-                <td class="mono">${fmtMoney(t.amount)}</td>
-              </tr>`
-                  )
-                  .join("")
-              : `<tr><td colspan="5" class="empty-note">Sem transações</td></tr>`
-          }</tbody>
-        </table></div>
-        <div class="pager"><button class="btn small outline" ${hasMore ? "" : "disabled"} onclick="AdminApp.loadCasinoTx(false)">Carregar mais</button></div>
-      </div>`;
-    }
-  }
-
-  async function toggleGame(code, enabled) {
-    try {
-      await AdminApi.setCasinoGameOverride(code, enabled);
-      toast(enabled ? "Jogo ativado" : "Jogo desativado");
-      loadCasinoGames(state.casinoGames.page);
-    } catch (err) {
-      toast(err.message || "Erro ao atualizar jogo", "error");
-    }
   }
 
   // --- Mapeamento Pulsescore <-> API-Football (docs/TEAM_MAPPING.md) ---
@@ -1310,7 +1199,6 @@ const AdminApp = (() => {
     loadKyc, approveKyc, openRejectKyc, submitRejectKyc,
     loadWithdrawals, approveWithdrawal, openRejectWithdrawal, submitRejectWithdrawal,
     loadDeposits,
-    setCasinoTab, loadCasinoGames, loadCasinoTx, toggleGame,
     setMappingTab, loadMappingTeams, openCorrectTeam, submitCorrectTeam,
     loadMappingLeagues, openCorrectLeague, submitCorrectLeague,
     loadMappingFixtures, openCorrectFixture, submitCorrectFixture, resetMapping,

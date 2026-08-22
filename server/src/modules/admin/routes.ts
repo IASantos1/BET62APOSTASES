@@ -7,7 +7,6 @@ import { Errors } from "../../lib/errors";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
 import { getKycDocumentFile } from "../users/kycDocuments";
-import { getAgentInfo } from "../casino/apiClient";
 import {
   getDashboardStats,
   listUsers,
@@ -20,9 +19,6 @@ import {
   listWithdrawalsAdmin,
   listDepositsAdmin,
   listSelfExclusions,
-  listCasinoGamesAdmin,
-  setCasinoGameOverride,
-  listCasinoTransactionsAdmin,
   listAuditLogs,
   getSettings,
   updateSettings,
@@ -197,39 +193,6 @@ router.get(
   asyncHandler(async (req: AuthedRequest, res) => {
     res.json(await listSelfExclusions({ activeOnly: req.query.active !== "false" }));
   })
-);
-
-// --- Cassino ---
-
-router.get(
-  "/casino/games",
-  asyncHandler(async (req: AuthedRequest, res) => {
-    const search = typeof req.query.search === "string" ? req.query.search : undefined;
-    const category = typeof req.query.category === "string" ? req.query.category : undefined;
-    res.json(await listCasinoGamesAdmin({ search, category, ...pageQuery(req) }));
-  })
-);
-
-router.patch(
-  "/casino/games/:gameCode",
-  validateBody(z.object({ enabled: z.boolean() })),
-  asyncHandler(async (req: AuthedRequest, res) => {
-    res.json(await setCasinoGameOverride(requireParamId(req.params.gameCode), req.body.enabled, req.user!.id));
-  })
-);
-
-router.get(
-  "/casino/transactions",
-  asyncHandler(async (req: AuthedRequest, res) => {
-    const limit = req.query.limit ? Number(req.query.limit) : undefined;
-    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
-    res.json(await listCasinoTransactionsAdmin({ limit, cursor }));
-  })
-);
-
-router.get(
-  "/casino/agent-info",
-  asyncHandler(async (_req, res) => res.json(await getAgentInfo()))
 );
 
 // --- Audit log ---
