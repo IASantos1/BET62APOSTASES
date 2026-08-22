@@ -2,7 +2,6 @@ import { Prisma, UserRole, UserStatus, KycStatus, WithdrawalStatus, DepositStatu
 import { prisma } from "../../lib/prisma";
 import { Errors } from "../../lib/errors";
 import { applyLedgerMovement } from "../wallet/service";
-import { listGames as listCatalogGames, findGame } from "../casino/catalog";
 import { addAlias as addTeamAlias, removeAlias as removeTeamAlias, listAliases as listTeamAliases } from "../sports/mapping/aliasStore";
 
 function paginate(page?: number, limit?: number) {
@@ -26,7 +25,6 @@ export async function getDashboardStats() {
     pendingWithdrawals,
     depositsToday,
     withdrawalsToday,
-    casinoTxToday,
     recentAuditLogs,
   ] = await Promise.all([
     prisma.user.count(),
@@ -37,7 +35,6 @@ export async function getDashboardStats() {
     prisma.withdrawal.count({ where: { status: { in: ["REQUESTED", "UNDER_REVIEW"] } } }),
     prisma.deposit.aggregate({ where: { status: "SUCCEEDED", createdAt: { gte: todayStart } }, _sum: { amount: true }, _count: true }),
     prisma.withdrawal.aggregate({ where: { status: "PAID", updatedAt: { gte: todayStart } }, _sum: { amount: true }, _count: true }),
-    prisma.casinoTransaction.count({ where: { createdAt: { gte: todayStart } } }),
     prisma.auditLog.findMany({ orderBy: { createdAt: "desc" }, take: 15, include: { user: { select: { username: true, email: true } } } }),
   ]);
 
@@ -51,7 +48,6 @@ export async function getDashboardStats() {
     pendingWithdrawals,
     depositsToday: { count: depositsToday._count, total: depositsToday._sum.amount ?? new Prisma.Decimal(0) },
     withdrawalsToday: { count: withdrawalsToday._count, total: withdrawalsToday._sum.amount ?? new Prisma.Decimal(0) },
-    casinoTxToday,
     recentAuditLogs,
   };
 }
@@ -277,79 +273,6 @@ export async function listSelfExclusions(opts: { activeOnly?: boolean }) {
     take: 100,
     include: { user: { select: { id: true, publicId: true, email: true, username: true, name: true, status: true } } },
   });
-}
-
-// ============ CASINO ============
-// O catálogo (catalog.ts) vem de um JSON estático do provedor — CasinoGameOverride guarda só a
-// exceção manual por cima dele (ver comentário no schema.prisma). listCasinoGamesAdmin() junta
-// as duas fontes para a UI mostrar o estado real e efetivo de cada jogo.
-
-export async function listCasinoGamesAdmin(opts: { search?: string; category?: string; page?: number; limit?: number }) {
-  const { games: allMatching, total } = listCatalogGamesUnfiltered(opts);
-  const { take, skip, page } = paginate(opts.page, opts.limit);
-  const pageGames = allMatching.slice(skip, skip + take);
-  const codes = pageGames.map((g) => g.game_code);
-  const overrides = await prisma.casinoGameOverride.findMany({ where: { gameCode: { in: codes } } });
-  const overrideByCode = new Map(overrides.map((o) => [o.gameCode, o]));
-
-  const games = pageGames.map((g) => {
-    const override = overrideByCode.get(g.game_code);
-    return {
-      gameCode: g.game_code,
-      gameName: g.game_name,
-      category: g.category,
-      providerId: g.provider_id,
-      catalogEnabled: g.launch_enable,
-      overrideEnabled: override?.enabled ?? null,
-      effectiveEnabled: override ? override.enabled : g.launch_enable,
-    };
-  });
-
-  return { total, page, limit: take, games };
-}
-
-// listGames() do catálogo já filtra por launch_enable=true — para a gestão do admin precisamos
-// de ver TODOS os jogos (incluindo os já desativados no JSON), por isso não se reaproveita
-// listGames() aqui, só findGame()/o catálogo bruto via um pedido sem filtro de ativo.
-function listCatalogGamesUnfiltered(opts: { search?: string; category?: string }) {
-  const { games: activeOnly } = listCatalogGames({ search: opts.search, category: opts.category, limit: 100000 });
-  return { games: activeOnly, total: activeOnly.length };
-}
-
-export async function setCasinoGameOverride(gameCode: string, enabled: boolean, adminId: string) {
-  const game = findGame(gameCode) ?? null;
-  if (!game) {
-    // findGame() só encontra jogos com launch_enable=true no JSON — um jogo já desativado na
-    // origem ainda é um alvo válido para o override (ex: voltar a ligá-lo manualmente), por isso
-    // só se rejeita quando o código nem existe no catálogo.
-    const existsInCatalog = listCatalogGames({ limit: 100000 }).games.some((g) => g.game_code === gameCode);
-    if (!existsInCatalog) throw Errors.notFound("Jogo não encontrado no catálogo");
-  }
-
-  const override = await prisma.casinoGameOverride.upsert({
-    where: { gameCode },
-    create: { gameCode, enabled, updatedByUserId: adminId },
-    update: { enabled, updatedByUserId: adminId },
-  });
-
-  await prisma.auditLog.create({
-    data: { userId: adminId, action: "ADMIN_CASINO_GAME_OVERRIDE", metadata: { gameCode, enabled } },
-  });
-
-  return override;
-}
-
-export async function listCasinoTransactionsAdmin(opts: { limit?: number; cursor?: string }) {
-  const limit = Math.min(opts.limit ?? 25, 100);
-  const entries = await prisma.casinoTransaction.findMany({
-    orderBy: { createdAt: "desc" },
-    take: limit + 1,
-    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
-    include: { wallet: { select: { user: { select: { id: true, publicId: true, email: true, username: true } } } } },
-  });
-  const hasMore = entries.length > limit;
-  const page = hasMore ? entries.slice(0, limit) : entries;
-  return { entries: page, nextCursor: hasMore ? page[page.length - 1]?.id : null };
 }
 
 // ============ AUDIT LOG ============

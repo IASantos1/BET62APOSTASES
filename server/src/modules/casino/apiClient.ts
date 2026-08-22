@@ -2,12 +2,11 @@ import { env } from "../../config/env";
 import { logger } from "../../lib/logger";
 import { Errors } from "../../lib/errors";
 
-/**
- * Cliente da "Agent API" do goldslotpalase.com (Cassino Gold Palace) — confirmado via Swagger
- * real: https://agent.goldslotpalase.com/swagger/v4/swagger.json (OpenAPI 3.0.4, "Agent API
- * Documentation" v4). Todos os endpoints são POST sob /v4/..., autenticados por
- * "Authorization: Bearer {CASINO_AGENT_KEY}".
- */
+// Cliente da Agent API do goldslotpalase.com (Cassino Gold Palace). Reconstruído do zero após a
+// remoção anterior — só implementa endpoints confirmados ao vivo pelo utilizador (curl real,
+// resposta real), um de cada vez, em vez de assumir o contrato do Swagger antigo. Ver
+// docs/CASINO_SLOTS.md para o histórico. Todos os pedidos confirmados até agora são POST sob
+// /v4/..., autenticados por "Authorization: Bearer {CASINO_AGENT_KEY}", com corpo/resposta JSON.
 
 function assertConfigured() {
   if (!env.CASINO_AGENT_KEY) {
@@ -57,76 +56,137 @@ export interface AgentInfo {
   client_ip?: string;
 }
 
-/** Info do agente — inclui `whitelist` e `client_ip`, úteis para diagnosticar bloqueios de IP. */
+/** Confirmado: POST /v4/agent/info — devolve saldo, currency, whitelist e client_ip do agente. */
 export async function getAgentInfo(): Promise<AgentInfo> {
   const res = await postAgent<AgentInfo>("/v4/agent/info");
   return res.data;
 }
 
-/**
- * Cria (ou obtém, se já existir) o utilizador no sistema do provedor a partir de um `name`
- * alfanumérico (a API só aceita `^[_a-zA-Z0-9]+$`, por isso nunca usamos o nosso UUID em bruto —
- * ver accountForUser()/userIdFromAccount() em service.ts). Idempotente: "se um utilizador for
- * criado com o mesmo nome, devolve a informação do utilizador existente" (doc do provedor).
- */
-export async function createOrGetProviderUser(name: string): Promise<{ userCode: number; isNewUser: boolean }> {
-  const res = await postAgent<{ user_code: number; is_new_user: boolean }>("/v4/user/create", { name });
-  return { userCode: res.data.user_code, isNewUser: res.data.is_new_user };
+/** Confirmado: POST /v4/agent/rtp — define o RTP por omissão do agente ({@code 0} = RTP do provedor). */
+export async function setAgentRtp(rtp: number): Promise<void> {
+  await postAgent("/v4/agent/rtp", { rtp });
 }
 
-/** Código de idioma "Portuguese" confirmado na tabela multilíngue do Swagger (1=EN...6=PT). */
-export const LANG_PORTUGUESE = 6;
+export interface CallbackTestResult {
+  callbackUrl: string;
+  time: string;
+}
 
 /**
- * Pede o URL de lançamento de um jogo — válido por 10 minutos, uso único (não pode ser
- * reutilizado). `rtp: 0` usa o RTP por omissão do agente.
+ * Confirmado: POST /v4/agent/callback-test — o provedor testa, a partir da rede dele, se
+ * consegue alcançar o URL de callback configurado no painel do agente e devolve o URL testado
+ * mais o tempo de resposta. Útil para confirmar conectividade sem depender de lançar um jogo
+ * real (era exatamente isto que falhava silenciosamente na integração anterior).
  */
-export async function getGameLaunchUrl(params: {
-  userCode: number;
+export async function testCallback(): Promise<CallbackTestResult> {
+  const res = await postAgent<{ callback_url: string; time: string }>("/v4/agent/callback-test");
+  return { callbackUrl: res.data.callback_url, time: res.data.time };
+}
+
+/**
+ * Confirmado: POST /v4/user/info — consulta uma conta já criada no provedor por `user_code`.
+ * Só se confirmou até agora o caso de erro (`USER_NOT_FOUND`, código 2002, propagado por
+ * postAgent()); a forma exata do `data` de sucesso ainda não foi vista, por isso devolve-se sem
+ * tipar os campos em vez de inventar uma forma.
+ */
+export async function getUserInfo(userCode: number): Promise<unknown> {
+  const res = await postAgent("/v4/user/info", { user_code: userCode });
+  return res.data;
+}
+
+export interface GameProvider {
   providerId: number;
-  gameSymbol: string;
-  lang?: number;
-  returnUrl?: string;
-  rtp?: number;
-}): Promise<string> {
-  const res = await postAgent<{ game_url: string }>("/v4/game/game-url", {
-    user_code: params.userCode,
-    provider_id: params.providerId,
-    game_symbol: params.gameSymbol,
-    lang: params.lang ?? LANG_PORTUGUESE,
-    return_url: params.returnUrl ?? "",
-    rtp: params.rtp ?? 0,
-  });
-  return res.data.game_url;
-}
-
-export interface ProviderInfo {
-  provider_id: number;
-  provider_name: string;
-  locale_name: string;
+  providerName: string;
+  localeName: string;
   status: number;
 }
 
-/** Lista de provedores de jogo atribuídos ao agente (ex: Pragmatic Play = provider_id 1). */
-export async function listProviders(lang = LANG_PORTUGUESE): Promise<ProviderInfo[]> {
-  const res = await postAgent<ProviderInfo[]>("/v4/game/providers", { lang });
-  return res.data ?? [];
+/**
+ * Confirmado: POST /v4/game/providers — lista os provedores de jogos disponíveis (Pragmatic
+ * Play, CQ9, etc). `status` confirmado com os valores 1 e 2 na resposta real; o significado de
+ * cada valor não foi confirmado ainda (assumir "1 = ativo" só quando confirmado).
+ */
+export async function getGameProviders(lang = 1): Promise<GameProvider[]> {
+  const res = await postAgent<Array<{ provider_id: number; provider_name: string; locale_name: string; status: number }>>(
+    "/v4/game/providers",
+    { lang }
+  );
+  return res.data.map((p) => ({ providerId: p.provider_id, providerName: p.provider_name, localeName: p.locale_name, status: p.status }));
 }
 
-export interface ProviderGame {
-  provider_id: number;
-  game_code: string;
-  game_name: string;
-  locale_name: string;
-  game_image: string;
-  game_image_narrow?: string;
-  launch_enable: boolean;
+export interface CasinoGame {
+  providerId: number;
+  gameCode: string;
+  gameName: string;
+  localeName: string;
+  gameImage: string;
+  gameImageNarrow: string;
+  launchEnable: boolean;
   category: string;
-  reg_date: string;
+  regDate: string;
 }
 
-/** Lista de jogos ao vivo de um provedor — mesma forma do catálogo estático já guardado. */
-export async function listProviderGames(providerId: number, lang = LANG_PORTUGUESE): Promise<ProviderGame[]> {
-  const res = await postAgent<ProviderGame[]>("/v4/game/games", { provider_id: providerId, lang });
-  return res.data ?? [];
+/**
+ * Confirmado: POST /v4/game/games — lista o catálogo de jogos de um provedor (testado com
+ * provider_id 1 = Pragmatic Play: mais de 500 jogos devolvidos, todos category "Slots",
+ * launch_enable true). Devolve os campos tal como confirmados na resposta real, sem inventar
+ * nenhum adicional.
+ */
+export async function getGames(providerId: number, lang = 1): Promise<CasinoGame[]> {
+  const res = await postAgent<
+    Array<{
+      provider_id: number;
+      game_code: string;
+      game_name: string;
+      locale_name: string;
+      game_image: string;
+      game_image_narrow: string;
+      launch_enable: boolean;
+      category: string;
+      reg_date: string;
+    }>
+  >("/v4/game/games", { provider_id: providerId, lang });
+  return res.data.map((g) => ({
+    providerId: g.provider_id,
+    gameCode: g.game_code,
+    gameName: g.game_name,
+    localeName: g.locale_name,
+    gameImage: g.game_image,
+    gameImageNarrow: g.game_image_narrow,
+    launchEnable: g.launch_enable,
+    category: g.category,
+    regDate: g.reg_date,
+  }));
+}
+
+/**
+ * Confirmado: POST /v4/game/all — lista o catálogo completo de jogos de todos os provedores
+ * numa só chamada (sem provider_id), a mesma forma de item que /v4/game/games. Confirmado com
+ * provedores até provider_id 40 na resposta real.
+ */
+export async function getAllGames(lang = 1): Promise<CasinoGame[]> {
+  const res = await postAgent<
+    Array<{
+      provider_id: number;
+      game_code: string;
+      game_name: string;
+      locale_name: string;
+      game_image: string;
+      game_image_narrow: string;
+      launch_enable: boolean;
+      category: string;
+      reg_date: string;
+    }>
+  >("/v4/game/all", { lang });
+  return res.data.map((g) => ({
+    providerId: g.provider_id,
+    gameCode: g.game_code,
+    gameName: g.game_name,
+    localeName: g.locale_name,
+    gameImage: g.game_image,
+    gameImageNarrow: g.game_image_narrow,
+    launchEnable: g.launch_enable,
+    category: g.category,
+    regDate: g.reg_date,
+  }));
 }

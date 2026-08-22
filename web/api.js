@@ -198,18 +198,5 @@ const Bet62Api = (() => {
     getPredictions: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/predictions`, { auth: false }),
     getTeamStats: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/stats`, { auth: false }),
     getStandings: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/standings`, { auth: false }),
-
-    // Casino
-    getCasinoGames: (opts = {}) => {
-      const params = new URLSearchParams();
-      if (opts.search) params.set("search", opts.search);
-      if (opts.category) params.set("category", opts.category);
-      if (opts.limit) params.set("limit", opts.limit);
-      if (opts.offset) params.set("offset", opts.offset);
-      const qs = params.toString();
-      return request(`/casino/games${qs ? `?${qs}` : ""}`, { auth: false });
-    },
-    getCasinoHighlights: () => request("/casino/games/highlighted", { auth: false }),
-    launchCasinoGame: (gameCode) => request("/casino/launch", { method: "POST", body: { game_code: gameCode } }),
   };
 })();

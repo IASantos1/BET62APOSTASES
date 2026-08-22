@@ -51,17 +51,11 @@ const envSchema = z.object({
   // um redeploy apaga tudo (o sistema de ficheiros do container é efémero). Ver docs/KYC_DOCUMENTS.md.
   KYC_UPLOAD_DIR: z.string().default("uploads/kyc"),
 
-  // --- Cassino Gold Palace / goldslotpalase.com (slots, seamless wallet) ---
-  // Confirmado via Swagger real (https://agent.goldslotpalase.com/swagger/v4/swagger.json,
-  // OpenAPI 3.0.4, "Agent API Documentation" v4): callbacks Win/Cancel/Status que o provedor
-  // chama para debitar/creditar a carteira do jogador — o header "Callback-Token" desses
-  // pedidos tem de bater com este valor. Fuso horário da API do provedor é UTC.
-  CASINO_CALLBACK_TOKEN: z.string().default(""),
-  // Confirmado pelo mesmo Swagger: base URL real da API de agente (todos os endpoints POST sob
-  // /v4/..., ex: /v4/game/game-url para lançar um jogo). Autenticação por
-  // "Authorization: Bearer {CASINO_AGENT_KEY}" — o token gerado no admin do goldslotpalase.com.
-  CASINO_PROVIDER_BASE_URL: z.string().default("https://agent.goldslotpalase.com"),
+  // --- Cassino Gold Palace (goldslotpalase.com, Agent API v4) ---
+  // Reconstruído endpoint a endpoint, só com chamadas confirmadas ao vivo pelo utilizador (ver
+  // docs/CASINO_SLOTS.md). Auth: "Authorization: Bearer {CASINO_AGENT_KEY}" em todos os pedidos.
   CASINO_AGENT_KEY: z.string().default(""),
+  CASINO_PROVIDER_BASE_URL: z.string().default("https://agent.goldslotpalase.com"),
 });
 
 export type Env = z.infer<typeof envSchema>;

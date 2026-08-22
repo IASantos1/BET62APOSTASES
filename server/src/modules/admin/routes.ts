@@ -7,7 +7,7 @@ import { Errors } from "../../lib/errors";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
 import { getKycDocumentFile } from "../users/kycDocuments";
-import { getAgentInfo } from "../casino/apiClient";
+import { getAgentInfo, testCallback, getUserInfo, getGameProviders, getGames, getAllGames } from "../casino/apiClient";
 import {
   getDashboardStats,
   listUsers,
@@ -20,9 +20,6 @@ import {
   listWithdrawalsAdmin,
   listDepositsAdmin,
   listSelfExclusions,
-  listCasinoGamesAdmin,
-  setCasinoGameOverride,
-  listCasinoTransactionsAdmin,
   listAuditLogs,
   getSettings,
   updateSettings,
@@ -190,6 +187,48 @@ router.get(
   })
 );
 
+// --- Cassino ---
+// Reconstruído passo a passo — por agora só o endpoint de diagnóstico (confirma se o
+// CASINO_AGENT_KEY/CASINO_PROVIDER_BASE_URL configurados neste ambiente estão a funcionar).
+
+router.get(
+  "/casino/agent-info",
+  asyncHandler(async (_req, res) => res.json(await getAgentInfo()))
+);
+
+router.get(
+  "/casino/callback-test",
+  asyncHandler(async (_req, res) => res.json(await testCallback()))
+);
+
+router.get(
+  "/casino/users/:userCode",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const userCode = Number(req.params.userCode);
+    if (!Number.isInteger(userCode)) throw Errors.badRequest("user_code inválido");
+    res.json(await getUserInfo(userCode));
+  })
+);
+
+router.get(
+  "/casino/providers",
+  asyncHandler(async (_req, res) => res.json(await getGameProviders()))
+);
+
+router.get(
+  "/casino/providers/:providerId/games",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const providerId = Number(req.params.providerId);
+    if (!Number.isInteger(providerId)) throw Errors.badRequest("provider_id inválido");
+    res.json(await getGames(providerId));
+  })
+);
+
+router.get(
+  "/casino/games/all",
+  asyncHandler(async (_req, res) => res.json(await getAllGames()))
+);
+
 // --- Jogo responsável ---
 
 router.get(
@@ -197,39 +236,6 @@ router.get(
   asyncHandler(async (req: AuthedRequest, res) => {
     res.json(await listSelfExclusions({ activeOnly: req.query.active !== "false" }));
   })
-);
-
-// --- Cassino ---
-
-router.get(
-  "/casino/games",
-  asyncHandler(async (req: AuthedRequest, res) => {
-    const search = typeof req.query.search === "string" ? req.query.search : undefined;
-    const category = typeof req.query.category === "string" ? req.query.category : undefined;
-    res.json(await listCasinoGamesAdmin({ search, category, ...pageQuery(req) }));
-  })
-);
-
-router.patch(
-  "/casino/games/:gameCode",
-  validateBody(z.object({ enabled: z.boolean() })),
-  asyncHandler(async (req: AuthedRequest, res) => {
-    res.json(await setCasinoGameOverride(requireParamId(req.params.gameCode), req.body.enabled, req.user!.id));
-  })
-);
-
-router.get(
-  "/casino/transactions",
-  asyncHandler(async (req: AuthedRequest, res) => {
-    const limit = req.query.limit ? Number(req.query.limit) : undefined;
-    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
-    res.json(await listCasinoTransactionsAdmin({ limit, cursor }));
-  })
-);
-
-router.get(
-  "/casino/agent-info",
-  asyncHandler(async (_req, res) => res.json(await getAgentInfo()))
 );
 
 // --- Audit log ---

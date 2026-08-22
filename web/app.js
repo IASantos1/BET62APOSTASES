@@ -458,7 +458,7 @@ function showPage(page) {
   if (pageHistory[pageHistory.length - 1] !== page) pageHistory.push(page);
   closeDrawers();
 
-  ["destaques", "profile", "esportes", "aovivo", "casino", "promocao", "market"].forEach((p) => {
+  ["destaques", "profile", "esportes", "aovivo", "promocao", "market"].forEach((p) => {
     const el = document.getElementById("page-" + p);
     if (el) el.classList.toggle("hidden", p !== page);
   });
@@ -473,8 +473,7 @@ function showPage(page) {
   if (page === "profile") loadProfile();
   if (page === "aovivo") { renderSportSubnav(); renderLiveEvents(); ensureLiveSocket(); }
   if (page === "esportes") { renderSportSubnav(); renderPrematchList(); }
-  if (page === "casino") renderCasinoPage();
-  if (page === "destaques") { renderDestaquesHighlights(); renderDestaquesCasinoRow(); }
+  if (page === "destaques") renderDestaquesHighlights();
 }
 
 function goBack() {
@@ -489,7 +488,7 @@ function goBack() {
 // Gesto "arrastar da borda esquerda para voltar" (como no iOS), pedido pelo utilizador além do
 // botão de seta. Só ativa quando o toque começa perto da borda esquerda do ecrã — não em
 // qualquer ponto do ecrã — para não entrar em conflito com listas com scroll horizontal que já
-// existem (chips de desporto, carrossel do casino, linhas de odds, etc.).
+// existem (chips de desporto, linhas de odds, etc.).
 (function setupSwipeBack() {
   const EDGE_PX = 24;
   const MIN_DX = 70;
@@ -1250,74 +1249,6 @@ async function renderDestaquesHighlights() {
     liveEl.innerHTML = '<div class="empty-note">Sem jogos ao vivo neste momento</div>';
   } else {
     renderInBlocks(liveEl, liveHighlights.map((e) => highlightLiveCardHtml(e, icon)));
-  }
-}
-
-// ====================== CASINO ======================
-async function renderDestaquesCasinoRow() {
-  const el = document.getElementById("destaques-casino-row");
-  if (!el) return;
-  try {
-    const { games } = await Bet62Api.getCasinoHighlights();
-    el.innerHTML = games
-      .map(
-        (g) => `
-      <div class="casino-game" onclick='playGame(${JSON.stringify(g.game_code)}, ${JSON.stringify(g.game_name)})'>
-        <div class="thumb"><img src="${window.BET62_CONFIG.API_BASE}/casino/image/${g.game_code}" alt="${g.game_name}" loading="lazy" onerror="this.style.display='none'"></div>
-        <div class="name">${g.game_name}</div>
-      </div>`
-      )
-      .join("");
-  } catch {
-    // Sem catálogo disponível (backend em baixo, etc.) — a fila fica vazia em vez de quebrar a página.
-  }
-}
-
-let casinoSearchTimer = null;
-function onCasinoSearch(value) {
-  clearTimeout(casinoSearchTimer);
-  casinoSearchTimer = setTimeout(() => renderCasinoPage(value.trim()), 250);
-}
-
-async function renderCasinoPage(search = "") {
-  const grid = document.getElementById("casino-grid");
-  const status = document.getElementById("casino-grid-status");
-  const requestToken = ++renderCasinoPage._token;
-  if (!grid) return;
-  status.textContent = "A carregar…";
-  try {
-    const { games, total } = await Bet62Api.getCasinoGames({ search, limit: 120 });
-    if (requestToken !== renderCasinoPage._token) return; // pesquisa mais recente já em curso
-    grid.innerHTML = games
-      .map(
-        (g) => `
-      <div class="casino-grid-item" onclick='playGame(${JSON.stringify(g.game_code)}, ${JSON.stringify(g.game_name)})'>
-        <div class="thumb"><img src="${window.BET62_CONFIG.API_BASE}/casino/image/${g.game_code}" alt="${g.game_name}" loading="lazy" onerror="this.style.display='none'"></div>
-        <div class="name">${g.game_name}</div>
-      </div>`
-      )
-      .join("");
-    status.textContent = total > games.length ? `A mostrar ${games.length} de ${total} jogos — refine a pesquisa` : `${total} jogos`;
-  } catch (err) {
-    if (requestToken !== renderCasinoPage._token) return;
-    grid.innerHTML = "";
-    status.textContent = err.message || "Não foi possível carregar o catálogo de jogos.";
-  }
-}
-renderCasinoPage._token = 0;
-
-async function playGame(gameCode, gameName) {
-  if (!Bet62Api.isAuthenticated()) return openAuth("login");
-  // Abre a aba já no clique (síncrono) para não ser bloqueada como pop-up — só lhe muda o
-  // destino depois de recebermos o game_url real do provedor.
-  const win = window.open("", "_blank");
-  try {
-    const { game_url } = await Bet62Api.launchCasinoGame(gameCode);
-    if (win) win.location.href = game_url;
-    else window.open(game_url, "_blank");
-  } catch (err) {
-    if (win) win.close();
-    alert("🎰 " + (gameName || gameCode) + "\n\n" + (err.message || "Não foi possível abrir o jogo."));
   }
 }
 
