@@ -23,6 +23,7 @@ import {
   cancelFreeround,
   listTransactions,
   listTransactionsByCursor,
+  getRoundDetails,
 } from "../casino/apiClient";
 import { syncGameCatalog, listCasinoGames } from "../casino/catalogSync";
 import {
@@ -352,6 +353,19 @@ router.get(
     const limit = req.query.limit ? Number(req.query.limit) : undefined;
     res.json(await listTransactionsByCursor({ lastId, limit }));
   })
+);
+
+router.post(
+  "/casino/round-details",
+  validateBody(
+    z.object({
+      userCode: z.number().int(),
+      roundId: z.string().min(1),
+      providerId: z.number().int(),
+      gameCode: z.string().min(1),
+    })
+  ),
+  asyncHandler(async (req: AuthedRequest, res) => res.json(await getRoundDetails(req.body)))
 );
 
 router.get(

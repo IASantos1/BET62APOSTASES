@@ -115,6 +115,13 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   débito (aposta — `balance = prebalance - trans_amount`) e `trans_type 2` parece ser crédito
   (ganho, pode ser `0` se perdeu essa ronda).
 
+- `POST /v4/game/round-details` — `getRoundDetails(options)`. Exposto em
+  `POST /api/admin/casino/round-details`. Chamado ao vivo com um `user_code` inexistente (`3`)
+  e um `round_id` inventado, devolveu `USER_NOT_FOUND` (código 2002) — esperado. Forma de
+  sucesso ainda por confirmar; testar de novo com o `user_code` real (`408951137`) e um
+  `round_id` real vistos em `/v4/game/transaction-id` (ex: `445454453023`) devia mostrar a forma
+  completa.
+
 ## Catálogo local (`CasinoGame`)
 
 O catálogo completo (`/v4/game/all`) tem milhares de jogos — pedir isto ao provedor em cada

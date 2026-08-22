@@ -425,3 +425,26 @@ export async function listTransactionsByCursor(
     timeStamp: t.time_stamp,
   }));
 }
+
+export interface RoundDetailsOptions {
+  userCode: number;
+  roundId: string;
+  providerId: number;
+  gameCode: string;
+}
+
+/**
+ * Confirmado: POST /v4/game/round-details — pedido testado com um user_code inexistente (3) e
+ * um round_id inventado, devolveu `USER_NOT_FOUND` (código 2002) propagado por postAgent() —
+ * esperado. Forma de sucesso ainda não vista; testar de novo com o user_code real confirmado em
+ * /v4/game/transaction-id (408951137) e um round_id real dessa lista para ver a forma completa.
+ */
+export async function getRoundDetails(options: RoundDetailsOptions): Promise<unknown> {
+  const res = await postAgent("/v4/game/round-details", {
+    user_code: options.userCode,
+    round_id: options.roundId,
+    provider_id: options.providerId,
+    game_code: options.gameCode,
+  });
+  return res.data;
+}
