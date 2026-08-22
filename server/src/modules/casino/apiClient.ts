@@ -82,3 +82,14 @@ export async function testCallback(): Promise<CallbackTestResult> {
   const res = await postAgent<{ callback_url: string; time: string }>("/v4/agent/callback-test");
   return { callbackUrl: res.data.callback_url, time: res.data.time };
 }
+
+/**
+ * Confirmado: POST /v4/user/info — consulta uma conta já criada no provedor por `user_code`.
+ * Só se confirmou até agora o caso de erro (`USER_NOT_FOUND`, código 2002, propagado por
+ * postAgent()); a forma exata do `data` de sucesso ainda não foi vista, por isso devolve-se sem
+ * tipar os campos em vez de inventar uma forma.
+ */
+export async function getUserInfo(userCode: number): Promise<unknown> {
+  const res = await postAgent("/v4/user/info", { user_code: userCode });
+  return res.data;
+}

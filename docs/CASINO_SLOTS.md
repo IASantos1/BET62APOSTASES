@@ -30,6 +30,15 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   callback configurado agora é `/callback` na raiz, não `/api/casino/callback` como antes — a
   rota real ainda não existe no backend (por implementar quando confirmado o contrato do corpo
   do callback).
+- `POST /v4/user/create` — chamado ao vivo com `{ name: "test" }`, devolveu `code 1015
+  CALLBACK_ERROR`. Confirma que `user/create` dispara uma chamada real de callback (não só um
+  teste de conectividade como `agent/callback-test`) para validar a conta antes de a criar — e
+  falha porque a rota real `/callback` ainda não existe neste backend. **Ainda não
+  implementado no cliente** — falta o contrato do corpo/comando esperado pelo callback.
+- `POST /v4/user/info` — `getUserInfo(userCode)`. Exposto em
+  `GET /api/admin/casino/users/:userCode`. Só se confirmou o caso de erro (`USER_NOT_FOUND`,
+  código 2002, para um `user_code` que nunca chegou a ser criado); a forma de sucesso ainda não
+  foi vista, por isso `data` fica sem tipar por agora.
 
 Autenticação confirmada: header `Authorization: Bearer {CASINO_AGENT_KEY}` em todos os pedidos,
 resposta sempre no formato `{ code, message, data }` (`code !== 0` é tratado como erro).
