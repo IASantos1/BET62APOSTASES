@@ -7,7 +7,27 @@ import { Errors } from "../../lib/errors";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
 import { getKycDocumentFile } from "../users/kycDocuments";
-import { getAgentInfo, testCallback, getUserInfo, getGameProviders, getGames, getAllGames } from "../casino/apiClient";
+import {
+  getAgentInfo,
+  testCallback,
+  getUserInfo,
+  getGameProviders,
+  getGames,
+  getAllGames,
+  launchGame,
+  getOnlineGames,
+  getCallConfig,
+  callStart,
+  callCancel,
+  createFreeround,
+  cancelFreeround,
+  listTransactions,
+  listTransactionsByCursor,
+  getRoundDetails,
+  listUserStatistics,
+} from "../casino/apiClient";
+import { provisionCasinoAccount } from "../casino/accountProvisioning";
+import { syncGameCatalog, listCasinoGames } from "../casino/catalogSync";
 import {
   getDashboardStats,
   listUsers,
@@ -227,6 +247,164 @@ router.get(
 router.get(
   "/casino/games/all",
   asyncHandler(async (_req, res) => res.json(await getAllGames()))
+);
+
+// Espelho local do catálogo (ver casino/catalogSync.ts) — o que o frontend/admin devem consultar
+// no dia a dia, em vez de GET /casino/games/all (pede o catálogo inteiro ao provedor de cada vez).
+router.post(
+  "/casino/games/sync",
+  asyncHandler(async (_req, res) => res.json(await syncGameCatalog()))
+);
+
+// Diagnóstico de POST /v4/game/game-url — bloqueado enquanto user/create não funcionar (ver
+// docs/CASINO_SLOTS.md): qualquer user_code aqui vai devolver USER_NOT_FOUND até haver contas
+// reais criadas no provedor.
+router.post(
+  "/casino/games/launch",
+  validateBody(
+    z.object({
+      userCode: z.number().int(),
+      providerId: z.number().int(),
+      gameSymbol: z.string().min(1),
+      lang: z.number().int().optional(),
+      returnUrl: z.string().optional(),
+      rtp: z.number().optional(),
+      isFinishJackpot: z.boolean().optional(),
+    })
+  ),
+  asyncHandler(async (req: AuthedRequest, res) => res.json(await launchGame(req.body)))
+);
+
+router.get(
+  "/casino/games/online",
+  asyncHandler(async (_req, res) => res.json(await getOnlineGames()))
+);
+
+router.get(
+  "/casino/call-config",
+  asyncHandler(async (_req, res) => res.json(await getCallConfig()))
+);
+
+// Diagnóstico de POST /v4/game/call_start — devolveu PERMISSION_ERROR com gplay_id 0 (ver
+// docs/CASINO_SLOTS.md); significado de gplay_id/set_point/type ainda por confirmar.
+router.post(
+  "/casino/call-start",
+  validateBody(
+    z.object({
+      gplayId: z.number().int(),
+      setPoint: z.number(),
+      type: z.number().int(),
+      memo: z.string().optional(),
+    })
+  ),
+  asyncHandler(async (req: AuthedRequest, res) => res.json(await callStart(req.body)))
+);
+
+router.post(
+  "/casino/call-cancel",
+  validateBody(z.object({ callId: z.number().int() })),
+  asyncHandler(async (req: AuthedRequest, res) => res.json(await callCancel(req.body.callId)))
+);
+
+// Diagnóstico de POST /v4/game/freeround/create — confirmado que expirationDate (epoch em ms)
+// tem de ser pelo menos 30 minutos no futuro (ver docs/CASINO_SLOTS.md).
+router.post(
+  "/casino/freerounds",
+  validateBody(
+    z.object({
+      userCode: z.number().int(),
+      providerId: z.number().int(),
+      gameSymbol: z.string().min(1),
+      bet: z.number(),
+      win: z.number(),
+      rounds: z.number().int(),
+      expirationDate: z.number().int(),
+    })
+  ),
+  asyncHandler(async (req: AuthedRequest, res) => res.json(await createFreeround(req.body)))
+);
+
+router.post(
+  "/casino/freerounds/cancel",
+  validateBody(z.object({ frId: z.string().min(1) })),
+  asyncHandler(async (req: AuthedRequest, res) => res.json(await cancelFreeround(req.body.frId)))
+);
+
+router.get(
+  "/casino/transactions",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const startTime = typeof req.query.startTime === "string" ? req.query.startTime : undefined;
+    const endTime = typeof req.query.endTime === "string" ? req.query.endTime : undefined;
+    if (!startTime || !endTime) throw Errors.badRequest("startTime e endTime são obrigatórios (\"YYYY-MM-DD HH:MM:SS\")");
+    const { page, limit } = pageQuery(req);
+    res.json(
+      await listTransactions({
+        startTime,
+        endTime,
+        offset: page && limit ? (page - 1) * limit : undefined,
+        limit,
+      })
+    );
+  })
+);
+
+router.get(
+  "/casino/transactions/cursor",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const lastId = req.query.lastId ? Number(req.query.lastId) : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    res.json(await listTransactionsByCursor({ lastId, limit }));
+  })
+);
+
+router.post(
+  "/casino/round-details",
+  validateBody(
+    z.object({
+      userCode: z.number().int(),
+      roundId: z.string().min(1),
+      providerId: z.number().int(),
+      gameCode: z.string().min(1),
+    })
+  ),
+  asyncHandler(async (req: AuthedRequest, res) => res.json(await getRoundDetails(req.body)))
+);
+
+router.get(
+  "/casino/statistics/user",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const startTime = typeof req.query.startTime === "string" ? req.query.startTime : undefined;
+    const endTime = typeof req.query.endTime === "string" ? req.query.endTime : undefined;
+    if (!startTime || !endTime) throw Errors.badRequest("startTime e endTime são obrigatórios (ISO 8601)");
+    const { page, limit } = pageQuery(req);
+    res.json(
+      await listUserStatistics({
+        startTime,
+        endTime,
+        offset: page && limit ? (page - 1) * limit : undefined,
+        limit,
+      })
+    );
+  })
+);
+
+// Cria a conta no provedor (user/create) e guarda o mapeamento local (CasinoAccount) usado pelo
+// callback — ver casino/accountProvisioning.ts e casino/callback.ts. Primeiro teste real de
+// user/create desde que a rota /callback existe.
+router.post(
+  "/casino/accounts/provision",
+  validateBody(z.object({ userId: z.string().min(1) })),
+  asyncHandler(async (req: AuthedRequest, res) => res.json(await provisionCasinoAccount(req.body.userId)))
+);
+
+router.get(
+  "/casino/games",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const { page, limit } = pageQuery(req);
+    const providerId = req.query.providerId ? Number(req.query.providerId) : undefined;
+    const category = typeof req.query.category === "string" ? req.query.category : undefined;
+    res.json(await listCasinoGames({ providerId, category, page, pageSize: limit }));
+  })
 );
 
 // --- Jogo responsável ---

@@ -53,6 +53,7 @@ model User {
   selfExclusions     SelfExclusion[]
   auditLogs          AuditLog[]
   bets               Bet[]
+  casinoAccount      CasinoAccount?
 
   @@index([status])
 }
@@ -508,4 +509,67 @@ model TeamAlias {
   createdAt       DateTime @default(now())
 
   @@unique([sport, normalizedAlias])
+}
+
+// ============ CASSINO (catálogo local) ============
+// Espelho local de POST /v4/game/all (goldslotpalase.com) — o catálogo completo tem milhares de
+// jogos e demora demasiado a pedir ao provedor em cada carregamento de página; esta tabela é
+// preenchida por um sync manual (ver casino/catalogSync.ts) e é o que o frontend passa a
+// consultar. Reconstrução passo a passo, ver docs/CASINO_SLOTS.md.
+model CasinoGame {
+  id              String   @id @default(uuid())
+  providerId      Int
+  gameCode        String
+  gameName        String
+  localeName      String
+  gameImage       String
+  gameImageNarrow String
+  launchEnable    Boolean  @default(true)
+  category        String
+  regDate         String // tal como veio do provedor ("YYYY-MM-DD HH:MM:SS"), guardado em bruto
+  syncedAt        DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([providerId, gameCode])
+  @@index([category])
+  @@index([launchEnable])
+}
+
+// ============ CASSINO (conta no provedor + callback / carteira em tempo real) ============
+// Contrato de callback confirmado pelo utilizador (documentação real do goldslotpalase.com,
+// não um curl+resposta como o resto — ver docs/CASINO_SLOTS.md). O provedor chama
+// POST https://bet62.plus/callback (fora de /api/, ver app.ts) para autenticar, consultar
+// saldo, debitar apostas, creditar ganhos e cancelar — ver casino/callback.ts para a
+// implementação e para tudo o que ainda não está confirmado (forma dos erros, o campo "check",
+// e se "account" == exatamente o que enviamos em user/create).
+
+// Uma linha por utilizador que já tem conta criada no provedor via POST /v4/user/create —
+// "account" é o identificador enviado nesse pedido (hoje: user.publicId) e que o provedor
+// devolve depois nos comandos "authenticate"/"balance" do callback.
+model CasinoAccount {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account   String   @unique
+  createdAt DateTime @default(now())
+}
+
+// Um registo por trans_guid recebido no callback (comandos bet/win/cancel) — chave de
+// idempotência: se o provedor reenviar o mesmo trans_guid (timeout do lado dele, retry), a
+// carteira não é debitada/creditada outra vez, só se devolve o saldo já processado.
+model CasinoCallbackTransaction {
+  id         String   @id @default(uuid())
+  transGuid  String   @unique
+  command    String // "bet" | "win" | "cancel"
+  gplayId    String
+  account    String
+  roundId    String
+  providerId Int
+  gameCode   String
+  gameType   String
+  amount     Decimal  @db.Decimal(14, 2)
+  type       Int
+  createdAt  DateTime @default(now())
+
+  @@index([account, createdAt])
 }
