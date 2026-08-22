@@ -245,3 +245,29 @@ export async function getCallConfig(): Promise<CallConfig> {
   const res = await postAgent<{ call_min: number }>("/v4/game/call_config");
   return { callMin: res.data.call_min };
 }
+
+export interface CallStartOptions {
+  gplayId: number;
+  setPoint: number;
+  type: number;
+  memo?: string;
+}
+
+/**
+ * Confirmado: POST /v4/game/call_start — pedido testado com `{ gplay_id: 0, set_point: 0,
+ * type: 0, memo: "string" }`, devolveu `PERMISSION_ERROR` (código 1010) propagado por
+ * postAgent() — diferente do USER_NOT_FOUND visto noutros endpoints, por isso parece precisar
+ * de mais do que só um user_code válido (ex: uma sessão de jogo ativa, ou um `gplay_id` real em
+ * vez de 0). A forma exata do `data` de sucesso e o significado de cada campo (gplay_id,
+ * set_point, type) ainda não foram confirmados — só se implementa o formato do corpo já visto,
+ * sem inventar o resto.
+ */
+export async function callStart(options: CallStartOptions): Promise<unknown> {
+  const res = await postAgent("/v4/game/call_start", {
+    gplay_id: options.gplayId,
+    set_point: options.setPoint,
+    type: options.type,
+    memo: options.memo ?? "",
+  });
+  return res.data;
+}

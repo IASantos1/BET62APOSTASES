@@ -71,6 +71,13 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   Devolveu `{ call_min: 10 }`. O significado exato de `call_min` ainda não foi confirmado (só se
   guarda o campo tal como veio).
 
+- `POST /v4/game/call_start` — `callStart(options)`. Exposto em
+  `POST /api/admin/casino/call-start`. Chamado ao vivo com `{ gplay_id: 0, set_point: 0, type: 0,
+  memo: "string" }`, devolveu `PERMISSION_ERROR` (código 1010) — diferente do `USER_NOT_FOUND`
+  visto noutros endpoints, sugere que precisa de mais do que um `user_code` válido (ex: sessão de
+  jogo ativa, ou `gplay_id` real em vez de 0). Significado de `gplay_id`/`set_point`/`type` e a
+  forma de sucesso ainda por confirmar.
+
 ## Catálogo local (`CasinoGame`)
 
 O catálogo completo (`/v4/game/all`) tem milhares de jogos — pedir isto ao provedor em cada

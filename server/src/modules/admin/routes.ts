@@ -17,6 +17,7 @@ import {
   launchGame,
   getOnlineGames,
   getCallConfig,
+  callStart,
 } from "../casino/apiClient";
 import { syncGameCatalog, listCasinoGames } from "../casino/catalogSync";
 import {
@@ -274,6 +275,21 @@ router.get(
 router.get(
   "/casino/call-config",
   asyncHandler(async (_req, res) => res.json(await getCallConfig()))
+);
+
+// Diagnóstico de POST /v4/game/call_start — devolveu PERMISSION_ERROR com gplay_id 0 (ver
+// docs/CASINO_SLOTS.md); significado de gplay_id/set_point/type ainda por confirmar.
+router.post(
+  "/casino/call-start",
+  validateBody(
+    z.object({
+      gplayId: z.number().int(),
+      setPoint: z.number(),
+      type: z.number().int(),
+      memo: z.string().optional(),
+    })
+  ),
+  asyncHandler(async (req: AuthedRequest, res) => res.json(await callStart(req.body)))
 );
 
 router.get(
