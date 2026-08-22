@@ -94,6 +94,13 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   devolveu `FREEROUND_NO_EXIST` (código 2020) — esperado, nenhum freeround real foi criado
   ainda. Forma de sucesso ainda por confirmar.
 
+- `POST /v4/game/transaction` — `listTransactions(options)`. Exposto em
+  `GET /api/admin/casino/transactions?startTime=...&endTime=...&page=&limit=`. Chamado ao vivo
+  com uma janela de tempo antiga (2022-12-26), devolveu `{ total: 0, offset: 0, count: 0, list:
+  [] }` — confirma o envelope de paginação (`total`/`offset`/`count`/`list`), mas a forma de
+  cada item de `list` ainda não foi vista (nenhuma transação real aconteceu ainda). `start_time`
+  e `end_time` confirmados como string `"YYYY-MM-DD HH:MM:SS"`.
+
 ## Catálogo local (`CasinoGame`)
 
 O catálogo completo (`/v4/game/all`) tem milhares de jogos — pedir isto ao provedor em cada

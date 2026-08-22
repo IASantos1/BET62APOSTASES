@@ -323,3 +323,34 @@ export async function cancelFreeround(frId: string): Promise<unknown> {
   const res = await postAgent("/v4/game/freeround/cancel", { fr_id: frId });
   return res.data;
 }
+
+export interface ListTransactionsOptions {
+  /** "YYYY-MM-DD HH:MM:SS", tal como confirmado no pedido real. */
+  startTime: string;
+  endTime: string;
+  offset?: number;
+  limit?: number;
+}
+
+export interface TransactionsPage {
+  total: number;
+  offset: number;
+  count: number;
+  list: unknown[];
+}
+
+/**
+ * Confirmado: POST /v4/game/transaction — pedido testado com uma janela de tempo antiga
+ * (2022-12-26), devolveu `{ total: 0, offset: 0, count: 0, list: [] }` — confirma o envelope de
+ * paginação (total/offset/count/list), mas a forma de cada item de `list` ainda não foi vista
+ * (esperado, `list` veio vazia — nenhuma transação real aconteceu ainda nesta integração).
+ */
+export async function listTransactions(options: ListTransactionsOptions): Promise<TransactionsPage> {
+  const res = await postAgent<TransactionsPage>("/v4/game/transaction", {
+    start_time: options.startTime,
+    end_time: options.endTime,
+    offset: options.offset ?? 0,
+    limit: options.limit ?? 10,
+  });
+  return res.data;
+}

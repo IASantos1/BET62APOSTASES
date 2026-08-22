@@ -21,6 +21,7 @@ import {
   callCancel,
   createFreeround,
   cancelFreeround,
+  listTransactions,
 } from "../casino/apiClient";
 import { syncGameCatalog, listCasinoGames } from "../casino/catalogSync";
 import {
@@ -323,6 +324,24 @@ router.post(
   "/casino/freerounds/cancel",
   validateBody(z.object({ frId: z.string().min(1) })),
   asyncHandler(async (req: AuthedRequest, res) => res.json(await cancelFreeround(req.body.frId)))
+);
+
+router.get(
+  "/casino/transactions",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const startTime = typeof req.query.startTime === "string" ? req.query.startTime : undefined;
+    const endTime = typeof req.query.endTime === "string" ? req.query.endTime : undefined;
+    if (!startTime || !endTime) throw Errors.badRequest("startTime e endTime são obrigatórios (\"YYYY-MM-DD HH:MM:SS\")");
+    const { page, limit } = pageQuery(req);
+    res.json(
+      await listTransactions({
+        startTime,
+        endTime,
+        offset: page && limit ? (page - 1) * limit : undefined,
+        limit,
+      })
+    );
+  })
 );
 
 router.get(
