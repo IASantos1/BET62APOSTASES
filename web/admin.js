@@ -111,6 +111,7 @@ const AdminApi = (() => {
     listCasinoGames: (qs) => request(`/admin/casino/games?${qs}`),
     syncCasinoGames: () => request("/admin/casino/games/sync", { method: "POST" }),
     getCasinoAgentInfo: () => request("/admin/casino/agent-info"),
+    provisionCasinoAccount: (userId) => request("/admin/casino/accounts/provision", { method: "POST", body: { userId } }),
 
     listSelfExclusions: () => request(`/admin/self-exclusions`),
 
@@ -441,6 +442,11 @@ const AdminApp = (() => {
       </div>
       <div class="btn-row" style="margin-top:8px">
         <button class="btn small green" onclick='AdminApp.openAdjustBalance(${JSON.stringify(u.id)})'>Ajustar saldo</button>
+        <button class="btn small outline" onclick='AdminApp.provisionCasino(${JSON.stringify(u.id)}, this)'>Provisionar conta Cassino</button>
+      </div>
+      <div class="field-hint" style="margin-top:4px">
+        Cria a conta deste utilizador no provedor de Cassino (user/create) — ação real do lado
+        deles, não reversível por nós. Só precisa de ser feita uma vez por utilizador.
       </div>
 
       <div class="section-title">Últimos movimentos</div>
@@ -480,6 +486,21 @@ const AdminApp = (() => {
     } catch (err) {
       toast(err.message || "Erro ao atualizar papel", "error");
     }
+  }
+
+  // Primeiro teste real de user/create desde que a rota /callback ficou pronta (ver
+  // casino/accountProvisioning.ts) — cria a conta deste utilizador no provedor de Cassino, se
+  // ainda não existir (idempotente: se já houver CasinoAccount para este utilizador, devolve o
+  // que já existe em vez de tentar criar outra vez).
+  async function provisionCasino(id, btn) {
+    await withBusyButton(btn, async () => {
+      try {
+        const account = await AdminApi.provisionCasinoAccount(id);
+        toast(`Conta Cassino provisionada: ${account.account}`);
+      } catch (err) {
+        toast(err.message || "Erro ao provisionar conta Cassino", "error");
+      }
+    });
   }
 
   function openAdjustBalance(id) {
@@ -1300,7 +1321,7 @@ const AdminApp = (() => {
 
   return {
     init, login, logout, showSection, closeModal,
-    loadUsers, openUserDetail, applyUserStatus, applyUserRole, openAdjustBalance, submitAdjustBalance,
+    loadUsers, openUserDetail, applyUserStatus, applyUserRole, openAdjustBalance, submitAdjustBalance, provisionCasino,
     loadKyc, approveKyc, openRejectKyc, submitRejectKyc,
     loadWithdrawals, approveWithdrawal, openRejectWithdrawal, submitRejectWithdrawal,
     loadDeposits,
