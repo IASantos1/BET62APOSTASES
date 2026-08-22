@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { env } from "../../config/env";
 import { Errors } from "../../lib/errors";
+import { logger } from "../../lib/logger";
 import { asyncHandler } from "../../middleware/errorHandler";
 import { requireAuth, requireRole, type AuthedRequest } from "../../middleware/auth";
 import { listGames, listHighlightedGames } from "./catalog";
@@ -88,7 +89,15 @@ router.get(
 function verifyCallbackToken(req: { headers: Record<string, unknown> }) {
   const header = req.headers["callback-token"];
   const token = Array.isArray(header) ? header[0] : header;
-  if (!env.CASINO_CALLBACK_TOKEN || token !== env.CASINO_CALLBACK_TOKEN) {
+  if (!env.CASINO_CALLBACK_TOKEN) {
+    // Nunca aparece "por omissão sem segredo nenhum" — mas isto é fácil de confundir com um
+    // simples "token errado" nos logs, por isso fica com a sua própria mensagem: falta
+    // configurar CASINO_CALLBACK_TOKEN neste ambiente (não é o provedor a mandar mal).
+    logger.warn("[CASINO] callback recusado: CASINO_CALLBACK_TOKEN não está configurado neste ambiente");
+    throw Errors.unauthorized("Callback-Token inválido ou em falta");
+  }
+  if (token !== env.CASINO_CALLBACK_TOKEN) {
+    logger.warn({ tokenPresente: !!token, tokenLength: typeof token === "string" ? token.length : 0 }, "[CASINO] callback recusado: Callback-Token não bate com CASINO_CALLBACK_TOKEN");
     throw Errors.unauthorized("Callback-Token inválido ou em falta");
   }
 }
@@ -126,14 +135,24 @@ async function dispatchCasinoCallback(command: string, data: CasinoCallbackData 
 
 function casinoCallbackHandler(pathCommand?: string) {
   return asyncHandler(async (req, res) => {
+    // Log de cada pedido recebido ANTES de qualquer verificação/erro — é a única forma de saber,
+    // pelos logs do Railway, se o provedor sequer chegou a alcançar este endpoint (path/URL
+    // configurado errado do lado deles, bloqueio de rede) vs. chegou mas foi recusado por um
+    // motivo concreto (token errado, conta desconhecida) — sem isto, um "CALLBACK_ERROR" ao
+    // pedir o game-url é impossível de diagnosticar remotamente.
+    const command = typeof req.body?.command === "string" ? req.body.command : pathCommand ?? "";
+    const account = (req.body?.data as { account?: string } | undefined)?.account;
+    logger.info({ path: req.path, command, account }, "[CASINO] callback recebido");
     try {
       verifyCallbackToken(req);
-      const command = typeof req.body?.command === "string" ? req.body.command : pathCommand ?? "";
       const data = (req.body?.data ?? {}) as CasinoCallbackData & { account?: string };
       const result = await dispatchCasinoCallback(command, data);
+      logger.info({ path: req.path, command, account, result: result.result, status: result.status }, "[CASINO] callback respondido");
       res.json(result);
     } catch (err) {
-      res.json(toCallbackErrorResponse(err));
+      const response = toCallbackErrorResponse(err);
+      logger.warn({ path: req.path, command, account, result: response.result, err }, "[CASINO] callback respondido com erro");
+      res.json(response);
     }
   });
 }

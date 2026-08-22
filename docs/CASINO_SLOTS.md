@@ -161,6 +161,86 @@ consistentes por jogo, iniciais + nome legíveis), cache de falha confirmado (se
 mesmo jogo instantâneo, ~8ms). Assim que o IP da Railway for autorizado pelo provedor, as
 imagens reais passam a aparecer sozinhas, sem precisar de mais nenhuma alteração de código.
 
+## Diagnóstico: "Callback Erro" ao abrir um jogo em produção
+
+O utilizador reportou o mesmo `CALLBACK_ERROR` já documentado acima a voltar a acontecer em
+produção (jogo não abre, alerta mostra "Callback Erro"). Como isto já tinha sido corrigido uma
+vez (URL único de callback), a causa mais provável agora é de **configuração**, não de código:
+o painel de agente do provedor ainda a apontar para o URL/segredo errado, ou
+`CASINO_CALLBACK_TOKEN` não estar preenchido no Railway — mas sem visibilidade nenhuma sobre o
+que o provedor realmente envia ao chamar o nosso callback, não era possível confirmar qual.
+
+**Adicionado** (`routes.ts`): log de cada callback recebido — `path`, `command`, `account` — a
+INFO logo à entrada (antes de qualquer verificação, para saber mesmo que a verificação do token
+falhe), mais o `result` devolvido, e um aviso específico quando `CASINO_CALLBACK_TOKEN` falta
+configurar vs. quando o token recebido não bate com o configurado (duas causas distintas, antes
+indistinguíveis nos logs). **Próxima vez que isto acontecer, os logs do Railway (`GET
+/api/casino/*` ou o painel de logs do serviço) vão mostrar exatamente**:
+- Se o pedido do provedor sequer chega a este endpoint (nada nos logs = URL configurado errado
+  no painel deles, ou bloqueio de rede/IP — o mesmo tipo de problema já confirmado com as
+  imagens dos jogos).
+- Se chega mas o token não bate (aviso `CASINO_CALLBACK_TOKEN não está configurado` ou `não bate
+  com CASINO_CALLBACK_TOKEN`) — confirma/descarta um problema de configuração do segredo.
+- Se chega com token certo mas `account` não reconhecido (`result: 21`) — nesse caso o log
+  mostra o valor exato de `account` que o provedor enviou, permitindo confirmar se corresponde
+  ao formato que geramos (`accountForUser()`, `u` + UUID sem hífens) ou se o provedor está a
+  usar outro identificador (ex: o `user_code` numérico deles) que `userIdFromAccount()` não
+  reconheceria — nesse caso o parsing teria de mudar.
+
+Testado localmente (Postgres de teste): token errado/em falta → `result: 100` com o aviso certo
+nos logs; conta desconhecida com token certo → `result: 21` com `account` visível no log.
+
+⚠️ **Ainda por confirmar**: sem acesso aos logs reais de produção nem ao painel de agente do
+provedor, não foi possível confirmar qual das causas acima é a real — os logs adicionados são o
+próximo passo para isso, não uma correção definitiva. Se o utilizador conseguir colar os logs do
+Railway depois da próxima tentativa (ou confirmar se `CASINO_CALLBACK_TOKEN`/o URL no painel
+deles estão corretos), a causa fica confirmada.
+
+### Sequência real investigada com o utilizador (produção)
+
+Com os logs de diagnóstico já em produção, o utilizador reportou, por esta ordem:
+
+1. **`Cassino: Agent API devolveu um código de erro`**, `path: /v4/user/create`, `code: 1015` —
+   o PRIMEIRO passo do lançamento (criar/obter o utilizador do lado do provedor) já falhava, nem
+   chegava a tentar o `game-url`. Sem tabela de códigos de erro da Agent API documentada neste
+   projeto, o significado exato de `1015` não foi confirmado — o utilizador optou por gerar uma
+   nova `CASINO_AGENT_KEY` no painel deles e atualizá-la no Railway.
+2. Depois disso, `1015` deixou de aparecer (confirma que a nova chave resolveu o passo 1), mas
+   surgiu **`Cassino: CALLBACK_ERROR`** — de volta ao problema original desta secção, agora no
+   passo 2 (`/v4/game/game-url`).
+3. Com o filtro `CASINO` nos logs do Railway, **nenhuma linha "callback recebido" apareceu** ao
+   tentar abrir o jogo — confirma o primeiro cenário listado acima: o auto-teste do provedor ao
+   nosso callback nunca chega ao nosso servidor.
+4. Confirmado o URL configurado no painel deles: `https://bet62.plus/api/Casino/callback`
+   (maiúscula em "Casino" — **não é a causa**: testado localmente que o routing do Express não é
+   sensível a maiúsculas/minúsculas por omissão, `/api/Casino/callback` bate certo com a rota
+   `/api/casino/callback`). O utilizador também testou `https://bet62.plus/callback` (sem
+   `/api/casino`) — esse sim está errado, mas não era o configurado originalmente.
+5. Confirmado com o utilizador que `https://bet62.plus/api/health` responde
+   `{"status":"ok","env":"production"}` a partir do browser dele — o domínio `bet62.plus` está
+   correamente ligado a este backend, elimina DNS/certificado/routing como causa.
+6. **Conclusão desta investigação**: com o domínio confirmado a funcionar e o URL de callback
+   sintaticamente correto, mas o auto-teste do provedor nunca a chegar aos nossos logs, a causa
+   mais provável é de **rede do lado da Palace Casino** (o mesmo padrão já confirmado com
+   `api.playxspin.com`, que dá timeout a partir do Railway — desta vez ao contrário, é a rede
+   deles que aparenta não conseguir alcançar `bet62.plus`). Isto já não é algo corrigível por
+   código deste lado — precisa de ser reportado ao suporte técnico da Palace Casino com os
+   detalhes concretos acima (URL exato, e que o auto-teste deles nunca chega ao nosso servidor).
+
+**Encontrado e corrigido durante esta investigação** (falha real, independente da causa acima):
+`maintenanceGate.ts` bloqueava `/api/casino/callback` como qualquer outra rota `/api/*` quando o
+modo de manutenção do admin estava ligado — devolvendo `503 MAINTENANCE` em vez de processar o
+callback. Isto teria o mesmo efeito prático de "provedor nunca alcança o callback" sempre que a
+manutenção estivesse ligada durante uma jogada em curso (débito/crédito da carteira ficaria
+dessincronizado do resultado real do jogo), e o próprio provedor testa este URL sempre que pede
+um `game-url`, mesmo fora de qualquer manutenção. Adicionado `/api/casino/callback` (e os seus
+aliases) à lista de exceções do `maintenanceGate`, junto com o painel admin e o
+login/refresh/logout — testado: `/api/casino/callback` responde normalmente com a manutenção
+ligada, `/api/casino/games` continua corretamente bloqueado (`503`). **Não era a causa
+confirmada do erro atual** (a manutenção não estava ligada durante os testes do utilizador — o
+próprio pedido de lançamento chegou a contactar a Agent API), mas é uma falha real que ficaria
+por descobrir só quando calhasse.
+
 ## Testado nesta build
 
 - ✅ Servidor local com Postgres real: `GET /api/casino/games` (490 jogos), `.../highlighted`
