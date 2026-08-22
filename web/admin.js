@@ -108,6 +108,9 @@ const AdminApi = (() => {
 
     listDeposits: (qs) => request(`/admin/deposits?${qs}`),
 
+    listCasinoGames: (qs) => request(`/admin/casino/games?${qs}`),
+    syncCasinoGames: () => request("/admin/casino/games/sync", { method: "POST" }),
+
     listSelfExclusions: () => request(`/admin/self-exclusions`),
 
     listAuditLogs: (qs) => request(`/admin/audit-logs?${qs}`),
@@ -204,6 +207,7 @@ const AdminApp = (() => {
     kyc: { page: 1, limit: 20, total: 0, status: "PENDING" },
     withdrawals: { page: 1, limit: 20, total: 0, status: "" },
     deposits: { page: 1, limit: 20, total: 0, status: "" },
+    casino: { page: 1, limit: 20, total: 0 },
     auditCursor: null,
     mappingTeams: { page: 1, limit: 20, total: 0, search: "", maxConfidence: "" },
     mappingLeagues: { page: 1, limit: 20, total: 0, search: "", maxConfidence: "" },
@@ -294,7 +298,7 @@ const AdminApp = (() => {
 
   const SECTION_TITLES = {
     dashboard: "Dashboard", users: "Utilizadores", kyc: "Verificação KYC", withdrawals: "Levantamentos",
-    deposits: "Depósitos", responsible: "Jogo Responsável", mapping: "Mapeamento Pulsescore ↔ API-Football",
+    deposits: "Depósitos", casino: "Cassino", responsible: "Jogo Responsável", mapping: "Mapeamento Pulsescore ↔ API-Football",
     audit: "Audit Log", settings: "Definições",
   };
   function showSection(name) {
@@ -309,6 +313,7 @@ const AdminApp = (() => {
       kyc: () => loadKyc(1),
       withdrawals: () => loadWithdrawals(1),
       deposits: () => loadDeposits(1),
+      casino: () => loadCasino(1),
       responsible: loadResponsible,
       mapping: () => loadMappingTeams(1),
       audit: () => loadAudit(true),
@@ -730,6 +735,70 @@ const AdminApp = (() => {
         </table></div>
         ${pagerHtml(state.deposits, "total", "AdminApp.loadDeposits")}
       </div>`;
+  }
+
+  // --- Cassino ---
+  // O catálogo local (server/src/modules/casino/catalogSync.ts) é a única fonte da página de
+  // Cassino dos jogadores (GET /api/casino/games) — sem sync manual aqui, essa página fica
+  // sempre vazia mesmo com CASINO_AGENT_KEY configurada e a funcionar.
+
+  async function loadCasino(page) {
+    state.casino.page = page;
+    const qs = new URLSearchParams({ page, limit: state.casino.limit });
+    const data = await AdminApi.listCasinoGames(qs.toString());
+    state.casino.total = data.total;
+    renderCasino(data.games);
+  }
+
+  function renderCasino(games) {
+    const el = document.getElementById("section-casino");
+    el.innerHTML = `
+      <div class="panel">
+        <h2>Catálogo de jogos</h2>
+        <div class="field-hint" style="margin-bottom:10px">
+          Isto é o que alimenta a página de Cassino dos jogadores — nunca é atualizado sozinho.
+          Se essa página estiver a mostrar "Nenhum jogo encontrado", é porque o catálogo local
+          está vazio (nunca foi sincronizado) ou desatualizado. Clica no botão abaixo para ir
+          buscar o catálogo mais recente ao provedor.
+        </div>
+        <div class="btn-row">
+          <button class="btn" onclick="AdminApp.syncCasino(this)">Sincronizar catálogo agora</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Jogos no catálogo local (${state.casino.total})</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Nome</th><th>Provedor</th><th>Código</th><th>Categoria</th><th>Ativo</th></tr></thead>
+          <tbody>${
+            games.length
+              ? games
+                  .map(
+                    (g) => `<tr>
+                <td>${esc(g.localeName || g.gameName)}</td>
+                <td class="mono">${g.providerId}</td>
+                <td class="mono">${esc(g.gameCode)}</td>
+                <td>${esc(g.category)}</td>
+                <td>${g.launchEnable ? '<span class="badge ok">Sim</span>' : '<span class="badge bad">Não</span>'}</td>
+              </tr>`
+                  )
+                  .join("")
+              : `<tr><td colspan="5" class="empty-note">Catálogo vazio — clica em "Sincronizar catálogo agora" acima</td></tr>`
+          }</tbody>
+        </table></div>
+        ${pagerHtml(state.casino, "total", "AdminApp.loadCasino")}
+      </div>`;
+  }
+
+  async function syncCasino(btn) {
+    await withBusyButton(btn, async () => {
+      try {
+        const result = await AdminApi.syncCasinoGames();
+        toast(`Catálogo sincronizado: ${result.totalGames} jogos`);
+        loadCasino(1);
+      } catch (err) {
+        toast(err.message || "Erro ao sincronizar catálogo — verifica CASINO_AGENT_KEY", "error");
+      }
+    });
   }
 
   // --- Responsible gambling ---
@@ -1199,6 +1268,7 @@ const AdminApp = (() => {
     loadKyc, approveKyc, openRejectKyc, submitRejectKyc,
     loadWithdrawals, approveWithdrawal, openRejectWithdrawal, submitRejectWithdrawal,
     loadDeposits,
+    loadCasino, syncCasino,
     setMappingTab, loadMappingTeams, openCorrectTeam, submitCorrectTeam,
     loadMappingLeagues, openCorrectLeague, submitCorrectLeague,
     loadMappingFixtures, openCorrectFixture, submitCorrectFixture, resetMapping,
