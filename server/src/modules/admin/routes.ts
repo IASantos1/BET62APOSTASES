@@ -7,7 +7,7 @@ import { Errors } from "../../lib/errors";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
 import { getKycDocumentFile } from "../users/kycDocuments";
-import { getAgentInfo, testCallback, getUserInfo, getGameProviders } from "../casino/apiClient";
+import { getAgentInfo, testCallback, getUserInfo, getGameProviders, getGames } from "../casino/apiClient";
 import {
   getDashboardStats,
   listUsers,
@@ -213,6 +213,15 @@ router.get(
 router.get(
   "/casino/providers",
   asyncHandler(async (_req, res) => res.json(await getGameProviders()))
+);
+
+router.get(
+  "/casino/providers/:providerId/games",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const providerId = Number(req.params.providerId);
+    if (!Number.isInteger(providerId)) throw Errors.badRequest("provider_id inválido");
+    res.json(await getGames(providerId));
+  })
 );
 
 // --- Jogo responsável ---

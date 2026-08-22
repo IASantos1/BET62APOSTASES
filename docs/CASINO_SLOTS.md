@@ -44,6 +44,11 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   Pocket Games Soft, Booongo, Playson, Habanero, JiLi, Tydo, PlayStar, XGaming, Spribe, Hacksaw,
   Palace, BGaming, TADA, Amusnet, EGT, Inout) com `provider_id`/`status`; o significado exato de
   cada valor de `status` (visto 1 e 2 na resposta real) ainda não foi confirmado.
+- `POST /v4/game/games` — `getGames(providerId, lang)`. Exposto em
+  `GET /api/admin/casino/providers/:providerId/games`. Testado com `provider_id: 1` (Pragmatic
+  Play): mais de 500 jogos devolvidos, todos `category: "Slots"`, `launch_enable: true`. Campos
+  confirmados: `game_code`, `game_name`, `locale_name`, `game_image`, `game_image_narrow`,
+  `launch_enable`, `category`, `reg_date`.
 
 Autenticação confirmada: header `Authorization: Bearer {CASINO_AGENT_KEY}` em todos os pedidos,
 resposta sempre no formato `{ code, message, data }` (`code !== 0` é tratado como erro).

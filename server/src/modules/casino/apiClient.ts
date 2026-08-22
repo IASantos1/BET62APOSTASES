@@ -113,3 +113,48 @@ export async function getGameProviders(lang = 1): Promise<GameProvider[]> {
   );
   return res.data.map((p) => ({ providerId: p.provider_id, providerName: p.provider_name, localeName: p.locale_name, status: p.status }));
 }
+
+export interface CasinoGame {
+  providerId: number;
+  gameCode: string;
+  gameName: string;
+  localeName: string;
+  gameImage: string;
+  gameImageNarrow: string;
+  launchEnable: boolean;
+  category: string;
+  regDate: string;
+}
+
+/**
+ * Confirmado: POST /v4/game/games — lista o catálogo de jogos de um provedor (testado com
+ * provider_id 1 = Pragmatic Play: mais de 500 jogos devolvidos, todos category "Slots",
+ * launch_enable true). Devolve os campos tal como confirmados na resposta real, sem inventar
+ * nenhum adicional.
+ */
+export async function getGames(providerId: number, lang = 1): Promise<CasinoGame[]> {
+  const res = await postAgent<
+    Array<{
+      provider_id: number;
+      game_code: string;
+      game_name: string;
+      locale_name: string;
+      game_image: string;
+      game_image_narrow: string;
+      launch_enable: boolean;
+      category: string;
+      reg_date: string;
+    }>
+  >("/v4/game/games", { provider_id: providerId, lang });
+  return res.data.map((g) => ({
+    providerId: g.provider_id,
+    gameCode: g.game_code,
+    gameName: g.game_name,
+    localeName: g.locale_name,
+    gameImage: g.game_image,
+    gameImageNarrow: g.game_image_narrow,
+    launchEnable: g.launch_enable,
+    category: g.category,
+    regDate: g.reg_date,
+  }));
+}
