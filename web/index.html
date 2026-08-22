@@ -7,6 +7,10 @@
 <meta name="theme-color" content="#0c0c0e">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Bet62">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <script>
 // Aplicado antes do CSS carregar, para não haver "flash" do tema errado.
 // Sem botão manual: modo claro das 08:00 às 20:00, escuro fora desse intervalo.
@@ -333,6 +337,55 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .betslip-fab{display:none;position:fixed;right:18px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:150;width:46px;height:46px;background:var(--red);color:#fff;border:none;border-radius:50%;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(0,0,0,.35);cursor:pointer;font-size:.9rem;font-weight:700;animation:betslip-pulse 1.8s ease-in-out infinite}
 @keyframes betslip-pulse{0%,100%{box-shadow:0 0 0 0 rgba(230,48,39,.55),0 6px 16px rgba(0,0,0,.35)}50%{box-shadow:0 0 0 10px rgba(230,48,39,0),0 6px 16px rgba(0,0,0,.35)}}
 @media (prefers-reduced-motion: reduce){.betslip-fab{animation:none}}
+/* ===== Cassino: hero carousel + populares + tabs/pesquisa + grelha de slots =====
+   Imagens dos cartões/slides vêm de gameImage/gameImageNarrow do catálogo real (ver
+   casino/catalogSync.ts) — nada de artwork inventado, só o que o provedor devolveu. */
+.casino-hero{position:relative;border-radius:18px;overflow:hidden;margin-bottom:22px;background:var(--surface)}
+.casino-hero-track{display:flex;transition:transform .5s ease}
+.casino-hero-slide{flex:0 0 100%;min-height:200px;aspect-ratio:16/7;background-size:cover;background-position:center;display:flex;align-items:flex-end;position:relative}
+.casino-hero-slide::after{content:'';position:absolute;inset:0;background:linear-gradient(0deg,rgba(0,0,0,.82) 0%,rgba(0,0,0,.35) 55%,rgba(0,0,0,.05) 100%)}
+.casino-hero-slide-body{position:relative;z-index:1;padding:18px 22px;max-width:520px}
+.casino-hero-eyebrow{font-size:.72rem;font-weight:700;letter-spacing:.08em;color:var(--gold);text-transform:uppercase;margin-bottom:6px}
+.casino-hero-title{font-family:'Bebas Neue',sans-serif;font-size:1.9rem;line-height:1.05;color:#fff;letter-spacing:.4px;margin-bottom:10px;text-shadow:0 2px 8px rgba(0,0,0,.4)}
+.casino-hero-cta{background:var(--red);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-weight:700;font-size:.82rem;cursor:pointer;letter-spacing:.03em}
+.hero-arrow{position:absolute;top:50%;transform:translateY(-50%);width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,.45);color:#fff;border:none;font-size:1rem;cursor:pointer;z-index:2;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.hero-arrow:hover{background:rgba(0,0,0,.7)}
+.hero-arrow.prev{left:10px}
+.hero-arrow.next{right:10px}
+.hero-dots{position:absolute;bottom:10px;right:16px;z-index:2;display:flex;gap:6px}
+.hero-dot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.4);cursor:pointer}
+.hero-dot.active{background:#fff}
+.casino-popular-row{display:flex;gap:12px;overflow-x:auto;padding-bottom:6px;margin-bottom:26px;scrollbar-width:none}
+.casino-popular-row::-webkit-scrollbar{display:none}
+.casino-popular-row .casino-game-card{flex:0 0 128px}
+.casino-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.casino-tabs-bar{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
+.casino-tabs-bar::-webkit-scrollbar{display:none}
+.casino-tab{padding:7px 14px;border-radius:16px;font-size:.74rem;font-weight:700;color:var(--muted);white-space:nowrap;cursor:pointer;background:var(--surface);border:1px solid var(--border);flex-shrink:0;letter-spacing:.02em}
+.casino-tab.active{background:var(--red);border-color:var(--red);color:#fff}
+.casino-search-wrap{position:relative;flex-shrink:0;width:180px}
+.casino-search-wrap i{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.8rem}
+.casino-search-wrap input{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:8px 12px 8px 30px;color:var(--text);font-size:.8rem;outline:none}
+.casino-search-wrap input:focus{border-color:var(--red)}
+.casino-section-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:10px}
+.casino-sort select{background:var(--surface);border:1px solid var(--border);color:var(--text);font-size:.76rem;font-weight:600;border-radius:10px;padding:7px 10px;outline:none}
+.casino-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:12px;margin-bottom:18px}
+.casino-game-card{position:relative;border-radius:12px;overflow:hidden;background:var(--surface);border:1px solid var(--border);cursor:pointer;aspect-ratio:3/4}
+.casino-game-card img{width:100%;height:100%;object-fit:cover;display:block}
+.casino-game-card-overlay{position:absolute;inset:0;background:linear-gradient(0deg,rgba(0,0,0,.88) 0%,rgba(0,0,0,0) 45%);display:flex;flex-direction:column;justify-content:flex-end;padding:8px}
+.casino-game-name{color:#fff;font-size:.72rem;font-weight:700;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.casino-game-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);opacity:0;transition:opacity .15s;color:#fff;font-size:1.6rem}
+.casino-game-card:hover .casino-game-play{opacity:1}
+.casino-skel-card{aspect-ratio:3/4;border-radius:12px;background:linear-gradient(90deg,var(--surface2) 25%,var(--border) 50%,var(--surface2) 75%);background-size:400% 100%;animation:skeleton-shimmer 1.4s ease-in-out infinite}
+.casino-load-more{display:block;margin:4px auto 24px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:11px 28px;border-radius:24px;font-weight:700;font-size:.82rem;cursor:pointer}
+.casino-load-more:hover{border-color:var(--red)}
+.casino-load-more:disabled{opacity:.5;cursor:not-allowed}
+@media (max-width: 900px) {
+  .casino-hero-slide{aspect-ratio:4/3}
+  .casino-toolbar{flex-wrap:wrap}
+  .casino-search-wrap{width:100%;order:3}
+  .casino-grid{grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
+}
 </style>
 </head>
 <body>
@@ -360,6 +413,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
     <div class="top-nav" id="top-nav">
         <div class="top-nav-item active" data-page="destaques" onclick="showPage('destaques')"><i class="fas fa-star"></i> DESTAQUES</div>
         <div class="top-nav-item" data-page="esportes" onclick="showPage('esportes')"><i class="fas fa-trophy"></i> ESPORTES</div>
+        <div class="top-nav-item" data-page="cassino" onclick="showPage('cassino')"><i class="fas fa-dice"></i> CASSINO</div>
         <div class="top-nav-item" data-page="aovivo" onclick="showPage('aovivo')"><i class="fas fa-broadcast-tower"></i> AO VIVO <span class="live-dot"></span></div>
         <div class="top-nav-item" data-page="promocao" onclick="showPage('promocao')"><i class="fas fa-gift"></i> PROMOÇÃO</div>
     </div>
@@ -683,6 +737,44 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
     <div class="live-list" id="live-list"></div>
 </div>
 
+<!-- ========== CASSINO ========== -->
+<div id="page-cassino" class="page hidden">
+    <!-- Banner rotativo — slides construídos a partir de jogos reais do catálogo (imagem +
+         nome), ver renderCasinoHero() em app.js. Sem carrossel nenhum inventado com dados falsos. -->
+    <div class="casino-hero" id="casino-hero">
+        <div class="casino-hero-track" id="casino-hero-track"></div>
+        <button class="hero-arrow prev" onclick="casinoHeroStep(-1)" aria-label="Anterior">‹</button>
+        <button class="hero-arrow next" onclick="casinoHeroStep(1)" aria-label="Seguinte">›</button>
+        <div class="hero-dots" id="casino-hero-dots"></div>
+    </div>
+
+    <div class="section-title">JOGOS POPULARES</div>
+    <div class="casino-popular-row" id="casino-popular-row"></div>
+
+    <div class="casino-toolbar">
+        <div class="casino-tabs-bar" id="casino-tabs-bar"></div>
+        <div class="casino-search-wrap">
+            <i class="fas fa-search"></i>
+            <input type="text" id="casino-search-input" placeholder="Pesquisar jogo…" oninput="casinoOnSearchInput()">
+        </div>
+    </div>
+
+    <div class="casino-section-bar">
+        <div class="section-title" style="margin-bottom:0" id="casino-grid-title">SLOTS</div>
+        <div class="casino-sort">
+            <select id="casino-sort-select" onchange="casinoOnSortChange()">
+                <option value="">Ordenar por: Relevância</option>
+                <option value="name_asc">Nome (A-Z)</option>
+                <option value="name_desc">Nome (Z-A)</option>
+                <option value="newest">Mais recentes</option>
+            </select>
+        </div>
+    </div>
+    <div class="casino-grid" id="casino-grid"></div>
+    <button class="casino-load-more hidden" id="casino-load-more" onclick="casinoLoadMore()">CARREGAR MAIS JOGOS</button>
+    <div class="empty-note hidden" id="casino-empty-note">Nenhum jogo encontrado.</div>
+</div>
+
 <!-- ========== MERCADOS (detalhe do evento) ========== -->
 <div id="page-market" class="page hidden">
     <div class="market-header">
@@ -865,5 +957,16 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 
 <script src="api.js"></script>
 <script src="app.js"></script>
+<script>
+// Registo do service worker — só torna o site instalável (PWA) e dá uma casca offline básica,
+// nunca bloqueia o carregamento normal (registo assíncrono, falha em silêncio em navegadores sem
+// suporte). Ver web/service-worker.js para a estratégia "network-first" (nunca serve conteúdo
+// desatualizado só por estar em cache).
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/service-worker.js").catch(() => {});
+  });
+}
+</script>
 </body>
 </html>

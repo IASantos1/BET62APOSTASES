@@ -198,5 +198,19 @@ const Bet62Api = (() => {
     getPredictions: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/predictions`, { auth: false }),
     getTeamStats: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/stats`, { auth: false }),
     getStandings: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/standings`, { auth: false }),
+
+    // Cassino — catálogo público (GET /api/casino/games), sem autenticação, ver
+    // server/src/modules/casino/routes.ts. `tag` mapeia para as categorias da página
+    // (megaways/jackpots/bonus/freespins/baccarat/blackjack/roulette/novos); `search` é livre.
+    getCasinoGames: ({ page, limit, tag, search, sort } = {}) => {
+      const params = new URLSearchParams();
+      if (page) params.set("page", page);
+      if (limit) params.set("limit", limit);
+      if (tag) params.set("tag", tag);
+      if (search) params.set("search", search);
+      if (sort) params.set("sort", sort);
+      const qs = params.toString();
+      return request(`/casino/games${qs ? `?${qs}` : ""}`, { auth: false });
+    },
   };
 })();

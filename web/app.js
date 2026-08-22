@@ -458,7 +458,7 @@ function showPage(page) {
   if (pageHistory[pageHistory.length - 1] !== page) pageHistory.push(page);
   closeDrawers();
 
-  ["destaques", "profile", "esportes", "aovivo", "promocao", "market"].forEach((p) => {
+  ["destaques", "profile", "esportes", "cassino", "aovivo", "promocao", "market"].forEach((p) => {
     const el = document.getElementById("page-" + p);
     if (el) el.classList.toggle("hidden", p !== page);
   });
@@ -474,6 +474,7 @@ function showPage(page) {
   if (page === "aovivo") { renderSportSubnav(); renderLiveEvents(); ensureLiveSocket(); }
   if (page === "esportes") { renderSportSubnav(); renderPrematchList(); }
   if (page === "destaques") renderDestaquesHighlights();
+  if (page === "cassino") enterCasinoPage();
 }
 
 function goBack() {
@@ -525,6 +526,232 @@ function goBack() {
 
 function toggleAccordion(header) {
   header.closest(".menu-item").classList.toggle("open");
+}
+
+// ====================== CASSINO ======================
+// Página construída só com dados reais do catálogo sincronizado (ver
+// server/src/modules/casino/routes.ts, GET /api/casino/games, e docs/CASINO_SLOTS.md) — nenhum
+// jogo, imagem, categoria ou "popular" é inventado. As "categorias" (Megaways/Jackpots/etc.) são
+// só uma pesquisa por palavra-chave no nome real do jogo (o `category` do provedor é genérico,
+// "Slots" para tudo) — ver TAG_KEYWORDS no backend.
+//
+// O botão de jogar ainda não abre o jogo de verdade: falta confirmar que user/create teve
+// sucesso no provedor (ver docs/CASINO_SLOTS.md, secção Callback) — por isso mostra um aviso em
+// vez de fingir que funciona.
+function escHtml(str) {
+  return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
+const CASINO_TABS = [
+  { id: "", label: "TODOS" },
+  { id: "megaways", label: "MEGAWAYS™" },
+  { id: "jackpots", label: "JACKPOTS" },
+  { id: "bonus", label: "COMPRAR BÓNUS" },
+  { id: "freespins", label: "RODADAS GRÁTIS" },
+  { id: "novos", label: "NOVOS" },
+  { id: "populares", label: "POPULARES" },
+  { id: "baccarat", label: "BACCARAT" },
+  { id: "blackjack", label: "BLACKJACK" },
+  { id: "roulette", label: "ROULETTE" },
+];
+
+const casinoState = { tag: "", search: "", sort: "", page: 1, pageSize: 24, total: 0, loading: false };
+const casinoGamesByCode = new Map(); // gameCode -> jogo, para o clique nos cartões (delegação, ver abaixo)
+let casinoInitialized = false;
+let casinoSearchDebounce = null;
+let casinoHeroSlides = [];
+let casinoHeroIndex = 0;
+let casinoHeroTimer = null;
+
+function casinoGameImage(g) {
+  return g.gameImage || g.gameImageNarrow || "";
+}
+function casinoGameTitle(g) {
+  return g.localeName || g.gameName || "";
+}
+
+// Delegação de eventos (em vez de onclick inline com o nome do jogo, que pode ter aspas — ex:
+// "Gonzo's Quest" — e partir o atributo HTML) nos três contentores onde cartões/CTA aparecem;
+// funciona mesmo depois de o innerHTML de cada contentor ser substituído a cada carregamento.
+function casinoDelegatedClick(ev) {
+  const el = ev.target.closest("[data-game-code]");
+  if (!el) return;
+  casinoPlayGame(el.dataset.gameCode);
+}
+
+function enterCasinoPage() {
+  if (casinoInitialized) return;
+  casinoInitialized = true;
+  ["casino-hero-track", "casino-popular-row", "casino-grid"].forEach((id) => {
+    document.getElementById(id).addEventListener("click", casinoDelegatedClick);
+  });
+  renderCasinoTabs();
+  loadCasinoHeroAndPopular();
+  casinoLoadGames(true);
+}
+
+function renderCasinoTabs() {
+  const el = document.getElementById("casino-tabs-bar");
+  el.innerHTML = CASINO_TABS.map(
+    (t) => `<div class="casino-tab ${casinoState.tag === t.id ? "active" : ""}" data-tag="${t.id}" onclick="casinoSelectTab('${t.id}')">${t.label}</div>`
+  ).join("");
+}
+
+function casinoSelectTab(tag) {
+  casinoState.tag = tag;
+  document.querySelectorAll(".casino-tab").forEach((el) => el.classList.toggle("active", el.dataset.tag === tag));
+  casinoLoadGames(true);
+}
+
+function casinoOnSearchInput() {
+  const value = document.getElementById("casino-search-input").value.trim();
+  clearTimeout(casinoSearchDebounce);
+  casinoSearchDebounce = setTimeout(() => {
+    casinoState.search = value;
+    casinoLoadGames(true);
+  }, 350);
+}
+
+function casinoOnSortChange() {
+  casinoState.sort = document.getElementById("casino-sort-select").value;
+  casinoLoadGames(true);
+}
+
+async function loadCasinoHeroAndPopular() {
+  const heroTrack = document.getElementById("casino-hero-track");
+  const popularRow = document.getElementById("casino-popular-row");
+  popularRow.innerHTML = Array(6).fill('<div class="casino-skel-card" style="flex:0 0 128px"></div>').join("");
+
+  try {
+    const result = await Bet62Api.getCasinoGames({ limit: 20 });
+    const games = result.games || [];
+    games.forEach((g) => casinoGamesByCode.set(g.gameCode, g));
+    casinoHeroSlides = games.slice(0, 5);
+    renderCasinoHero();
+    popularRow.innerHTML = games.length
+      ? games.map((g) => casinoGameCardHtml(g)).join("")
+      : '<div class="empty-note">Sem jogos disponíveis neste momento</div>';
+  } catch (err) {
+    heroTrack.innerHTML = "";
+    popularRow.innerHTML = '<div class="empty-note">Não foi possível carregar os jogos populares</div>';
+  }
+}
+
+function renderCasinoHero() {
+  const track = document.getElementById("casino-hero-track");
+  const dots = document.getElementById("casino-hero-dots");
+  clearInterval(casinoHeroTimer);
+  casinoHeroIndex = 0;
+
+  if (!casinoHeroSlides.length) {
+    track.innerHTML = `
+      <div class="casino-hero-slide" style="background:linear-gradient(135deg,#1a0a0a,#2d0f0f)">
+        <div class="casino-hero-slide-body">
+          <div class="casino-hero-eyebrow">BET62 CASSINO</div>
+          <div class="casino-hero-title">Slots a caminho</div>
+        </div>
+      </div>`;
+    dots.innerHTML = "";
+    return;
+  }
+
+  track.style.transform = "translateX(0%)";
+  track.innerHTML = casinoHeroSlides
+    .map(
+      (g) => `
+      <div class="casino-hero-slide" style="background-image:url('${escHtml(casinoGameImage(g))}')">
+        <div class="casino-hero-slide-body">
+          <div class="casino-hero-eyebrow">JOGO EM DESTAQUE</div>
+          <div class="casino-hero-title">${escHtml(casinoGameTitle(g))}</div>
+          <button class="casino-hero-cta" data-game-code="${escHtml(g.gameCode)}">JOGUE AGORA</button>
+        </div>
+      </div>`
+    )
+    .join("");
+  dots.innerHTML = casinoHeroSlides.map((_, i) => `<div class="hero-dot ${i === 0 ? "active" : ""}" onclick="casinoHeroGoTo(${i})"></div>`).join("");
+
+  if (casinoHeroSlides.length > 1) casinoHeroTimer = setInterval(() => casinoHeroStep(1), 5000);
+}
+
+function casinoHeroGoTo(index) {
+  if (!casinoHeroSlides.length) return;
+  casinoHeroIndex = ((index % casinoHeroSlides.length) + casinoHeroSlides.length) % casinoHeroSlides.length;
+  document.getElementById("casino-hero-track").style.transform = `translateX(-${casinoHeroIndex * 100}%)`;
+  document.querySelectorAll("#casino-hero-dots .hero-dot").forEach((d, i) => d.classList.toggle("active", i === casinoHeroIndex));
+}
+
+function casinoHeroStep(delta) {
+  casinoHeroGoTo(casinoHeroIndex + delta);
+}
+
+function casinoGameCardHtml(g) {
+  const title = escHtml(casinoGameTitle(g));
+  const img = escHtml(casinoGameImage(g));
+  return `
+    <div class="casino-game-card" data-game-code="${escHtml(g.gameCode)}">
+      ${img ? `<img src="${img}" alt="${title}" loading="lazy">` : ""}
+      <div class="casino-game-card-overlay"><div class="casino-game-name">${title}</div></div>
+      <div class="casino-game-play"><i class="fas fa-play-circle"></i></div>
+    </div>`;
+}
+
+async function casinoLoadGames(reset) {
+  if (casinoState.loading) return;
+  casinoState.loading = true;
+  if (reset) casinoState.page = 1;
+
+  const grid = document.getElementById("casino-grid");
+  const loadMoreBtn = document.getElementById("casino-load-more");
+  const emptyNote = document.getElementById("casino-empty-note");
+  const titleEl = document.getElementById("casino-grid-title");
+  const activeTab = CASINO_TABS.find((t) => t.id === casinoState.tag);
+  titleEl.textContent = activeTab && activeTab.id ? activeTab.label : "SLOTS";
+
+  if (reset) {
+    grid.innerHTML = Array(12).fill('<div class="casino-skel-card"></div>').join("");
+    emptyNote.classList.add("hidden");
+  }
+
+  try {
+    const result = await Bet62Api.getCasinoGames({
+      page: casinoState.page,
+      limit: casinoState.pageSize,
+      tag: casinoState.tag || undefined,
+      search: casinoState.search || undefined,
+      sort: casinoState.sort || undefined,
+    });
+    casinoState.total = result.total || 0;
+    const games = result.games || [];
+    games.forEach((g) => casinoGamesByCode.set(g.gameCode, g));
+    const html = games.map((g) => casinoGameCardHtml(g)).join("");
+    grid.innerHTML = reset ? html : grid.innerHTML + html;
+
+    const loadedCount = grid.querySelectorAll(".casino-game-card").length;
+    emptyNote.classList.toggle("hidden", loadedCount > 0);
+    loadMoreBtn.classList.toggle("hidden", loadedCount >= casinoState.total);
+  } catch (err) {
+    if (reset) grid.innerHTML = "";
+    emptyNote.textContent = "Não foi possível carregar os jogos. Tente novamente.";
+    emptyNote.classList.remove("hidden");
+    loadMoreBtn.classList.add("hidden");
+  } finally {
+    casinoState.loading = false;
+  }
+}
+
+function casinoLoadMore() {
+  casinoState.page += 1;
+  casinoLoadGames(false);
+}
+
+function casinoPlayGame(gameCode) {
+  if (!Bet62Api.isAuthenticated()) {
+    openAuth("login");
+    return;
+  }
+  const g = casinoGamesByCode.get(gameCode);
+  const name = g ? casinoGameTitle(g) : "este jogo";
+  alert(`🎰 ${name}\n\nA preparar a sua sessão de jogo — disponível muito em breve.`);
 }
 
 // ====================== AUTH ======================

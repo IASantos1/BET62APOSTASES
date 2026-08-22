@@ -199,8 +199,48 @@ Campos guardados por jogo: `providerId`, `gameCode`, `gameName`, `localeName`, `
 `"YYYY-MM-DD HH:MM:SS"`, sem parsing) — chave única `(providerId, gameCode)`.
 
 **Ainda não implementado**: correr o sync automaticamente (cron/agendado) — por agora é sempre
-manual via `POST /api/admin/casino/games/sync`; e o frontend do Cassino ainda não consome esta
-tabela (só o admin tem as rotas para a popular e listar).
+manual via `POST /api/admin/casino/games/sync`.
+
+## Rota pública (frontend do jogador)
+
+`GET /api/casino/games` (`server/src/modules/casino/routes.ts`, montada em `/api/casino` em
+`app.ts`, sem `requireAuth` — mesmo padrão de `sports/routes.ts`: navegação/consulta que qualquer
+visitante pode ver antes de entrar na conta) — lista o catálogo local (`listCasinoGames`, ver
+acima), sempre filtrado por `launchEnable: true` (só jogos que o jogador pode mesmo abrir).
+Parâmetros de query, todos opcionais:
+
+- `page`, `limit` (por omissão 50, máx. 200, ver `listCasinoGames`).
+- `search` — correspondência parcial (case-insensitive) no `gameName`.
+- `sort` — `name_asc` | `name_desc` | `newest` (por `regDate`); por omissão, `providerId` depois
+  `gameName` ascendente.
+- `tag` — mapeia para uma correspondência parcial no `gameName` (`TAG_KEYWORDS` no ficheiro da
+  rota): `megaways`→"megaways", `jackpots`→"jackpot", `bonus`→"bonus", `freespins`→"free spins",
+  `baccarat`→"baccarat", `blackjack`→"blackjack", `roulette`→"roulette". `tag=novos` não filtra
+  por palavra-chave, força `sort=newest`. **Importante**: o `category` real devolvido pelo
+  provedor é genérico (`"Slots"` para tudo, confirmado em `/v4/game/games` — ver acima) — estas
+  "categorias" são só um filtro por nome, não um campo estruturado do provedor. `tag=populares`
+  não tem efeito nenhum hoje (sem métrica real de popularidade — ver frontend abaixo).
+
+Resposta: `{ total, page, pageSize, games }`, mesma forma do `listCasinoGames`.
+
+## Frontend: página Cassino (`web/index.html` / `web/app.js`)
+
+Nova página `#page-cassino` (aba "CASSINO" no menu superior), com quatro blocos, todos
+alimentados só por `GET /api/casino/games` (nenhum jogo/imagem/categoria inventado):
+
+- **Banner rotativo**: os 5 primeiros jogos de um pedido `limit=20` sem filtro, imagem de fundo
+  = `gameImage` (ou `gameImageNarrow`), avança automaticamente a cada 5s ou pelas setas/pontos.
+- **"Jogos populares"**: os mesmos 20 jogos do banner, em linha horizontal — não é uma métrica
+  real de popularidade (o catálogo não tem uma), é só a primeira amostra do catálogo.
+- **Tabs de categoria + pesquisa**: TODOS/MEGAWAYS™/JACKPOTS/COMPRAR BÓNUS/RODADAS
+  GRÁTIS/NOVOS/POPULARES/BACCARAT/BLACKJACK/ROULETTE, mapeadas para `tag` acima; campo de
+  pesquisa livre com debounce de 350ms, mapeado para `search`.
+- **Grelha "SLOTS"**: paginada (`page`/`limit=24`), com "ORDENAR POR" (`sort`) e "CARREGAR MAIS
+  JOGOS" (acumula páginas em vez de substituir).
+
+**Por implementar**: clicar num jogo abre o modal de login se não autenticado; se autenticado,
+mostra um aviso "disponível muito em breve" em vez de abrir o jogo — o lançamento real
+(`game-url`) continua bloqueado até `user/create` funcionar (ver secção Callback acima).
 
 Autenticação confirmada: header `Authorization: Bearer {CASINO_AGENT_KEY}` em todos os pedidos,
 resposta sempre no formato `{ code, message, data }` (`code !== 0` é tratado como erro).
@@ -211,8 +251,9 @@ duas vazias por omissão, obrigatórias para os callbacks/pedidos autenticados f
 
 **Ainda não implementado/confirmado**: `user/create` ainda não foi testado de novo desde que a
 rota `/callback` passou a existir (ver "Callback" acima — é o próximo passo lógico); lançamento
-de jogo real (`game-url`) continua bloqueado até `user/create` funcionar; páginas de frontend
-(Cassino, Destaques, admin) ainda não consomem nada disto.
+de jogo real (`game-url`) continua bloqueado até `user/create` funcionar. A página Cassino do
+frontend já consome o catálogo real (ver "Frontend: página Cassino" acima); a secção Destaques e
+o admin ainda não.
 
 Se for preciso consultar a implementação anterior completa (catálogo, callbacks, seamless
 wallet, UI) como referência, está disponível no histórico do git antes do commit de remoção.
