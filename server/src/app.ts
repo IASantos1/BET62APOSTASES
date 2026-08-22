@@ -14,6 +14,7 @@ import stripeRoutes, { stripeWebhookHandler } from "./modules/payments/stripe/ro
 import revolutRoutes from "./modules/payments/revolut/routes";
 import sportsRoutes from "./modules/sports/routes";
 import bettingRoutes from "./modules/betting/routes";
+import casinoRoutes from "./modules/casino/routes";
 import adminRoutes from "./modules/admin/routes";
 import { maintenanceGate } from "./modules/admin/maintenanceGate";
 import { casinoCallbackHandler } from "./modules/casino/callback";
@@ -68,6 +69,7 @@ export function createApp() {
   app.use("/api/payments/revolut", revolutRoutes);
   app.use("/api/sports", sportsRoutes);
   app.use("/api/bets", bettingRoutes);
+  app.use("/api/casino", casinoRoutes);
   app.use("/api/admin", adminRoutes);
 
   // Frontend estático servido pelo mesmo processo Node — mesma origem que a API, por isso

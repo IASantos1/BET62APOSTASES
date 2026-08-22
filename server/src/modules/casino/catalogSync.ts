@@ -40,6 +40,16 @@ export async function syncGameCatalog(): Promise<CatalogSyncResult> {
 export interface ListCasinoGamesOptions {
   providerId?: number;
   category?: string;
+  // Correspondência parcial (case-insensitive) no gameName — usada tanto pela pesquisa livre do
+  // jogador como pelas "categorias" da página de Cassino (Megaways/Jackpots/etc.), já que o
+  // `category` real devolvido pelo provedor é genérico ("Slots" para tudo, ver
+  // docs/CASINO_SLOTS.md) e não distingue esses temas.
+  search?: string;
+  sort?: "name_asc" | "name_desc" | "newest";
+  // Só jogos com launch_enable=true — usado pela rota pública (GET /api/casino/games), que só
+  // deve listar jogos que o jogador pode mesmo abrir. A rota de admin não filtra por isto, para
+  // continuar a ver o catálogo completo tal como veio do provedor.
+  onlyLaunchable?: boolean;
   page?: number;
   pageSize?: number;
 }
@@ -51,13 +61,22 @@ export async function listCasinoGames(options: ListCasinoGamesOptions = {}) {
   const where = {
     ...(options.providerId !== undefined ? { providerId: options.providerId } : {}),
     ...(options.category ? { category: options.category } : {}),
+    ...(options.search ? { gameName: { contains: options.search, mode: "insensitive" as const } } : {}),
+    ...(options.onlyLaunchable ? { launchEnable: true } : {}),
   };
+
+  const orderBy =
+    options.sort === "name_desc"
+      ? [{ gameName: "desc" as const }]
+      : options.sort === "newest"
+        ? [{ regDate: "desc" as const }]
+        : [{ providerId: "asc" as const }, { gameName: "asc" as const }];
 
   const [total, games] = await Promise.all([
     prisma.casinoGame.count({ where }),
     prisma.casinoGame.findMany({
       where,
-      orderBy: [{ providerId: "asc" }, { gameName: "asc" }],
+      orderBy,
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
