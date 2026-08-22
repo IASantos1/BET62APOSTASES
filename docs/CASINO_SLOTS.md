@@ -83,6 +83,12 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   `RESOURCE_NOT_FOUND` (código 1005) — esperado, esse `call_id` nunca existiu (`call_start`
   nunca chegou a criar um de verdade). Forma de sucesso ainda por confirmar.
 
+- `POST /v4/game/freeround/create` — `createFreeround(options)`. Exposto em
+  `POST /api/admin/casino/freerounds`. Chamado ao vivo com `expirationDate: 0`, devolveu um erro
+  de validação (código 1002): *"[expirationDate] must be at least 30 minutes from now"* —
+  confirma que `expirationDate` é um epoch em milissegundos e que o provedor exige pelo menos
+  30 minutos no futuro. Forma de sucesso ainda por confirmar.
+
 ## Catálogo local (`CasinoGame`)
 
 O catálogo completo (`/v4/game/all`) tem milhares de jogos — pedir isto ao provedor em cada

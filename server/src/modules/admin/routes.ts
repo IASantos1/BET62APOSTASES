@@ -19,6 +19,7 @@ import {
   getCallConfig,
   callStart,
   callCancel,
+  createFreeround,
 } from "../casino/apiClient";
 import { syncGameCatalog, listCasinoGames } from "../casino/catalogSync";
 import {
@@ -297,6 +298,24 @@ router.post(
   "/casino/call-cancel",
   validateBody(z.object({ callId: z.number().int() })),
   asyncHandler(async (req: AuthedRequest, res) => res.json(await callCancel(req.body.callId)))
+);
+
+// Diagnóstico de POST /v4/game/freeround/create — confirmado que expirationDate (epoch em ms)
+// tem de ser pelo menos 30 minutos no futuro (ver docs/CASINO_SLOTS.md).
+router.post(
+  "/casino/freerounds",
+  validateBody(
+    z.object({
+      userCode: z.number().int(),
+      providerId: z.number().int(),
+      gameSymbol: z.string().min(1),
+      bet: z.number(),
+      win: z.number(),
+      rounds: z.number().int(),
+      expirationDate: z.number().int(),
+    })
+  ),
+  asyncHandler(async (req: AuthedRequest, res) => res.json(await createFreeround(req.body)))
 );
 
 router.get(

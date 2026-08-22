@@ -282,3 +282,33 @@ export async function callCancel(callId: number): Promise<unknown> {
   const res = await postAgent("/v4/game/call_cancel", { call_id: callId });
   return res.data;
 }
+
+export interface CreateFreeroundOptions {
+  userCode: number;
+  providerId: number;
+  gameSymbol: string;
+  bet: number;
+  win: number;
+  rounds: number;
+  /** epoch em milissegundos — o provedor exige pelo menos 30 minutos no futuro (confirmado). */
+  expirationDate: number;
+}
+
+/**
+ * Confirmado: POST /v4/game/freeround/create — pedido testado com `expirationDate: 0`, devolveu
+ * um erro de validação (código 1002): "[expirationDate] must be at least 30 minutes from now"
+ * — confirma que `expirationDate` é um epoch em milissegundos e que o provedor exige pelo menos
+ * 30 minutos no futuro. Forma exata do `data` de sucesso ainda não vista.
+ */
+export async function createFreeround(options: CreateFreeroundOptions): Promise<unknown> {
+  const res = await postAgent("/v4/game/freeround/create", {
+    user_code: options.userCode,
+    provider_id: options.providerId,
+    game_symbol: options.gameSymbol,
+    bet: options.bet,
+    win: options.win,
+    rounds: options.rounds,
+    expirationDate: options.expirationDate,
+  });
+  return res.data;
+}
