@@ -33,9 +33,17 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   numa sessão anterior (antes de existir a rota `/callback`), devolveu `code 1015
   CALLBACK_ERROR`. Confirma que `user/create` dispara uma chamada real de callback (não só um
   teste de conectividade como `agent/callback-test`) para validar a conta antes de a criar.
-  **Ainda não testado de novo** desde que a rota `/callback` ficou implementada — próximo passo
-  natural é chamar `POST /api/admin/casino/accounts/provision` (ver abaixo) para um utilizador
-  real e confirmar se finalmente devolve `code 0`.
+  **Testado de novo já com a rota `/callback` implementada, via `POST
+  /api/admin/casino/accounts/provision` — voltou a devolver `CALLBACK_ERROR`.** Causa encontrada
+  e corrigida: `provisionCasinoAccount` (`casino/accountProvisioning.ts`) criava o registo local
+  `CasinoAccount` **depois** de chamar `createCasinoUser`, mas o callback síncrono de
+  `authenticate` que o `user/create` dispara chega **antes** disso — o nosso próprio
+  `handleAuthenticate` respondia `ACCOUNT_NOT_FOUND` a esse callback (por isso o
+  `agent/callback-test`, que não passa por `handleAuthenticate`, tinha funcionado mas
+  `user/create` continuava a falhar). Corrigido invertendo a ordem: o `CasinoAccount` é criado
+  primeiro, e só depois se chama `createCasinoUser` (com rollback do registo local se essa
+  chamada falhar). **Ainda por confirmar ao vivo** se isto resolve mesmo o `CALLBACK_ERROR` —
+  próximo passo é voltar a chamar `POST /api/admin/casino/accounts/provision`.
 - `POST /v4/user/info` — `getUserInfo(userCode)`. Exposto em
   `GET /api/admin/casino/users/:userCode`. Só se confirmou o caso de erro (`USER_NOT_FOUND`,
   código 2002, para um `user_code` que nunca chegou a ser criado); a forma de sucesso ainda não

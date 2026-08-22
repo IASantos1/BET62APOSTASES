@@ -6,6 +6,15 @@ import { createCasinoUser } from "./apiClient";
 // (CasinoAccount) usado pelo callback (ver casino/callback.ts) para encontrar a carteira certa
 // nos comandos "authenticate"/"balance"/"bet"/"win"/"cancel". `account` = user.publicId — um
 // identificador já único e estável, sem expor o UUID interno.
+//
+// Ordem importa: confirmado ao vivo (ver docs/CASINO_SLOTS.md) que user/create dispara, de forma
+// síncrona, um callback real "authenticate" para este `account` ANTES de o provedor terminar a
+// criação da conta — é assim que ele valida que a conta existe do nosso lado. Por isso o
+// CasinoAccount tem de existir ANTES de chamar createCasinoUser, não depois: criá-lo depois (como
+// estava) fazia o nosso próprio handler de callback devolver ACCOUNT_NOT_FOUND a esse callback, e
+// o provedor por sua vez devolvia CALLBACK_ERROR ao user/create — só descoberto porque o teste de
+// conectividade (agent/callback-test, que não passa por handleAuthenticate) tinha funcionado.
+// Se createCasinoUser falhar, desfaz-se o registo local para não ficar um mapeamento órfão.
 export async function provisionCasinoAccount(userId: string) {
   const existing = await prisma.casinoAccount.findUnique({ where: { userId } });
   if (existing) return existing;
@@ -13,7 +22,12 @@ export async function provisionCasinoAccount(userId: string) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw Errors.notFound("Utilizador não encontrado");
 
-  await createCasinoUser(user.publicId);
-
-  return prisma.casinoAccount.create({ data: { userId, account: user.publicId } });
+  const account = await prisma.casinoAccount.create({ data: { userId, account: user.publicId } });
+  try {
+    await createCasinoUser(user.publicId);
+  } catch (err) {
+    await prisma.casinoAccount.delete({ where: { userId } });
+    throw err;
+  }
+  return account;
 }
