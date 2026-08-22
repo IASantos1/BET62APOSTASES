@@ -442,11 +442,18 @@ const AdminApp = (() => {
       </div>
       <div class="btn-row" style="margin-top:8px">
         <button class="btn small green" onclick='AdminApp.openAdjustBalance(${JSON.stringify(u.id)})'>Ajustar saldo</button>
-        <button class="btn small outline" onclick='AdminApp.provisionCasino(${JSON.stringify(u.id)}, this)'>Provisionar conta Cassino</button>
+        ${
+          u.casinoAccount
+            ? `<button class="btn small outline" disabled title="Já provisionada em ${fmtDate(u.casinoAccount.createdAt)}">Conta Cassino já provisionada</button>`
+            : `<button class="btn small outline" onclick='AdminApp.provisionCasino(${JSON.stringify(u.id)}, this)'>Provisionar conta Cassino</button>`
+        }
       </div>
       <div class="field-hint" style="margin-top:4px">
-        Cria a conta deste utilizador no provedor de Cassino (user/create) — ação real do lado
-        deles, não reversível por nós. Só precisa de ser feita uma vez por utilizador.
+        ${
+          u.casinoAccount
+            ? `Já provisionada — conta "${esc(u.casinoAccount.account)}" criada em ${fmtDate(u.casinoAccount.createdAt)}. Ação idempotente, por isso o botão fica desativado (voltar a clicar não chamaria o provedor outra vez).`
+            : "Cria a conta deste utilizador no provedor de Cassino (user/create) — ação real do lado deles, não reversível por nós. Só precisa de ser feita uma vez por utilizador."
+        }
       </div>
 
       <div class="section-title">Últimos movimentos</div>

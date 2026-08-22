@@ -105,6 +105,11 @@ export async function getUserDetail(userId: string) {
       kycSubmissions: { orderBy: { createdAt: "desc" } },
       kycDocuments: { orderBy: { uploadedAt: "desc" } },
       selfExclusions: { orderBy: { createdAt: "desc" } },
+      // Para o admin saber se "Provisionar conta Cassino" já foi feito para este utilizador
+      // antes de clicar de novo — provisionCasinoAccount é idempotente (não volta a chamar o
+      // provedor), por isso sem isto era fácil pensar que estava a testar de novo quando só
+      // estava a repetir uma conta já provisionada (ver casino/accountProvisioning.ts).
+      casinoAccount: true,
     },
   });
   if (!user) throw Errors.notFound("Utilizador não encontrado");
