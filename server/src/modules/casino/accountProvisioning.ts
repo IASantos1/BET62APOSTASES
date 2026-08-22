@@ -20,9 +20,13 @@ import { createCasinoUser } from "./apiClient";
 // docs/CASINO_SLOTS.md) vem incluída na resposta só para diagnóstico: presume-se que traga o
 // `user_code` que o lançamento de jogo (game-url) exige, mas isso ainda não foi confirmado, por
 // isso não se guarda nada disto na base de dados enquanto a forma não for vista ao vivo.
+// `justCreated` distingue "acabei de chamar o provedor agora" de "já existia" — usar isto (não a
+// verdade/falsidade de `providerResult`) para decidir se há algo novo para mostrar, porque uma
+// resposta de sucesso vazia (`null`) do provedor é um resultado válido, não deve ser tratada como
+// "não aconteceu nada".
 export async function provisionCasinoAccount(userId: string) {
   const existing = await prisma.casinoAccount.findUnique({ where: { userId } });
-  if (existing) return { ...existing, providerResult: null };
+  if (existing) return { ...existing, providerResult: null, justCreated: false };
 
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw Errors.notFound("Utilizador não encontrado");
@@ -35,5 +39,5 @@ export async function provisionCasinoAccount(userId: string) {
     await prisma.casinoAccount.delete({ where: { userId } });
     throw err;
   }
-  return { ...account, providerResult };
+  return { ...account, providerResult, justCreated: true };
 }
