@@ -499,8 +499,10 @@ const AdminApp = (() => {
         toast(`Conta Cassino provisionada: ${result.account}`);
         // A resposta crua de user/create nunca foi vista com sucesso antes — mostrar aqui em vez
         // de só no toast, para se poder ler/copiar com calma e confirmar se traz o user_code que
-        // o lançamento de jogo (game-url) precisa (ver docs/CASINO_SLOTS.md).
-        if (result.providerResult) {
+        // o lançamento de jogo (game-url) precisa (ver docs/CASINO_SLOTS.md). Usa `justCreated`
+        // (não a verdade/falsidade de providerResult) porque uma resposta "null" de sucesso é
+        // igualmente informação nova a mostrar, não deve ficar escondida.
+        if (result.justCreated) {
           openModal(
             "Resposta do provedor (user/create)",
             `<pre style="white-space:pre-wrap;word-break:break-all;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:.8rem">${esc(JSON.stringify(result.providerResult, null, 2))}</pre>
