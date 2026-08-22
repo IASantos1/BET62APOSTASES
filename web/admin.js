@@ -495,8 +495,20 @@ const AdminApp = (() => {
   async function provisionCasino(id, btn) {
     await withBusyButton(btn, async () => {
       try {
-        const account = await AdminApi.provisionCasinoAccount(id);
-        toast(`Conta Cassino provisionada: ${account.account}`);
+        const result = await AdminApi.provisionCasinoAccount(id);
+        toast(`Conta Cassino provisionada: ${result.account}`);
+        // A resposta crua de user/create nunca foi vista com sucesso antes — mostrar aqui em vez
+        // de só no toast, para se poder ler/copiar com calma e confirmar se traz o user_code que
+        // o lançamento de jogo (game-url) precisa (ver docs/CASINO_SLOTS.md).
+        if (result.providerResult) {
+          openModal(
+            "Resposta do provedor (user/create)",
+            `<pre style="white-space:pre-wrap;word-break:break-all;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:.8rem">${esc(JSON.stringify(result.providerResult, null, 2))}</pre>
+            <div class="btn-row" style="margin-top:16px">
+              <button class="btn outline" style="width:100%" onclick="AdminApp.closeModal()">Fechar</button>
+            </div>`
+          );
+        }
       } catch (err) {
         toast(err.message || "Erro ao provisionar conta Cassino", "error");
       }
