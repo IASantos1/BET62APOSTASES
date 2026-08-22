@@ -52,7 +52,30 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
 - `POST /v4/game/all` — `getAllGames(lang)`. Exposto em `GET /api/admin/casino/games/all`.
   Devolve o catálogo completo de jogos de todos os provedores numa só chamada (sem
   `provider_id`), a mesma forma de item que `/v4/game/games`. Confirmado com provedores até
-  `provider_id` 40 na resposta real.
+  `provider_id` 40 na resposta real. **Resposta muito grande** (milhares de jogos) — este
+  endpoint é só diagnóstico; ver "Catálogo local" abaixo para o que o frontend/admin devem
+  consultar no dia a dia.
+
+## Catálogo local (`CasinoGame`)
+
+O catálogo completo (`/v4/game/all`) tem milhares de jogos — pedir isto ao provedor em cada
+carregamento de página seria lento e desnecessário. Por isso existe uma tabela local
+`CasinoGame` (`server/prisma/schema.prisma`) que espelha o catálogo, preenchida por um sync
+manual em vez de automático (`server/src/modules/casino/catalogSync.ts`):
+
+- `POST /api/admin/casino/games/sync` — chama `getAllGames()` e substitui por completo o
+  conteúdo da tabela `CasinoGame` (apaga tudo e volta a inserir dentro de uma transação, em vez
+  de N upserts). Devolve `{ totalGames, syncedAt }`.
+- `GET /api/admin/casino/games` — lista o catálogo local já sincronizado, paginado
+  (`page`/`limit`, por omissão 50, máx. 200) e filtrável por `providerId` e `category`.
+
+Campos guardados por jogo: `providerId`, `gameCode`, `gameName`, `localeName`, `gameImage`,
+`gameImageNarrow`, `launchEnable`, `category`, `regDate` (string tal como veio do provedor,
+`"YYYY-MM-DD HH:MM:SS"`, sem parsing) — chave única `(providerId, gameCode)`.
+
+**Ainda não implementado**: correr o sync automaticamente (cron/agendado) — por agora é sempre
+manual via `POST /api/admin/casino/games/sync`; e o frontend do Cassino ainda não consome esta
+tabela (só o admin tem as rotas para a popular e listar).
 
 Autenticação confirmada: header `Authorization: Bearer {CASINO_AGENT_KEY}` em todos os pedidos,
 resposta sempre no formato `{ code, message, data }` (`code !== 0` é tratado como erro).

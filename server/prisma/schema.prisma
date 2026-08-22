@@ -509,3 +509,27 @@ model TeamAlias {
 
   @@unique([sport, normalizedAlias])
 }
+
+// ============ CASSINO (catálogo local) ============
+// Espelho local de POST /v4/game/all (goldslotpalase.com) — o catálogo completo tem milhares de
+// jogos e demora demasiado a pedir ao provedor em cada carregamento de página; esta tabela é
+// preenchida por um sync manual (ver casino/catalogSync.ts) e é o que o frontend passa a
+// consultar. Reconstrução passo a passo, ver docs/CASINO_SLOTS.md.
+model CasinoGame {
+  id              String   @id @default(uuid())
+  providerId      Int
+  gameCode        String
+  gameName        String
+  localeName      String
+  gameImage       String
+  gameImageNarrow String
+  launchEnable    Boolean  @default(true)
+  category        String
+  regDate         String // tal como veio do provedor ("YYYY-MM-DD HH:MM:SS"), guardado em bruto
+  syncedAt        DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([providerId, gameCode])
+  @@index([category])
+  @@index([launchEnable])
+}

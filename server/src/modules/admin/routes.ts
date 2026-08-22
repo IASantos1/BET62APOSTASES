@@ -8,6 +8,7 @@ import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/s
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
 import { getKycDocumentFile } from "../users/kycDocuments";
 import { getAgentInfo, testCallback, getUserInfo, getGameProviders, getGames, getAllGames } from "../casino/apiClient";
+import { syncGameCatalog, listCasinoGames } from "../casino/catalogSync";
 import {
   getDashboardStats,
   listUsers,
@@ -227,6 +228,23 @@ router.get(
 router.get(
   "/casino/games/all",
   asyncHandler(async (_req, res) => res.json(await getAllGames()))
+);
+
+// Espelho local do catálogo (ver casino/catalogSync.ts) — o que o frontend/admin devem consultar
+// no dia a dia, em vez de GET /casino/games/all (pede o catálogo inteiro ao provedor de cada vez).
+router.post(
+  "/casino/games/sync",
+  asyncHandler(async (_req, res) => res.json(await syncGameCatalog()))
+);
+
+router.get(
+  "/casino/games",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const { page, limit } = pageQuery(req);
+    const providerId = req.query.providerId ? Number(req.query.providerId) : undefined;
+    const category = typeof req.query.category === "string" ? req.query.category : undefined;
+    res.json(await listCasinoGames({ providerId, category, page, pageSize: limit }));
+  })
 );
 
 // --- Jogo responsável ---
