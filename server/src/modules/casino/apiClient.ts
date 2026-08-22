@@ -271,3 +271,14 @@ export async function callStart(options: CallStartOptions): Promise<unknown> {
   });
   return res.data;
 }
+
+/**
+ * Confirmado: POST /v4/game/call_cancel — pedido testado com `{ call_id: 0 }`, devolveu
+ * `RESOURCE_NOT_FOUND` (código 1005) propagado por postAgent() — esperado, `call_id 0` nunca
+ * existiu (call_start nunca chegou a criar um call_id de verdade). Forma de sucesso ainda não
+ * vista.
+ */
+export async function callCancel(callId: number): Promise<unknown> {
+  const res = await postAgent("/v4/game/call_cancel", { call_id: callId });
+  return res.data;
+}

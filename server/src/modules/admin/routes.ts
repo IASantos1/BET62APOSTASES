@@ -18,6 +18,7 @@ import {
   getOnlineGames,
   getCallConfig,
   callStart,
+  callCancel,
 } from "../casino/apiClient";
 import { syncGameCatalog, listCasinoGames } from "../casino/catalogSync";
 import {
@@ -290,6 +291,12 @@ router.post(
     })
   ),
   asyncHandler(async (req: AuthedRequest, res) => res.json(await callStart(req.body)))
+);
+
+router.post(
+  "/casino/call-cancel",
+  validateBody(z.object({ callId: z.number().int() })),
+  asyncHandler(async (req: AuthedRequest, res) => res.json(await callCancel(req.body.callId)))
 );
 
 router.get(

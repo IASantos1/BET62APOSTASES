@@ -78,6 +78,11 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   jogo ativa, ou `gplay_id` real em vez de 0). Significado de `gplay_id`/`set_point`/`type` e a
   forma de sucesso ainda por confirmar.
 
+- `POST /v4/game/call_cancel` — `callCancel(callId)`. Exposto em
+  `POST /api/admin/casino/call-cancel`. Chamado ao vivo com `{ call_id: 0 }`, devolveu
+  `RESOURCE_NOT_FOUND` (código 1005) — esperado, esse `call_id` nunca existiu (`call_start`
+  nunca chegou a criar um de verdade). Forma de sucesso ainda por confirmar.
+
 ## Catálogo local (`CasinoGame`)
 
 O catálogo completo (`/v4/game/all`) tem milhares de jogos — pedir isto ao provedor em cada
