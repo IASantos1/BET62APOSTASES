@@ -20,6 +20,7 @@ import {
   callStart,
   callCancel,
   createFreeround,
+  cancelFreeround,
 } from "../casino/apiClient";
 import { syncGameCatalog, listCasinoGames } from "../casino/catalogSync";
 import {
@@ -316,6 +317,12 @@ router.post(
     })
   ),
   asyncHandler(async (req: AuthedRequest, res) => res.json(await createFreeround(req.body)))
+);
+
+router.post(
+  "/casino/freerounds/cancel",
+  validateBody(z.object({ frId: z.string().min(1) })),
+  asyncHandler(async (req: AuthedRequest, res) => res.json(await cancelFreeround(req.body.frId)))
 );
 
 router.get(

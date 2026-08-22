@@ -89,6 +89,11 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   confirma que `expirationDate` é um epoch em milissegundos e que o provedor exige pelo menos
   30 minutos no futuro. Forma de sucesso ainda por confirmar.
 
+- `POST /v4/game/freeround/cancel` — `cancelFreeround(frId)`. Exposto em
+  `POST /api/admin/casino/freerounds/cancel`. Chamado ao vivo com `{ fr_id: "string" }`,
+  devolveu `FREEROUND_NO_EXIST` (código 2020) — esperado, nenhum freeround real foi criado
+  ainda. Forma de sucesso ainda por confirmar.
+
 ## Catálogo local (`CasinoGame`)
 
 O catálogo completo (`/v4/game/all`) tem milhares de jogos — pedir isto ao provedor em cada

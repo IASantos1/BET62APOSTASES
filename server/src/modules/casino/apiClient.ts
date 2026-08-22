@@ -312,3 +312,14 @@ export async function createFreeround(options: CreateFreeroundOptions): Promise<
   });
   return res.data;
 }
+
+/**
+ * Confirmado: POST /v4/game/freeround/cancel — pedido testado com `{ fr_id: "string" }`,
+ * devolveu `FREEROUND_NO_EXIST` (código 2020) propagado por postAgent() — esperado, nenhum
+ * freeround real foi criado ainda (freeround/create nunca passou da validação de
+ * expirationDate). Forma de sucesso ainda não vista.
+ */
+export async function cancelFreeround(frId: string): Promise<unknown> {
+  const res = await postAgent("/v4/game/freeround/cancel", { fr_id: frId });
+  return res.data;
+}
