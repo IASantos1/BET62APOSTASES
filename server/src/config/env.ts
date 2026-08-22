@@ -50,6 +50,12 @@ const envSchema = z.object({
   // VALIDATION antes de produção: sem um volume persistente do Railway montado neste caminho,
   // um redeploy apaga tudo (o sistema de ficheiros do container é efémero). Ver docs/KYC_DOCUMENTS.md.
   KYC_UPLOAD_DIR: z.string().default("uploads/kyc"),
+
+  // --- Cassino Gold Palace (goldslotpalase.com, Agent API v4) ---
+  // Reconstruído endpoint a endpoint, só com chamadas confirmadas ao vivo pelo utilizador (ver
+  // docs/CASINO_SLOTS.md). Auth: "Authorization: Bearer {CASINO_AGENT_KEY}" em todos os pedidos.
+  CASINO_AGENT_KEY: z.string().default(""),
+  CASINO_PROVIDER_BASE_URL: z.string().default("https://agent.goldslotpalase.com"),
 });
 
 export type Env = z.infer<typeof envSchema>;

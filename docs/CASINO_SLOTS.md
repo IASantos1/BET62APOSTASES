@@ -1,44 +1,37 @@
-# Cassino (slots) — removido
+# Cassino (slots) — em reconstrução
 
-A integração com o "Cassino Gold Palace" (goldslotpalase.com) foi **removida por completo** a
-pedido explícito do utilizador (2026-08-21), depois de uma investigação extensa não conseguir
-fazer o lançamento real de jogos funcionar em produção.
+A integração com o "Cassino Gold Palace" (goldslotpalase.com) foi removida por completo em
+2026-08-21 (ver histórico do git) depois de uma investigação extensa não conseguir fazer o
+lançamento real de jogos funcionar em produção — `POST /v4/game/game-url` devolvia sempre
+`CALLBACK_ERROR`, e por eliminação (domínio/certificado ok, URL/capitalização da rota corretos,
+nenhum pedido de callback chegou aos nossos logs com diagnóstico dedicado) concluiu-se que era um
+problema de rede do lado do provedor a alcançar `bet62.plus`.
 
-## Porquê
+Está a ser reconstruída a pedido do utilizador, desta vez **endpoint a endpoint**: só se
+implementa uma chamada depois de o utilizador a confirmar ao vivo (curl real + resposta real),
+em vez de assumir o contrato do Swagger antigo de uma vez. Isto evita repetir o mesmo problema —
+qualquer endpoint que não se comporte como esperado em produção fica isolado e visível
+imediatamente, em vez de escondido dentro de um módulo grande já todo implementado.
 
-O lançamento de um jogo passava por dois pedidos à Agent API do provedor: `POST
-/v4/user/create` seguido de `POST /v4/game/game-url`. O segundo devolvia sempre
-`CALLBACK_ERROR` — o provedor testa o nosso URL de callback (`/api/casino/callback`) antes de
-conceder o link do jogo, e esse auto-teste nunca chegava ao nosso servidor.
+## Estado atual
 
-Investigado a fundo com o utilizador, por eliminação:
-- Confirmado que `https://bet62.plus/api/health` responde corretamente a partir do browser dele
-  — o domínio de produção estava bem ligado ao backend (não era DNS/certificado/routing).
-- Confirmado que o URL de callback configurado no painel do provedor
-  (`https://bet62.plus/api/Casino/callback`) batia certo com a rota real do backend (Express não
-  é sensível a maiúsculas/minúsculas por omissão — testado localmente).
-- Nenhuma linha "callback recebido" apareceu nos logs do Railway (com registo de diagnóstico
-  dedicado, adicionado especificamente para investigar isto) ao tentar abrir um jogo — o pedido
-  de auto-teste do provedor nunca chegava ao servidor.
-- Conclusão: o problema estava do lado da rede do provedor a alcançar `bet62.plus` (o mesmo tipo
-  de bloqueio já confirmado antes com `api.playxspin.com`, que dava timeout a partir do Railway
-  ao carregar imagens de jogos — desta vez na direção inversa). Não era algo corrigível por
-  código deste lado; precisava de ser resolvido pelo suporte técnico do provedor.
+Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casino/apiClient.ts`:
 
-Nenhuma transação real de jogo chegou a ser processada em produção (o lançamento nunca
-funcionou), por isso não havia histórico financeiro real a perder com a remoção.
+- `POST /v4/agent/info` — `getAgentInfo()`. Devolve `name`, `currency`, `balance`, `rtp`,
+  `whitelist`, `client_ip`. Exposto para diagnóstico em `GET /api/admin/casino/agent-info`
+  (requer sessão admin).
+- `POST /v4/agent/rtp` — `setAgentRtp(rtp)`. Define o RTP por omissão do agente (`0` = RTP do
+  provedor).
 
-## O que foi removido
+Autenticação confirmada: header `Authorization: Bearer {CASINO_AGENT_KEY}` em todos os pedidos,
+resposta sempre no formato `{ code, message, data }` (`code !== 0` é tratado como erro).
 
-- Backend: `server/src/modules/casino/` (módulo inteiro — catálogo, cliente da Agent API,
-  callbacks, proxy de imagens), a rota `/api/casino` em `app.ts`, os endpoints de gestão em
-  `admin/routes.ts`/`admin/service.ts` (jogos/transações/agent-info), as variáveis de ambiente
-  `CASINO_AGENT_KEY`/`CASINO_CALLBACK_TOKEN`/`CASINO_PROVIDER_BASE_URL`, e os modelos Prisma
-  `CasinoTransaction`/`CasinoGameOverride`/`CasinoTxType` (ver migração
-  `20260821200000_remove_casino_integration`).
-- Frontend: a página Cassino, o item de navegação, a fila "Cassino em Destaque" na página
-  Destaques, e a secção de gestão no painel admin.
+Variáveis de ambiente (`server/.env.example`): `CASINO_AGENT_KEY`, `CASINO_PROVIDER_BASE_URL`
+(default `https://agent.goldslotpalase.com`).
 
-Se algum dia se quiser retomar um fornecedor de cassino (o mesmo ou outro), a implementação
-completa (contrato confirmado via Swagger real, seamless wallet, todos os 6 comandos de
-callback) continua disponível no histórico do git deste branch antes desta remoção.
+**Ainda não implementado** (por implementar assim que confirmado): criação de utilizador no
+provedor, lançamento de jogo (`game-url`), catálogo de jogos, endpoint/contrato de callback
+(débito/crédito da carteira em tempo real), páginas de frontend (Cassino, Destaques, admin).
+
+Se for preciso consultar a implementação anterior completa (catálogo, callbacks, seamless
+wallet, UI) como referência, está disponível no histórico do git antes do commit de remoção.

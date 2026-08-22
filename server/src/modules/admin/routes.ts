@@ -7,6 +7,7 @@ import { Errors } from "../../lib/errors";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
 import { getKycDocumentFile } from "../users/kycDocuments";
+import { getAgentInfo } from "../casino/apiClient";
 import {
   getDashboardStats,
   listUsers,
@@ -184,6 +185,15 @@ router.get(
     const status = typeof req.query.status === "string" ? (req.query.status as any) : undefined;
     res.json(await listDepositsAdmin({ status, ...pageQuery(req) }));
   })
+);
+
+// --- Cassino ---
+// Reconstruído passo a passo — por agora só o endpoint de diagnóstico (confirma se o
+// CASINO_AGENT_KEY/CASINO_PROVIDER_BASE_URL configurados neste ambiente estão a funcionar).
+
+router.get(
+  "/casino/agent-info",
+  asyncHandler(async (_req, res) => res.json(await getAgentInfo()))
 );
 
 // --- Jogo responsável ---
