@@ -7,7 +7,7 @@ import { Errors } from "../../lib/errors";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
 import { getKycDocumentFile } from "../users/kycDocuments";
-import { getAgentInfo, testCallback, getUserInfo } from "../casino/apiClient";
+import { getAgentInfo, testCallback, getUserInfo, getGameProviders } from "../casino/apiClient";
 import {
   getDashboardStats,
   listUsers,
@@ -208,6 +208,11 @@ router.get(
     if (!Number.isInteger(userCode)) throw Errors.badRequest("user_code inválido");
     res.json(await getUserInfo(userCode));
   })
+);
+
+router.get(
+  "/casino/providers",
+  asyncHandler(async (_req, res) => res.json(await getGameProviders()))
 );
 
 // --- Jogo responsável ---

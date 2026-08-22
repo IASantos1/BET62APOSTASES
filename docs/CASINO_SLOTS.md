@@ -39,6 +39,11 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   `GET /api/admin/casino/users/:userCode`. Só se confirmou o caso de erro (`USER_NOT_FOUND`,
   código 2002, para um `user_code` que nunca chegou a ser criado); a forma de sucesso ainda não
   foi vista, por isso `data` fica sem tipar por agora.
+- `POST /v4/game/providers` — `getGameProviders(lang)`. Exposto em
+  `GET /api/admin/casino/providers`. Lista 17 provedores confirmados (Pragmatic Play, CQ9,
+  Pocket Games Soft, Booongo, Playson, Habanero, JiLi, Tydo, PlayStar, XGaming, Spribe, Hacksaw,
+  Palace, BGaming, TADA, Amusnet, EGT, Inout) com `provider_id`/`status`; o significado exato de
+  cada valor de `status` (visto 1 e 2 na resposta real) ainda não foi confirmado.
 
 Autenticação confirmada: header `Authorization: Bearer {CASINO_AGENT_KEY}` em todos os pedidos,
 resposta sempre no formato `{ code, message, data }` (`code !== 0` é tratado como erro).

@@ -93,3 +93,23 @@ export async function getUserInfo(userCode: number): Promise<unknown> {
   const res = await postAgent("/v4/user/info", { user_code: userCode });
   return res.data;
 }
+
+export interface GameProvider {
+  providerId: number;
+  providerName: string;
+  localeName: string;
+  status: number;
+}
+
+/**
+ * Confirmado: POST /v4/game/providers — lista os provedores de jogos disponíveis (Pragmatic
+ * Play, CQ9, etc). `status` confirmado com os valores 1 e 2 na resposta real; o significado de
+ * cada valor não foi confirmado ainda (assumir "1 = ativo" só quando confirmado).
+ */
+export async function getGameProviders(lang = 1): Promise<GameProvider[]> {
+  const res = await postAgent<Array<{ provider_id: number; provider_name: string; locale_name: string; status: number }>>(
+    "/v4/game/providers",
+    { lang }
+  );
+  return res.data.map((p) => ({ providerId: p.provider_id, providerName: p.provider_name, localeName: p.locale_name, status: p.status }));
+}
