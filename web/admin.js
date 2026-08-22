@@ -110,6 +110,7 @@ const AdminApi = (() => {
 
     listCasinoGames: (qs) => request(`/admin/casino/games?${qs}`),
     syncCasinoGames: () => request("/admin/casino/games/sync", { method: "POST" }),
+    getCasinoAgentInfo: () => request("/admin/casino/agent-info"),
 
     listSelfExclusions: () => request(`/admin/self-exclusions`),
 
@@ -763,6 +764,7 @@ const AdminApp = (() => {
         </div>
         <div class="btn-row">
           <button class="btn" onclick="AdminApp.syncCasino(this)">Sincronizar catálogo agora</button>
+          <button class="btn outline" onclick="AdminApp.showCasinoAgentInfo(this)">Ver informação do agente</button>
         </div>
       </div>
       <div class="panel">
@@ -797,6 +799,40 @@ const AdminApp = (() => {
         loadCasino(1);
       } catch (err) {
         toast(err.message || "Erro ao sincronizar catálogo — verifica CASINO_AGENT_KEY", "error");
+      }
+    });
+  }
+
+  // Diagnóstico para quando o sync devolve 0 jogos sem erro nenhum (autenticação aceite, mas
+  // conta "vazia") — mostra a que conta de agente a CASINO_AGENT_KEY em produção pertence mesmo
+  // (nome/saldo) e o IP com que o Railway está a sair (client_ip), para comparar com o painel do
+  // goldslotpalase.com (chave errada/de outra conta, ou IP não autorizado, dão exatamente este
+  // sintoma sem nenhum erro explícito).
+  async function showCasinoAgentInfo(btn) {
+    await withBusyButton(btn, async () => {
+      try {
+        const info = await AdminApi.getCasinoAgentInfo();
+        openModal(
+          "Informação do agente Cassino",
+          `
+          <div class="detail-grid">
+            <div class="detail-item"><div class="k">Nome do agente</div><div class="v">${esc(info.name)}</div></div>
+            <div class="detail-item"><div class="k">Saldo</div><div class="v">${esc(info.balance)} (moeda ${esc(info.currency)})</div></div>
+            <div class="detail-item"><div class="k">RTP</div><div class="v">${esc(info.rtp)}</div></div>
+            <div class="detail-item"><div class="k">IP de saída (client_ip)</div><div class="v mono">${esc(info.client_ip || "—")}</div></div>
+            <div class="detail-item"><div class="k">Whitelist de IPs</div><div class="v mono">${info.whitelist && info.whitelist.length ? info.whitelist.map(esc).join(", ") : "—"}</div></div>
+          </div>
+          <div class="field-hint" style="margin-top:10px">
+            Se "IP de saída" não estiver na "Whitelist de IPs" (quando esta não está vazia), é
+            preciso adicioná-lo no painel do goldslotpalase.com. Se o nome do agente não for o que
+            esperavas, a CASINO_AGENT_KEY em produção é de outra conta — confirma-a no Railway.
+          </div>
+          <div class="btn-row" style="margin-top:16px">
+            <button class="btn outline" style="width:100%" onclick="AdminApp.closeModal()">Fechar</button>
+          </div>`
+        );
+      } catch (err) {
+        toast(err.message || "Erro ao obter informação do agente", "error");
       }
     });
   }
@@ -1268,7 +1304,7 @@ const AdminApp = (() => {
     loadKyc, approveKyc, openRejectKyc, submitRejectKyc,
     loadWithdrawals, approveWithdrawal, openRejectWithdrawal, submitRejectWithdrawal,
     loadDeposits,
-    loadCasino, syncCasino,
+    loadCasino, syncCasino, showCasinoAgentInfo,
     setMappingTab, loadMappingTeams, openCorrectTeam, submitCorrectTeam,
     loadMappingLeagues, openCorrectLeague, submitCorrectLeague,
     loadMappingFixtures, openCorrectFixture, submitCorrectFixture, resetMapping,
