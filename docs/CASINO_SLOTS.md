@@ -22,6 +22,14 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   (requer sessão admin).
 - `POST /v4/agent/rtp` — `setAgentRtp(rtp)`. Define o RTP por omissão do agente (`0` = RTP do
   provedor).
+- `POST /v4/agent/callback-test` — `testCallback()`. O provedor testa, a partir da rede dele, se
+  alcança o URL de callback configurado no painel do agente. Exposto em
+  `GET /api/admin/casino/callback-test`. **Confirmado a funcionar** (`callback_url:
+  "https://bet62.plus/callback"`, 554ms) — a conectividade que falhava silenciosamente na
+  integração anterior (CALLBACK_ERROR) está resolvida do lado do provedor. Nota: o URL de
+  callback configurado agora é `/callback` na raiz, não `/api/casino/callback` como antes — a
+  rota real ainda não existe no backend (por implementar quando confirmado o contrato do corpo
+  do callback).
 
 Autenticação confirmada: header `Authorization: Bearer {CASINO_AGENT_KEY}` em todos os pedidos,
 resposta sempre no formato `{ code, message, data }` (`code !== 0` é tratado como erro).

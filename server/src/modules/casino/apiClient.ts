@@ -66,3 +66,19 @@ export async function getAgentInfo(): Promise<AgentInfo> {
 export async function setAgentRtp(rtp: number): Promise<void> {
   await postAgent("/v4/agent/rtp", { rtp });
 }
+
+export interface CallbackTestResult {
+  callbackUrl: string;
+  time: string;
+}
+
+/**
+ * Confirmado: POST /v4/agent/callback-test — o provedor testa, a partir da rede dele, se
+ * consegue alcançar o URL de callback configurado no painel do agente e devolve o URL testado
+ * mais o tempo de resposta. Útil para confirmar conectividade sem depender de lançar um jogo
+ * real (era exatamente isto que falhava silenciosamente na integração anterior).
+ */
+export async function testCallback(): Promise<CallbackTestResult> {
+  const res = await postAgent<{ callback_url: string; time: string }>("/v4/agent/callback-test");
+  return { callbackUrl: res.data.callback_url, time: res.data.time };
+}

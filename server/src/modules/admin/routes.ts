@@ -7,7 +7,7 @@ import { Errors } from "../../lib/errors";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
 import { getKycDocumentFile } from "../users/kycDocuments";
-import { getAgentInfo } from "../casino/apiClient";
+import { getAgentInfo, testCallback } from "../casino/apiClient";
 import {
   getDashboardStats,
   listUsers,
@@ -194,6 +194,11 @@ router.get(
 router.get(
   "/casino/agent-info",
   asyncHandler(async (_req, res) => res.json(await getAgentInfo()))
+);
+
+router.get(
+  "/casino/callback-test",
+  asyncHandler(async (_req, res) => res.json(await testCallback()))
 );
 
 // --- Jogo responsável ---
