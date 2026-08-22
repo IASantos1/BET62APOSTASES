@@ -24,6 +24,7 @@ import {
   listTransactions,
   listTransactionsByCursor,
   getRoundDetails,
+  listUserStatistics,
 } from "../casino/apiClient";
 import { syncGameCatalog, listCasinoGames } from "../casino/catalogSync";
 import {
@@ -366,6 +367,24 @@ router.post(
     })
   ),
   asyncHandler(async (req: AuthedRequest, res) => res.json(await getRoundDetails(req.body)))
+);
+
+router.get(
+  "/casino/statistics/user",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const startTime = typeof req.query.startTime === "string" ? req.query.startTime : undefined;
+    const endTime = typeof req.query.endTime === "string" ? req.query.endTime : undefined;
+    if (!startTime || !endTime) throw Errors.badRequest("startTime e endTime são obrigatórios (ISO 8601)");
+    const { page, limit } = pageQuery(req);
+    res.json(
+      await listUserStatistics({
+        startTime,
+        endTime,
+        offset: page && limit ? (page - 1) * limit : undefined,
+        limit,
+      })
+    );
+  })
 );
 
 router.get(

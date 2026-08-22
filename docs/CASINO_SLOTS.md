@@ -122,6 +122,15 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   `round_id` real vistos em `/v4/game/transaction-id` (ex: `445454453023`) devia mostrar a forma
   completa.
 
+- `POST /v4/statistics/user` — `listUserStatistics(options)`. Exposto em
+  `GET /api/admin/casino/statistics/user?startTime=&endTime=&page=&limit=`. **Fora de
+  `/v4/game/`** — está sob `/v4/statistics/`. Chamado ao vivo com `start_time == end_time`
+  (janela zero), devolveu `{ total: 0, offset: 2147483647, count: 0, list: [] }` — confirma o
+  mesmo envelope de paginação (`total`/`offset`/`count`/`list`) visto em `/v4/game/transaction`,
+  mas com `start_time`/`end_time` em **ISO 8601** (`"2026-08-22T11:56:58.881Z"`), diferente do
+  formato `"YYYY-MM-DD HH:MM:SS"` usado em `/v4/game/transaction` — não trocar os dois formatos
+  entre endpoints. Forma de cada item de `list` ainda por confirmar.
+
 ## Catálogo local (`CasinoGame`)
 
 O catálogo completo (`/v4/game/all`) tem milhares de jogos — pedir isto ao provedor em cada

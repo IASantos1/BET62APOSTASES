@@ -448,3 +448,36 @@ export async function getRoundDetails(options: RoundDetailsOptions): Promise<unk
   });
   return res.data;
 }
+
+export interface ListUserStatisticsOptions {
+  /** ISO 8601 ("2026-08-22T11:56:58.881Z") — confirmado diferente do formato usado em
+   * /v4/game/transaction ("YYYY-MM-DD HH:MM:SS"), não trocar entre os dois. */
+  startTime: string;
+  endTime: string;
+  offset?: number;
+  limit?: number;
+}
+
+export interface UserStatisticsPage {
+  total: number;
+  offset: number;
+  count: number;
+  list: unknown[];
+}
+
+/**
+ * Confirmado: POST /v4/statistics/user — endpoint sob /v4/statistics/, não /v4/game/. Testado
+ * ao vivo com start_time == end_time (janela de tempo zero), devolveu `{ total: 0, offset:
+ * 2147483647, count: 0, list: [] }` — confirma o mesmo envelope de paginação
+ * (total/offset/count/list) visto em /v4/game/transaction, mas com start_time/end_time em ISO
+ * 8601 em vez de "YYYY-MM-DD HH:MM:SS". Forma de cada item de `list` ainda não foi vista.
+ */
+export async function listUserStatistics(options: ListUserStatisticsOptions): Promise<UserStatisticsPage> {
+  const res = await postAgent<UserStatisticsPage>("/v4/statistics/user", {
+    start_time: options.startTime,
+    end_time: options.endTime,
+    offset: options.offset ?? 0,
+    limit: options.limit ?? 10,
+  });
+  return res.data;
+}
