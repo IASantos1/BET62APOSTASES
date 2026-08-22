@@ -49,6 +49,10 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   Play): mais de 500 jogos devolvidos, todos `category: "Slots"`, `launch_enable: true`. Campos
   confirmados: `game_code`, `game_name`, `locale_name`, `game_image`, `game_image_narrow`,
   `launch_enable`, `category`, `reg_date`.
+- `POST /v4/game/all` — `getAllGames(lang)`. Exposto em `GET /api/admin/casino/games/all`.
+  Devolve o catálogo completo de jogos de todos os provedores numa só chamada (sem
+  `provider_id`), a mesma forma de item que `/v4/game/games`. Confirmado com provedores até
+  `provider_id` 40 na resposta real.
 
 Autenticação confirmada: header `Authorization: Bearer {CASINO_AGENT_KEY}` em todos os pedidos,
 resposta sempre no formato `{ code, message, data }` (`code !== 0` é tratado como erro).

@@ -158,3 +158,35 @@ export async function getGames(providerId: number, lang = 1): Promise<CasinoGame
     regDate: g.reg_date,
   }));
 }
+
+/**
+ * Confirmado: POST /v4/game/all — lista o catálogo completo de jogos de todos os provedores
+ * numa só chamada (sem provider_id), a mesma forma de item que /v4/game/games. Confirmado com
+ * provedores até provider_id 40 na resposta real.
+ */
+export async function getAllGames(lang = 1): Promise<CasinoGame[]> {
+  const res = await postAgent<
+    Array<{
+      provider_id: number;
+      game_code: string;
+      game_name: string;
+      locale_name: string;
+      game_image: string;
+      game_image_narrow: string;
+      launch_enable: boolean;
+      category: string;
+      reg_date: string;
+    }>
+  >("/v4/game/all", { lang });
+  return res.data.map((g) => ({
+    providerId: g.provider_id,
+    gameCode: g.game_code,
+    gameName: g.game_name,
+    localeName: g.locale_name,
+    gameImage: g.game_image,
+    gameImageNarrow: g.game_image_narrow,
+    launchEnable: g.launch_enable,
+    category: g.category,
+    regDate: g.reg_date,
+  }));
+}
