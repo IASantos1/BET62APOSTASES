@@ -190,3 +190,34 @@ export async function getAllGames(lang = 1): Promise<CasinoGame[]> {
     regDate: g.reg_date,
   }));
 }
+
+export interface LaunchGameOptions {
+  userCode: number;
+  providerId: number;
+  gameSymbol: string;
+  lang?: number;
+  returnUrl?: string;
+  rtp?: number;
+  isFinishJackpot?: boolean;
+}
+
+/**
+ * Confirmado: POST /v4/game/game-url — pedido testado com um user_code inexistente, devolveu
+ * `USER_NOT_FOUND` (código 2002) propagado por postAgent(), confirmando o formato do corpo
+ * (user_code, provider_id, game_symbol, lang, return_url, rtp, is_finish_jackpot). A forma exata
+ * do `data` de sucesso (o URL de lançamento) ainda não foi vista — bloqueado por `user/create`
+ * ainda não funcionar (ver docs/CASINO_SLOTS.md) — por isso devolve-se sem tipar os campos em
+ * vez de inventar uma forma.
+ */
+export async function launchGame(options: LaunchGameOptions): Promise<unknown> {
+  const res = await postAgent("/v4/game/game-url", {
+    user_code: options.userCode,
+    provider_id: options.providerId,
+    game_symbol: options.gameSymbol,
+    lang: options.lang ?? 1,
+    return_url: options.returnUrl ?? "",
+    rtp: options.rtp ?? 0,
+    is_finish_jackpot: options.isFinishJackpot ?? true,
+  });
+  return res.data;
+}

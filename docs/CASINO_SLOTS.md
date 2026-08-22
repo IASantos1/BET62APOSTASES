@@ -56,6 +56,14 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   endpoint é só diagnóstico; ver "Catálogo local" abaixo para o que o frontend/admin devem
   consultar no dia a dia.
 
+- `POST /v4/game/game-url` — `launchGame(options)`. Exposto em
+  `POST /api/admin/casino/games/launch`. Chamado ao vivo com um `user_code` inexistente
+  (`400000001`), devolveu `USER_NOT_FOUND` (código 2002) — confirma o formato do corpo
+  (`user_code`, `provider_id`, `game_symbol`, `lang`, `return_url`, `rtp`,
+  `is_finish_jackpot`), mas a forma de sucesso (o URL de lançamento) ainda não foi vista.
+  **Continua bloqueado**: só vai funcionar depois de `user/create` funcionar (ver abaixo), já
+  que precisa de um `user_code` real.
+
 ## Catálogo local (`CasinoGame`)
 
 O catálogo completo (`/v4/game/all`) tem milhares de jogos — pedir isto ao provedor em cada

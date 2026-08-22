@@ -7,7 +7,7 @@ import { Errors } from "../../lib/errors";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
 import { getKycDocumentFile } from "../users/kycDocuments";
-import { getAgentInfo, testCallback, getUserInfo, getGameProviders, getGames, getAllGames } from "../casino/apiClient";
+import { getAgentInfo, testCallback, getUserInfo, getGameProviders, getGames, getAllGames, launchGame } from "../casino/apiClient";
 import { syncGameCatalog, listCasinoGames } from "../casino/catalogSync";
 import {
   getDashboardStats,
@@ -235,6 +235,25 @@ router.get(
 router.post(
   "/casino/games/sync",
   asyncHandler(async (_req, res) => res.json(await syncGameCatalog()))
+);
+
+// Diagnóstico de POST /v4/game/game-url — bloqueado enquanto user/create não funcionar (ver
+// docs/CASINO_SLOTS.md): qualquer user_code aqui vai devolver USER_NOT_FOUND até haver contas
+// reais criadas no provedor.
+router.post(
+  "/casino/games/launch",
+  validateBody(
+    z.object({
+      userCode: z.number().int(),
+      providerId: z.number().int(),
+      gameSymbol: z.string().min(1),
+      lang: z.number().int().optional(),
+      returnUrl: z.string().optional(),
+      rtp: z.number().optional(),
+      isFinishJackpot: z.boolean().optional(),
+    })
+  ),
+  asyncHandler(async (req: AuthedRequest, res) => res.json(await launchGame(req.body)))
 );
 
 router.get(
