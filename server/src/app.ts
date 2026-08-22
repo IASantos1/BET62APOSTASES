@@ -16,6 +16,7 @@ import sportsRoutes from "./modules/sports/routes";
 import bettingRoutes from "./modules/betting/routes";
 import adminRoutes from "./modules/admin/routes";
 import { maintenanceGate } from "./modules/admin/maintenanceGate";
+import { casinoCallbackHandler } from "./modules/casino/callback";
 
 // server/src/app.ts e server/dist/app.js ficam ambos exatamente 2 níveis abaixo da raiz do
 // monorepo (server/src e server/dist), por isso este caminho relativo funciona em dev e em prod.
@@ -47,6 +48,12 @@ export function createApp() {
   app.post("/api/payments/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);
 
   app.use(express.json({ limit: "1mb" }));
+
+  // Callback do Cassino Gold Palace — montado na raiz (fora de /api/), o URL confirmado pelo
+  // próprio provedor em agent/callback-test (ver docs/CASINO_SLOTS.md). Autenticado pelo header
+  // Callback-Token (ver casino/callback.ts), não pelo requireAuth normal desta app — o provedor
+  // não tem um token de sessão nosso, tem o segredo partilhado do painel do agente.
+  app.post("/callback", casinoCallbackHandler);
 
   app.get("/api/health", (_req, res) => res.json({ status: "ok", env: env.NODE_ENV }));
 

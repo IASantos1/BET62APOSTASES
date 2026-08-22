@@ -481,3 +481,15 @@ export async function listUserStatistics(options: ListUserStatisticsOptions): Pr
   });
   return res.data;
 }
+
+/**
+ * POST /v4/user/create — testado ao vivo numa sessão anterior com `{ name: "test" }`, devolveu
+ * `CALLBACK_ERROR` (código 1015) porque a rota /callback ainda não existia (ver
+ * casino/callback.ts, agora implementada). Ainda não foi testado de novo depois da rota de
+ * callback ficar ativa — a forma de sucesso continua por confirmar, por isso devolve-se sem
+ * tipar os campos em vez de inventar uma forma.
+ */
+export async function createCasinoUser(name: string): Promise<unknown> {
+  const res = await postAgent("/v4/user/create", { name });
+  return res.data;
+}

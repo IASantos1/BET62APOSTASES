@@ -56,6 +56,12 @@ const envSchema = z.object({
   // docs/CASINO_SLOTS.md). Auth: "Authorization: Bearer {CASINO_AGENT_KEY}" em todos os pedidos.
   CASINO_AGENT_KEY: z.string().default(""),
   CASINO_PROVIDER_BASE_URL: z.string().default("https://agent.goldslotpalase.com"),
+  // Segredo partilhado configurado no painel do agente (goldslotpalase.com) — o provedor envia-o
+  // de volta no header "Callback-Token" em todo pedido a POST /callback (ver casino/callback.ts).
+  // Vazio por omissão = todos os callbacks são rejeitados (nunca aceitar um callback sem token
+  // configurado, é o único mecanismo de autenticação confirmado — o campo "check" do corpo não
+  // tem o algoritmo confirmado, por isso não é validado).
+  CASINO_CALLBACK_TOKEN: z.string().default(""),
 });
 
 export type Env = z.infer<typeof envSchema>;

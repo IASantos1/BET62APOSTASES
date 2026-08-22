@@ -26,6 +26,7 @@ import {
   getRoundDetails,
   listUserStatistics,
 } from "../casino/apiClient";
+import { provisionCasinoAccount } from "../casino/accountProvisioning";
 import { syncGameCatalog, listCasinoGames } from "../casino/catalogSync";
 import {
   getDashboardStats,
@@ -385,6 +386,15 @@ router.get(
       })
     );
   })
+);
+
+// Cria a conta no provedor (user/create) e guarda o mapeamento local (CasinoAccount) usado pelo
+// callback — ver casino/accountProvisioning.ts e casino/callback.ts. Primeiro teste real de
+// user/create desde que a rota /callback existe.
+router.post(
+  "/casino/accounts/provision",
+  validateBody(z.object({ userId: z.string().min(1) })),
+  asyncHandler(async (req: AuthedRequest, res) => res.json(await provisionCasinoAccount(req.body.userId)))
 );
 
 router.get(

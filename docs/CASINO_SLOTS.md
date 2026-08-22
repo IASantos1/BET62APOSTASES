@@ -28,13 +28,14 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   "https://bet62.plus/callback"`, 554ms) — a conectividade que falhava silenciosamente na
   integração anterior (CALLBACK_ERROR) está resolvida do lado do provedor. Nota: o URL de
   callback configurado agora é `/callback` na raiz, não `/api/casino/callback` como antes — a
-  rota real ainda não existe no backend (por implementar quando confirmado o contrato do corpo
-  do callback).
-- `POST /v4/user/create` — chamado ao vivo com `{ name: "test" }`, devolveu `code 1015
+  rota real **já existe** (ver "Callback (autenticação + carteira em tempo real)" abaixo).
+- `POST /v4/user/create` — `createCasinoUser(name)`. Chamado ao vivo com `{ name: "test" }`
+  numa sessão anterior (antes de existir a rota `/callback`), devolveu `code 1015
   CALLBACK_ERROR`. Confirma que `user/create` dispara uma chamada real de callback (não só um
-  teste de conectividade como `agent/callback-test`) para validar a conta antes de a criar — e
-  falha porque a rota real `/callback` ainda não existe neste backend. **Ainda não
-  implementado no cliente** — falta o contrato do corpo/comando esperado pelo callback.
+  teste de conectividade como `agent/callback-test`) para validar a conta antes de a criar.
+  **Ainda não testado de novo** desde que a rota `/callback` ficou implementada — próximo passo
+  natural é chamar `POST /api/admin/casino/accounts/provision` (ver abaixo) para um utilizador
+  real e confirmar se finalmente devolve `code 0`.
 - `POST /v4/user/info` — `getUserInfo(userCode)`. Exposto em
   `GET /api/admin/casino/users/:userCode`. Só se confirmou o caso de erro (`USER_NOT_FOUND`,
   código 2002, para um `user_code` que nunca chegou a ser criado); a forma de sucesso ainda não
@@ -131,6 +132,55 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   formato `"YYYY-MM-DD HH:MM:SS"` usado em `/v4/game/transaction` — não trocar os dois formatos
   entre endpoints. Forma de cada item de `list` ainda por confirmar.
 
+## Callback (autenticação + carteira em tempo real)
+
+Contrato confirmado pelo utilizador (documentação real do goldslotpalase.com, colada em chat —
+não um curl+resposta ao vivo como o resto desta lista). Implementado em
+`server/src/modules/casino/callback.ts`, montado em `POST /callback` (raiz, fora de `/api/`,
+ver `app.ts`) — é o URL que `agent/callback-test` confirmou alcançável.
+
+**Autenticação do pedido**: header `Callback-Token` comparado com a variável de ambiente
+`CASINO_CALLBACK_TOKEN` (o segredo configurado no painel do agente). Vazio por omissão = todos
+os callbacks são rejeitados — nunca aceitar um callback sem este token configurado.
+**Importante**: o corpo de cada pedido também traz um campo `check` (ex: `"21"`, `"21,22,41,31"`)
+cujo algoritmo o provedor **não documentou aqui** — pode ser uma assinatura a validar, ou só uma
+lista de referência de que campos vêm preenchidos nesse comando (mais provável, dado o padrão:
+os mesmos números repetem-se de forma consistente por comando). Este `check` **não é validado**
+— é uma lacuna conhecida, a resolver se/quando o provedor confirmar o que é.
+
+**Comandos implementados** (todos via `command` no corpo, resposta sempre `{ result: 0, status:
+"OK", data: {...} }` no sucesso — forma de erro nunca confirmada, `{ result: 1, status: "..." }`
+é o melhor palpite):
+
+- `authenticate` — `{ data: { account } }` → devolve `{ account, balance }`.
+- `balance` — `{ data: { account } }` → devolve `{ balance }`.
+- `bet` — débito da carteira (`amount`, `trans_guid`, `round_id`, `provider_id`, `game_code`,
+  ...) → devolve `{ balance }` atualizado.
+- `win` — crédito da carteira, mesma forma que `bet` → devolve `{ balance }` atualizado.
+- `cancel` — reverte a transação identificada por `cancel_trans_guid` (crédito se a original foi
+  `bet`, débito se foi `win`) → devolve `{ balance }` atualizado.
+- `status` — devolve `{ account, trans_guid, trans_status }` (`"OK"` confirmado pelo provedor;
+  `"NOT_FOUND"` para um `trans_guid` desconhecido é palpite nosso).
+
+**Mapeamento conta ↔ utilizador** (`CasinoAccount`, Prisma): uma linha por utilizador com
+`account` = `user.publicId` (enviado como `name` em `user/create`, ver
+`casino/accountProvisioning.ts` → `provisionCasinoAccount(userId)`, exposto em
+`POST /api/admin/casino/accounts/provision`). **Assumido, não confirmado**: que o `account` que
+o provedor devolve nos callbacks é exatamente o `name` que lhe enviámos — só se confirma quando
+`user/create` finalmente devolver `code 0` e um `authenticate` real chegar com esse valor.
+
+**Idempotência**: cada `bet`/`win`/`cancel` fica registado em `CasinoCallbackTransaction` por
+`trans_guid` (chave única) — um reenvio do mesmo `trans_guid` pelo provedor devolve o saldo já
+processado sem voltar a mexer na carteira. Movimentos de carteira reaproveitam
+`applyLedgerMovement()` (`wallet/service.ts`), o mesmo helper atómico usado pelas apostas
+desportivas — `bet`/`win` usam `LedgerEntryType.BET_PLACED`/`BET_WON`, `cancel` usa
+`BET_REFUND`.
+
+**Ainda por confirmar**: forma de resposta de erro, se `check` precisa de validação, e se a
+escala/moeda de `balance` bate certo com o `Wallet.balance` em EUR sem multiplicador (assumido
+por agora — o `balance: 12000` do exemplo do provedor é provavelmente só um número de exemplo
+genérico, não uma escala real confirmada).
+
 ## Catálogo local (`CasinoGame`)
 
 O catálogo completo (`/v4/game/all`) tem milhares de jogos — pedir isto ao provedor em cada
@@ -155,12 +205,14 @@ tabela (só o admin tem as rotas para a popular e listar).
 Autenticação confirmada: header `Authorization: Bearer {CASINO_AGENT_KEY}` em todos os pedidos,
 resposta sempre no formato `{ code, message, data }` (`code !== 0` é tratado como erro).
 
-Variáveis de ambiente (`server/.env.example`): `CASINO_AGENT_KEY`, `CASINO_PROVIDER_BASE_URL`
-(default `https://agent.goldslotpalase.com`).
+Variáveis de ambiente (`server/.env.example`): `CASINO_AGENT_KEY`, `CASINO_PROVIDER_BASE_URL`,
+`CASINO_CALLBACK_TOKEN` (default `https://agent.goldslotpalase.com` para a segunda; as outras
+duas vazias por omissão, obrigatórias para os callbacks/pedidos autenticados funcionarem).
 
-**Ainda não implementado** (por implementar assim que confirmado): criação de utilizador no
-provedor, lançamento de jogo (`game-url`), catálogo de jogos, endpoint/contrato de callback
-(débito/crédito da carteira em tempo real), páginas de frontend (Cassino, Destaques, admin).
+**Ainda não implementado/confirmado**: `user/create` ainda não foi testado de novo desde que a
+rota `/callback` passou a existir (ver "Callback" acima — é o próximo passo lógico); lançamento
+de jogo real (`game-url`) continua bloqueado até `user/create` funcionar; páginas de frontend
+(Cassino, Destaques, admin) ainda não consomem nada disto.
 
 Se for preciso consultar a implementação anterior completa (catálogo, callbacks, seamless
 wallet, UI) como referência, está disponível no histórico do git antes do commit de remoção.
