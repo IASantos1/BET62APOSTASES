@@ -64,6 +64,13 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   **Continua bloqueado**: só vai funcionar depois de `user/create` funcionar (ver abaixo), já
   que precisa de um `user_code` real.
 
+- `POST /v4/game/online-games` — `getOnlineGames()`. Exposto em
+  `GET /api/admin/casino/games/online`. Devolveu `data: []` (nenhum jogador em jogo, esperado —
+  ninguém ainda conseguiu lançar um jogo de verdade). Forma de cada item ainda não vista.
+- `POST /v4/game/call_config` — `getCallConfig()`. Exposto em `GET /api/admin/casino/call-config`.
+  Devolveu `{ call_min: 10 }`. O significado exato de `call_min` ainda não foi confirmado (só se
+  guarda o campo tal como veio).
+
 ## Catálogo local (`CasinoGame`)
 
 O catálogo completo (`/v4/game/all`) tem milhares de jogos — pedir isto ao provedor em cada

@@ -7,7 +7,17 @@ import { Errors } from "../../lib/errors";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
 import { getKycDocumentFile } from "../users/kycDocuments";
-import { getAgentInfo, testCallback, getUserInfo, getGameProviders, getGames, getAllGames, launchGame } from "../casino/apiClient";
+import {
+  getAgentInfo,
+  testCallback,
+  getUserInfo,
+  getGameProviders,
+  getGames,
+  getAllGames,
+  launchGame,
+  getOnlineGames,
+  getCallConfig,
+} from "../casino/apiClient";
 import { syncGameCatalog, listCasinoGames } from "../casino/catalogSync";
 import {
   getDashboardStats,
@@ -254,6 +264,16 @@ router.post(
     })
   ),
   asyncHandler(async (req: AuthedRequest, res) => res.json(await launchGame(req.body)))
+);
+
+router.get(
+  "/casino/games/online",
+  asyncHandler(async (_req, res) => res.json(await getOnlineGames()))
+);
+
+router.get(
+  "/casino/call-config",
+  asyncHandler(async (_req, res) => res.json(await getCallConfig()))
 );
 
 router.get(

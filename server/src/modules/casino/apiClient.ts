@@ -221,3 +221,27 @@ export async function launchGame(options: LaunchGameOptions): Promise<unknown> {
   });
   return res.data;
 }
+
+/**
+ * Confirmado: POST /v4/game/online-games — devolveu `data: []` (nenhum jogador em jogo agora,
+ * esperado — ninguém ainda conseguiu lançar um jogo de verdade). A forma de cada item da lista
+ * ainda não foi vista, por isso devolve-se sem tipar os campos em vez de inventar uma forma.
+ */
+export async function getOnlineGames(): Promise<unknown[]> {
+  const res = await postAgent<unknown[]>("/v4/game/online-games");
+  return res.data;
+}
+
+export interface CallConfig {
+  callMin: number;
+}
+
+/**
+ * Confirmado: POST /v4/game/call_config — devolveu `{ call_min: 10 }`. O significado exato de
+ * `call_min` (ex: intervalo mínimo entre chamadas ao provedor, aposta mínima) ainda não foi
+ * confirmado — só se guarda o campo tal como veio, sem lhe atribuir um significado.
+ */
+export async function getCallConfig(): Promise<CallConfig> {
+  const res = await postAgent<{ call_min: number }>("/v4/game/call_config");
+  return { callMin: res.data.call_min };
+}
