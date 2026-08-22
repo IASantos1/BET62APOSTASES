@@ -15,19 +15,25 @@ import { createCasinoUser } from "./apiClient";
 // o provedor por sua vez devolvia CALLBACK_ERROR ao user/create — só descoberto porque o teste de
 // conectividade (agent/callback-test, que não passa por handleAuthenticate) tinha funcionado.
 // Se createCasinoUser falhar, desfaz-se o registo local para não ficar um mapeamento órfão.
+//
+// `providerResult` (a resposta crua de user/create, nunca vista com sucesso até agora — ver
+// docs/CASINO_SLOTS.md) vem incluída na resposta só para diagnóstico: presume-se que traga o
+// `user_code` que o lançamento de jogo (game-url) exige, mas isso ainda não foi confirmado, por
+// isso não se guarda nada disto na base de dados enquanto a forma não for vista ao vivo.
 export async function provisionCasinoAccount(userId: string) {
   const existing = await prisma.casinoAccount.findUnique({ where: { userId } });
-  if (existing) return existing;
+  if (existing) return { ...existing, providerResult: null };
 
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw Errors.notFound("Utilizador não encontrado");
 
   const account = await prisma.casinoAccount.create({ data: { userId, account: user.publicId } });
+  let providerResult: unknown;
   try {
-    await createCasinoUser(user.publicId);
+    providerResult = await createCasinoUser(user.publicId);
   } catch (err) {
     await prisma.casinoAccount.delete({ where: { userId } });
     throw err;
   }
-  return account;
+  return { ...account, providerResult };
 }
