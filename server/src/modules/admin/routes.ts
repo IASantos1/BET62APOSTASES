@@ -22,6 +22,7 @@ import {
   createFreeround,
   cancelFreeround,
   listTransactions,
+  listTransactionsByCursor,
 } from "../casino/apiClient";
 import { syncGameCatalog, listCasinoGames } from "../casino/catalogSync";
 import {
@@ -341,6 +342,15 @@ router.get(
         limit,
       })
     );
+  })
+);
+
+router.get(
+  "/casino/transactions/cursor",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const lastId = req.query.lastId ? Number(req.query.lastId) : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    res.json(await listTransactionsByCursor({ lastId, limit }));
   })
 );
 

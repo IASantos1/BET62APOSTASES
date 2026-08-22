@@ -101,6 +101,20 @@ Confirmados ao vivo pelo utilizador e implementados em `server/src/modules/casin
   cada item de `list` ainda não foi vista (nenhuma transação real aconteceu ainda). `start_time`
   e `end_time` confirmados como string `"YYYY-MM-DD HH:MM:SS"`.
 
+- `POST /v4/game/transaction-id` — `listTransactionsByCursor(options)`. Exposto em
+  `GET /api/admin/casino/transactions/cursor?lastId=&limit=`. Paginação por cursor
+  (`last_id`/`limit`), ao contrário de `/v4/game/transaction` que é por janela de tempo.
+  Chamado ao vivo com `{ last_id: 0, limit: 10 }`, devolveu **10 transações reais** de um
+  `user_code` (`408951137`) já existente no provedor, com jogadas reais em `2026-08-01` —
+  confirma que já há pelo menos uma conta ativa com histórico real, fora do fluxo desta
+  aplicação (provavelmente uma conta de teste do provedor). Confirma a forma completa de um item
+  de transação: `trans_id`, `user_code`, `round_id`, `trans_type`, `provider_id`,
+  `provider_name`, `game_code`, `game_name`, `category`, `prebalance`, `trans_amount`,
+  `balance`, `regdate`, `time_stamp`. Padrão observado nos dados reais (não documentado pelo
+  provedor, por isso tratado como observação e não como facto): `trans_type 1` parece ser
+  débito (aposta — `balance = prebalance - trans_amount`) e `trans_type 2` parece ser crédito
+  (ganho, pode ser `0` se perdeu essa ronda).
+
 ## Catálogo local (`CasinoGame`)
 
 O catálogo completo (`/v4/game/all`) tem milhares de jogos — pedir isto ao provedor em cada

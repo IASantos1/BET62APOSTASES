@@ -354,3 +354,74 @@ export async function listTransactions(options: ListTransactionsOptions): Promis
   });
   return res.data;
 }
+
+export interface CasinoTransactionRecord {
+  transId: number;
+  userCode: number;
+  roundId: string;
+  /** Confirmado só pelo padrão visto em dados reais (não documentado pelo provedor): 1 = débito
+   * (aposta, trans_amount > 0, balance = prebalance - trans_amount), 2 = crédito (ganho, pode
+   * ser 0 se não ganhou nessa ronda). Não inventar mais tipos além destes dois até confirmados. */
+  transType: number;
+  providerId: number;
+  providerName: string;
+  gameCode: string;
+  gameName: string;
+  category: string;
+  prebalance: number;
+  transAmount: number;
+  balance: number;
+  regDate: string;
+  timeStamp: number;
+}
+
+export interface ListTransactionsByCursorOptions {
+  lastId?: number;
+  limit?: number;
+}
+
+/**
+ * Confirmado: POST /v4/game/transaction-id — paginação por cursor (last_id/limit, ao contrário
+ * de /v4/game/transaction que é por offset/janela de tempo). Testado ao vivo com
+ * `{ last_id: 0, limit: 10 }`, devolveu 10 transações reais de um `user_code` (408951137) já
+ * existente no provedor com jogadas reais feitas em 2026-08-01 — confirma que já há pelo menos
+ * uma conta ativa com histórico real nesta integração, fora do fluxo desta aplicação.
+ */
+export async function listTransactionsByCursor(
+  options: ListTransactionsByCursorOptions = {}
+): Promise<CasinoTransactionRecord[]> {
+  const res = await postAgent<
+    Array<{
+      trans_id: number;
+      user_code: number;
+      round_id: string;
+      trans_type: number;
+      provider_id: number;
+      provider_name: string;
+      game_code: string;
+      game_name: string;
+      category: string;
+      prebalance: number;
+      trans_amount: number;
+      balance: number;
+      regdate: string;
+      time_stamp: number;
+    }>
+  >("/v4/game/transaction-id", { last_id: options.lastId ?? 0, limit: options.limit ?? 10 });
+  return res.data.map((t) => ({
+    transId: t.trans_id,
+    userCode: t.user_code,
+    roundId: t.round_id,
+    transType: t.trans_type,
+    providerId: t.provider_id,
+    providerName: t.provider_name,
+    gameCode: t.game_code,
+    gameName: t.game_name,
+    category: t.category,
+    prebalance: t.prebalance,
+    transAmount: t.trans_amount,
+    balance: t.balance,
+    regDate: t.regdate,
+    timeStamp: t.time_stamp,
+  }));
+}
