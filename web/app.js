@@ -2705,12 +2705,15 @@ function classifyForBetBuilder(marketName) {
   const m = marketName;
   if (BET_BUILDER_PERIOD_RE.test(m)) return null;
   if (/draw no bet/i.test(m)) return "RESULTADO";
-  if (/double chance/i.test(m)) return "RESULTADO";
+  // Dupla Hipótese separada de Resultado (pedido explícito) — antes as duas ficavam na mesma
+  // categoria "Resultado", o que impedia escolher as duas ao mesmo tempo (só uma seleção por
+  // categoria) mesmo sendo mercados diferentes.
+  if (/double chance/i.test(m)) return "DUPLA_CHANCE";
   const isOverUnder = /over\/?under|total/i.test(m);
   if (/corner/i.test(m)) return isOverUnder ? "ESCANTEIOS" : null;
   if (/\bcard|booking/i.test(m)) return isOverUnder ? "CARTOES" : null;
   if (/both teams to score|\bbtts\b/i.test(m)) return "BTTS";
-  if (/correct score|exact score/i.test(m)) return null; // fora das 5 categorias pedidas
+  if (/correct score|exact score/i.test(m)) return null; // fora das categorias pedidas
   if (isOverUnder || /total (goals|points|games|runs)/i.test(m)) return "GOLS";
   if (/handicap|spread|asian/i.test(m)) return null;
   if (/match odds|\b1x2\b|to win|winner|money.?line|full time result|3.?way/i.test(m)) return "RESULTADO";
@@ -2719,10 +2722,11 @@ function classifyForBetBuilder(marketName) {
 
 const BET_BUILDER_CATEGORIES = [
   { key: "RESULTADO", label: "Resultado" },
-  { key: "GOLS", label: "Golos" },
+  { key: "DUPLA_CHANCE", label: "Dupla Chance" },
   { key: "BTTS", label: "Ambas Marcam" },
-  { key: "ESCANTEIOS", label: "Escanteios" },
+  { key: "GOLS", label: "Acima/Abaixo" },
   { key: "CARTOES", label: "Cartões" },
+  { key: "ESCANTEIOS", label: "Cantos" },
 ];
 const BET_BUILDER_MAX_SELECTIONS = 4;
 
@@ -2758,14 +2762,22 @@ function renderBetBuilder(e) {
     // Todas as seleções ativas e com odd válida de QUALQUER mercado desta categoria (pode haver
     // mais do que um mercado bruto na mesma categoria, ex: duas linhas diferentes de "Total
     // Corners") — cada botão sabe a que mercado bruto pertence, para submeter certo.
-    const options = [];
+    // DEDUPLICADO por rótulo (Map, não array): reportado com um caso real — "Both Teams to
+    // Score" apareceu duas vezes em e.odds (duas fontes/mercados brutos diferentes que classificam
+    // para a mesma categoria BTTS), fazendo "Sim"/"Não" aparecerem repetidos como se fossem odds
+    // diferentes. Cada categoria só pode ter, no máximo, uma seleção com o mesmo rótulo — a
+    // primeira encontrada (mercado principal, ver orderMarketsWithPrimaryFirst no backend) vence,
+    // as restantes com o mesmo rótulo são descartadas.
+    const optionsByLabel = new Map();
     for (const group of e.odds) {
       if (classifyForBetBuilder(group.market) !== cat.key) continue;
       for (const [label, sel] of Object.entries(group.selections ?? {})) {
         if (!sel.isActive || !Number.isFinite(sel.odd)) continue;
-        options.push({ market: group.market, label, odd: sel.odd });
+        if (optionsByLabel.has(label)) continue;
+        optionsByLabel.set(label, { market: group.market, label, odd: sel.odd });
       }
     }
+    const options = [...optionsByLabel.values()];
     if (!options.length) {
       return `<div class="market-group bb-category"><h4>${cat.label}</h4><div class="empty-note" style="padding:6px 2px">Sem mercados disponíveis nesta categoria</div></div>`;
     }

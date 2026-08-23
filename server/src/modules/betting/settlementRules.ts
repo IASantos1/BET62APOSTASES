@@ -175,19 +175,23 @@ export function resolveBetSelectionOutcome(sel: SelectionContext, stats: FinalSt
 }
 
 // ============ Bet Builder (server/src/modules/betting/service.ts) ============
-// As 5 categorias do Bet Builder mapeiam diretamente para as categorias de MarketCategory que o
+// As categorias do Bet Builder mapeiam diretamente para as categorias de MarketCategory que o
 // motor de liquidação automática já sabe resolver sozinho (classifyMarket() acima) — pedido
 // explícito do utilizador: só entram no Bet Builder mercados que já liquidam sozinhos, nunca os
 // de jogador (remates, assistências, faltas, impedimentos, passes), para os quais este projeto
 // nunca recebeu, em nenhuma amostra real, dados por jogador que permitissem decidir o resultado
-// sem inventar. CORRECT_SCORE fica de fora do Bet Builder por não estar na lista das 5
-// categorias pedidas (Resultado/Golos/BTTS/Escanteios/Cartões), mesmo já sabendo liquidar-se.
-export type BetBuilderCategory = "RESULTADO" | "GOLS" | "BTTS" | "ESCANTEIOS" | "CARTOES";
+// sem inventar. CORRECT_SCORE fica de fora do Bet Builder por não estar na lista das categorias
+// pedidas, mesmo já sabendo liquidar-se.
+//
+// DUPLA_CHANCE separada de RESULTADO (pedido explícito) — antes DOUBLE_CHANCE caía na mesma
+// categoria que MATCH_RESULT/DRAW_NO_BET, impedindo escolher as duas ao mesmo tempo (só uma
+// seleção por categoria) mesmo sendo mercados diferentes.
+export type BetBuilderCategory = "RESULTADO" | "DUPLA_CHANCE" | "GOLS" | "BTTS" | "ESCANTEIOS" | "CARTOES";
 
 const BET_BUILDER_CATEGORY_BY_MARKET: Partial<Record<MarketCategory, BetBuilderCategory>> = {
   MATCH_RESULT: "RESULTADO",
-  DOUBLE_CHANCE: "RESULTADO",
   DRAW_NO_BET: "RESULTADO",
+  DOUBLE_CHANCE: "DUPLA_CHANCE",
   OVER_UNDER_GOALS: "GOLS",
   BTTS: "BTTS",
   OVER_UNDER_CORNERS: "ESCANTEIOS",
