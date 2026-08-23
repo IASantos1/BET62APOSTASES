@@ -943,6 +943,10 @@ async function doLogin() {
 }
 
 async function afterAuthSuccess() {
+  // login()/register() limpam cachedSession de propósito (ver api.js) — sem isto,
+  // isAuthenticated() ficava sempre false (o cookie de sessão é httpOnly, o JS nunca o
+  // consegue ler diretamente; só getSession(), que pergunta ao servidor, sabe o estado real).
+  await Bet62Api.getSession();
   await Promise.all([loadProfile(), loadBalance()]);
   showPage("profile");
 }
@@ -2617,6 +2621,9 @@ async function submitBetslip() {
 // ====================== INIT ======================
 (async function init() {
   applyAutoTheme();
+  // Preenche o estado de sessão em cache ANTES de qualquer verificação de isAuthenticated()
+  // (ver afterAuthSuccess acima — mesmo motivo: o cookie de sessão é httpOnly).
+  await Bet62Api.getSession();
   updateHeader();
   showPage("destaques");
   renderSportsMenu();
