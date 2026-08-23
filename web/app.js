@@ -1620,16 +1620,21 @@ function ensureLiveSocket() {
       liveSnapshotReceived = true;
       liveEventsById.clear();
       data.events.forEach((e) => liveEventsById.set(e.id, e));
+      renderLiveEvents();
     } else if (data.type === "update") {
       liveEventsById.set(data.event.id, data.event);
+      // Só reconstrói a lista inteira se o cartão ainda não existir no DOM (jogo novo ao vivo,
+      // ou já não passa no filtro de desporto atual) — caso contrário, atualiza só esse cartão
+      // para não interromper o scroll do utilizador (ver comentário em patchLiveEventCard).
+      if (!patchLiveEventCard(data.event)) renderLiveEvents();
     } else if (data.type === "remove") {
       // Jogo terminado (ou já não devolvido pela Pulsescore) — sai da página Ao Vivo assim que
       // este frame chega, sem esperar por um reload (ver applySportSnapshot em hybridService.ts
       // e o relay em websocket/gateway.ts).
       liveEventsById.delete(data.id);
       if (currentMarketEvent && currentMarketEvent.id === data.id) currentMarketEvent._finished = true;
+      renderLiveEvents();
     }
-    renderLiveEvents();
     if (currentMarketEvent && liveEventsById.has(currentMarketEvent.id)) {
       currentMarketEvent = liveEventsById.get(currentMarketEvent.id);
     }
@@ -1671,7 +1676,7 @@ function renderSetsCard(e, clockClass, oddsHtml, icon) {
   const headerCols = Array.from({ length: numSets }, (_, i) => `<span class="sets-grid-col">S${i + 1}</span>`).join("");
 
   return `
-    <div class="live-card" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
+    <div class="live-card" data-eid="${e.id}" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
       <div class="lc-top"><span>${icon} ${e.league}</span><span class="${clockClass}">${setLabel}</span></div>
       ${showPoints ? `<div class="event-points">${e.homeScore} - ${e.awayScore}</div>` : ""}
       <div class="sets-grid">
@@ -1707,7 +1712,7 @@ function renderGenericCard(e, clockClass, oddsHtml, icon) {
   const homeRed = redCardsHtml(e.statistics?.home?.redCards);
   const awayRed = redCardsHtml(e.statistics?.away?.redCards);
   return `
-    <div class="live-card" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
+    <div class="live-card" data-eid="${e.id}" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
       <div class="lc-top"><span>${icon} ${e.league}</span><span class="${clockClass}">${e.minuteOrPeriod}</span></div>
       <div class="event-rows">
         <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.homeScore}</span>` : ""}<span class="event-team">${e.home}${homeRed}</span></div>
@@ -1744,6 +1749,30 @@ function renderLiveEvents() {
     return renderGenericCard(e, clockClass, oddsHtml, icon);
   });
   renderInBlocks(container, cardsHtml);
+}
+
+// Atualiza SÓ o cartão de um jogo já visível, sem tocar no resto da lista — usado nas
+// mensagens "update" do WebSocket (placar/odds/relógio a mudar), que chegam com muita
+// frequência. Antes disto, cada mensagem chamava renderLiveEvents() inteiro (innerHTML="" +
+// reconstrução de todos os cartões), o que interrompia o gesto de scroll do utilizador a meio
+// (o dedo fica a "arrastar" um nó do DOM que acabou de ser destruído) — reportado como
+// "bug ao rolar a página". Devolve false quando o jogo ainda não está no DOM (é novo ou o
+// filtro de desporto mudou), para o chamador cair de volta no render completo nesse caso.
+function patchLiveEventCard(e) {
+  if (selectedSport && e.sport !== selectedSport) return true; // não visível, nada a tocar
+  const container = document.getElementById("live-list");
+  if (!container) return false;
+  const existing = Array.from(container.children).find((c) => c.dataset && c.dataset.eid === String(e.id));
+  if (!existing) return false;
+  const sportIcon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
+  const clockClass = isClockMissing(e) ? "clock-missing" : "";
+  const icon = sportIcon[e.sport] || "";
+  const oddsHtml = quickOddsHtml(e, e.odds?.[0], true);
+  const html = e.statistics?.sets ? renderSetsCard(e, clockClass, oddsHtml, icon) : renderGenericCard(e, clockClass, oddsHtml, icon);
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = html.trim();
+  existing.replaceWith(wrapper.firstElementChild);
+  return true;
 }
 
 // ====================== MERCADOS + MATCH TRACKER ======================
