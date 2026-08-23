@@ -429,14 +429,15 @@ function quickOddsHtml(e, group, isLive) {
   if (!entries.length) return "";
   return `<div class="lc-odds">${entries
     .map(([label, sel]) => {
+      const labelPt = translateSelectionLabel(label);
       if (!sel.isActive || !Number.isFinite(sel.odd)) {
-        return `<div class="suspended">${label}<br>Suspenso</div>`;
+        return `<div class="suspended">${labelPt}<br>Suspenso</div>`;
       }
       const key = `${e.id}|${group.market}|${label}`;
       const picked = betslipSelections.has(key);
       const selection = { eventId: e.id, sport: e.sport, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
       const arrow = isLive ? oddsArrowHtml(key, sel.odd) : "";
-      return `<div class="${picked ? "picked" : ""}" onclick='quickPick(event, ${JSON.stringify(key)}, ${JSON.stringify(selection)})'>${label}<br>${sel.odd.toFixed(2)}${arrow}</div>`;
+      return `<div class="${picked ? "picked" : ""}" onclick='quickPick(event, ${JSON.stringify(key)}, ${JSON.stringify(selection)})'>${labelPt}<br>${sel.odd.toFixed(2)}${arrow}</div>`;
     })
     .join("")}</div>`;
 }
@@ -1053,7 +1054,10 @@ async function refreshMyBetsList() {
     container.innerHTML = bets
       .map((b) => {
         const selectionsHtml = b.selections
-          .map((s) => `<div class="bs-row-sel" style="margin:2px 0">${s.home} vs ${s.away} — ${s.market}: <b>${s.selection}</b> @ ${Number(s.odd).toFixed(2)}</div>`)
+          .map(
+            (s) =>
+              `<div class="bs-row-sel" style="margin:2px 0">${s.home} vs ${s.away} — ${translateMarketDisplayName(s.market, s.sport)}: <b>${translateSelectionLabel(s.selection)}</b> @ ${Number(s.odd).toFixed(2)}</div>`
+          )
           .join("");
         const resultLine =
           b.status === "WON" || b.status === "VOID"
@@ -2173,6 +2177,149 @@ const FOOTBALL_CATCHALL_LABEL = "Especiais";
 
 let selectedMarketFilter = null; // null = "Todos"
 
+// ====================== TRADUÇÃO DE MERCADOS/SELEÇÕES ======================
+// A Pulsescore devolve `market`/rótulo de seleção já prontos a mostrar, mas em inglês (ver
+// docs/SPORTS_DATA.md: "rawName em cada mercado/seleção já vem pronto a mostrar" — não existe
+// nenhum campo de tradução na resposta real). Traduz-se aqui por palavra-chave, mesma disciplina
+// já usada em MARKET_FILTER_CATEGORIES/classifyMarket acima e em
+// server/.../pulsescore/marketRouting.ts::classifyRoutingMarket (heurística, não uma lista
+// fechada de todos os nomes possíveis) — um nome que não bata em nada fica no original em inglês
+// em vez de arriscar mostrar uma tradução errada.
+//
+// IMPORTANTE: isto traduz só o TEXTO MOSTRADO. O valor bruto (`group.market`/`label`) continua a
+// ser usado sem alteração nas chaves do boletim e no objeto enviado para a API de apostas — o
+// backend classifica/liquida apostas comparando contra o texto original em inglês
+// (settlementRules.ts), nunca contra esta tradução.
+const PERIOD_LABEL_PATTERNS = [
+  { test: (m) => /1st half|first half/i.test(m), label: "1º Tempo" },
+  { test: (m) => /2nd half|second half/i.test(m), label: "2º Tempo" },
+  { test: (m) => /half.?time|\bht\b/i.test(m), label: "1º Tempo" },
+  { test: (m) => /1st quarter|first quarter|\bq1\b/i.test(m), label: "1º Quarto" },
+  { test: (m) => /2nd quarter|second quarter|\bq2\b/i.test(m), label: "2º Quarto" },
+  { test: (m) => /3rd quarter|third quarter|\bq3\b/i.test(m), label: "3º Quarto" },
+  { test: (m) => /4th quarter|fourth quarter|\bq4\b/i.test(m), label: "4º Quarto" },
+  { test: (m) => /1st period|first period/i.test(m), label: "1º Período" },
+  { test: (m) => /2nd period|second period/i.test(m), label: "2º Período" },
+  { test: (m) => /3rd period|third period/i.test(m), label: "3º Período" },
+  { test: (m) => /1st set|first set/i.test(m), label: "1º Set" },
+];
+
+function extractPeriodSuffix(rawName) {
+  const hit = PERIOD_LABEL_PATTERNS.find((p) => p.test(rawName));
+  return hit ? ` (${hit.label})` : "";
+}
+
+// Substantivo certo para mercados "Mais/Menos de X" consoante o desporto (golos/pontos/games...).
+const OVER_UNDER_NOUN = {
+  football: "Golos",
+  ice_hockey: "Golos",
+  baseball: "Corridas",
+  basketball: "Pontos",
+  volleyball: "Pontos",
+  tennis: "Games",
+  mma: "Rounds",
+};
+
+// Cascata por palavra-chave alinhada de propósito com classifyRoutingMarket() em
+// server/src/modules/sports/pulsescore/marketRouting.ts — um novo tipo de mercado reconhecido lá
+// deve ganhar tradução aqui também. Devolve null quando não reconhece nada (ver translateMarketDisplayName).
+function translateMarketBaseName(m, sport) {
+  if (/extra.?time.*correct score|correct score.*extra.?time/i.test(m)) return "Resultado Exato (Prolongamento)";
+  if (/extra.?time/i.test(m)) return "Resultado (Prolongamento)";
+  if (/scorecast/i.test(m)) return "Marcador + Resultado";
+  if (/result.*both teams to score|both teams to score.*result/i.test(m)) return "Resultado + Ambas Marcam";
+  if (/result.*goalscorer|goalscorer.*result/i.test(m)) return "Resultado + Marcador";
+  if (/mythical/i.test(m)) return "Confronto Mítico";
+  if (/10.?min|ten.?minute/i.test(m)) return "Mercado dos Primeiros 10 Minutos";
+  if (/multi.?corners/i.test(m)) return "Múltiplos Cantos";
+
+  if (/odd.?\/?.?even.*corner|corner.*odd.?\/?.?even/i.test(m)) return "Cantos Ímpar/Par";
+  if (/odd.?\/?.?even.*card|card.*odd.?\/?.?even/i.test(m)) return "Cartões Ímpar/Par";
+  if (/odd.?\/?.?even/i.test(m)) return "Golos Ímpar/Par";
+
+  if (/race to.*corner|corner.*race to/i.test(m)) return "Primeiro a Atingir X Cantos";
+  if (/race to.*card|card.*race to/i.test(m)) return "Primeiro a Atingir X Cartões";
+  if (/race to/i.test(m)) return "Primeiro a Atingir X Golos";
+
+  if (/first to score|to score first|first goalscorer/i.test(m)) return "Primeiro Marcador";
+  if (/last to score|to score last|last goalscorer/i.test(m)) return "Último Marcador";
+  if (/goalscorer|\bscorer\b|player.*(to score|goals)/i.test(m)) return "Marcador a Qualquer Momento";
+
+  if (/player.*shot.*target|shot.*target.*player/i.test(m)) return "Remates à Baliza do Jogador";
+  if (/player.*shot/i.test(m)) return "Remates do Jogador";
+  if (/shot.*on target|shots? on target/i.test(m)) return "Remates à Baliza";
+  if (/\bshots?\b/i.test(m)) return "Total de Remates";
+  if (/\bpass(es)?\b/i.test(m)) return "Passes";
+  if (/\bassists?\b/i.test(m)) return "Assistências";
+  if (/\bfouls?\b/i.test(m)) return "Faltas";
+  if (/offside/i.test(m)) return "Fora de Jogo";
+  if (/goal.?minute|time of.*goal/i.test(m)) return "Minuto do Golo";
+
+  if (/player.*booked|booked.*player|to be booked/i.test(m)) return "Jogador a Ser Advertido";
+  if (/corner.*handicap|handicap.*corner/i.test(m)) return "Handicap de Cantos";
+  const isOverUnder = /over\/?under|total (goals|points|games|runs|corners|cards)/i.test(m);
+  if (/corner/i.test(m)) return isOverUnder ? "Total de Cantos" : "Cantos";
+  if (/\bcard|booking/i.test(m)) return "Total de Cartões";
+
+  if (/correct score|exact score/i.test(m)) return "Resultado Exato";
+  if (/both teams to score|\bbtts\b|both to score/i.test(m)) return "Ambas as Equipas Marcam";
+  if (/tie.?break/i.test(m)) return "Haverá Tie-Break";
+  if (/winning margin|margin of victory/i.test(m)) return "Margem de Vitória";
+  if (/team total/i.test(m)) return "Total da Equipa";
+  if (/set\s*\d*\s*winner|to win (the )?set/i.test(m)) return "Vencedor do Set";
+  if (/handicap|spread|asian/i.test(m)) return "Handicap";
+  if (isOverUnder) {
+    const noun = OVER_UNDER_NOUN[sport] || "Golos";
+    const numMatch = m.match(/(\d+(?:\.\d+)?)/);
+    return numMatch ? `Mais/Menos de ${numMatch[1]} ${noun}` : `Mais/Menos de ${noun}`;
+  }
+  if (/draw no bet/i.test(m)) return "Empate Anula Aposta";
+  if (/double chance/i.test(m)) return "Dupla Hipótese";
+  if (/match odds|\b1x2\b|to win|winner|money.?line|full time result|3.?way|match winner/i.test(m)) return "Resultado Final";
+  return null;
+}
+
+function translateMarketDisplayName(rawName, sport) {
+  if (!rawName) return rawName;
+  const base = translateMarketBaseName(rawName, sport);
+  if (!base) return rawName; // não reconhecido — mantém o nome original em inglês
+  return base + extractPeriodSuffix(rawName);
+}
+
+const SELECTION_WORD_MAP = {
+  home: "Casa",
+  away: "Fora",
+  draw: "Empate",
+  tie: "Empate",
+  yes: "Sim",
+  no: "Não",
+  odd: "Ímpar",
+  even: "Par",
+  "draw no bet": "Empate Anula Aposta",
+};
+
+// Rótulos de seleção também vêm prontos a mostrar da Pulsescore — mas ao contrário do nome do
+// mercado, muitos são NOMES PRÓPRIOS (equipa, jogador) ou um placar, que nunca se traduzem; só se
+// reconhece vocabulário fixo (Casa/Fora/Empate/Sim/Não/Mais de/Menos de/Ímpar/Par) e o padrão
+// "Home -1.5"/"Away +1.5" de handicap. Tudo o resto passa exatamente como veio.
+function translateSelectionLabel(rawLabel) {
+  if (!rawLabel) return rawLabel;
+  const trimmed = String(rawLabel).trim();
+  const lower = trimmed.toLowerCase();
+  if (SELECTION_WORD_MAP[lower]) return SELECTION_WORD_MAP[lower];
+  const overUnderMatch = trimmed.match(/^(over|under)\s*([\d.]+)?$/i);
+  if (overUnderMatch) {
+    const word = overUnderMatch[1].toLowerCase() === "over" ? "Mais de" : "Menos de";
+    return overUnderMatch[2] ? `${word} ${overUnderMatch[2]}` : word;
+  }
+  const handicapMatch = trimmed.match(/^(home|away)\s*([+-]?[\d.]+)$/i);
+  if (handicapMatch) {
+    const side = handicapMatch[1].toLowerCase() === "home" ? "Casa" : "Fora";
+    return `${side} ${handicapMatch[2]}`;
+  }
+  return trimmed;
+}
+
 // Pedido explícito do utilizador: um chip "Bet Builder" entre "Todos" e "1º Tempo" (só futebol —
 // as suas 5 categorias, ver BET_BUILDER_CATEGORIES abaixo, são todas conceitos de futebol). Não
 // é um filtro como os outros (não estreita a lista de mercados existente) — troca a página inteira
@@ -2254,13 +2401,15 @@ function renderMarketGroups(e) {
       // mostra-se um único botão a cobrir a linha toda. O rótulo do mercado (group.market) pode
       // vir "Match Odds", "Grande Chance" ou até "Revisão VAR" consoante o bookmaker/desporto —
       // por isso a decisão compara o próprio grupo, não o texto do nome.
+      const marketNamePt = translateMarketDisplayName(group.market, e.sport);
       if (group === primaryMarket && !group.isActive) {
-        return `<div class="market-group"><h4>${group.market}</h4><div class="selection-row">
+        return `<div class="market-group"><h4>${marketNamePt}</h4><div class="selection-row">
           <div class="selection-btn suspended"><span class="sel-odd">Suspenso</span></div>
         </div></div>`;
       }
       const rows = Object.entries(group.selections)
         .map(([label, sel]) => {
+          const labelPt = translateSelectionLabel(label);
           // Seleção suspensa pelo bookmaker (isActive:false — ex: durante uma revisão VAR ou
           // logo após um penálti/cartão, ver LiveSelection em types.ts): mostra-se visível mas
           // sem onclick, em vez de desaparecer ou continuar clicável com uma odd desatualizada.
@@ -2268,7 +2417,7 @@ function renderMarketGroups(e) {
           // antigo em cache) — nunca deixar clicar numa aposta sem preço válido.
           if (!sel.isActive || !Number.isFinite(sel.odd)) {
             return `<div class="selection-btn suspended">
-              <span class="sel-label">${label}</span><span class="sel-odd">Suspenso</span>
+              <span class="sel-label">${labelPt}</span><span class="sel-odd">Suspenso</span>
             </div>`;
           }
           const key = `${e.id}|${group.market}|${label}`;
@@ -2278,12 +2427,12 @@ function renderMarketGroups(e) {
           // ao ponto de justificar o indicador, e não foi pedido para essa página.
           const arrow = isLive ? oddsArrowHtml(key, sel.odd) : "";
           return `<div class="selection-btn ${picked ? "picked" : ""}" onclick='toggleSelection(${JSON.stringify(key)}, ${JSON.stringify(selection)})'>
-            <span class="sel-label">${label}</span><span class="sel-odd">${sel.odd.toFixed(2)}${arrow}</span>
+            <span class="sel-label">${labelPt}</span><span class="sel-odd">${sel.odd.toFixed(2)}${arrow}</span>
           </div>`;
         })
         .join("");
       const suspendedBadge = !group.isActive ? '<span class="market-suspended-badge">Suspenso</span>' : "";
-      return `<div class="market-group"><h4>${group.market}${suspendedBadge}</h4><div class="selection-row">${rows}</div></div>`;
+      return `<div class="market-group"><h4>${marketNamePt}${suspendedBadge}</h4><div class="selection-row">${rows}</div></div>`;
     })
     .join("");
 }
@@ -2376,7 +2525,7 @@ function renderBetBuilder(e) {
       .map(({ market, label, odd }) => {
         const isPicked = picked && picked.market === market && picked.selection === label;
         return `<div class="selection-btn ${isPicked ? "picked" : ""}" onclick='toggleBetBuilderPick(${JSON.stringify(cat.key)}, ${JSON.stringify(market)}, ${JSON.stringify(label)}, ${odd})'>
-          <span class="sel-label">${label}</span><span class="sel-odd">${odd.toFixed(2)}</span>
+          <span class="sel-label">${translateSelectionLabel(label)}</span><span class="sel-odd">${odd.toFixed(2)}</span>
         </div>`;
       })
       .join("");
@@ -2534,7 +2683,7 @@ function renderBetslipPanel() {
       <div class="bs-row">
         <div class="bs-row-info">
           <div class="bs-row-teams">${s.home || ""}${s.away ? " vs " + s.away : ""}</div>
-          <div class="bs-row-sel">${s.market}: <b>${s.selection}</b> @ ${Number(s.odd).toFixed(2)}</div>
+          <div class="bs-row-sel">${translateMarketDisplayName(s.market, s.sport)}: <b>${translateSelectionLabel(s.selection)}</b> @ ${Number(s.odd).toFixed(2)}</div>
         </div>
         <div class="bs-row-actions">
           ${
