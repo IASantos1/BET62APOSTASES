@@ -77,6 +77,10 @@ tr:last-child td{border-bottom:none}
 .badge.bad{background:rgba(230,48,39,.15);color:var(--red)}
 .badge.muted{background:var(--surface2);color:var(--muted)}
 .mono{font-variant-numeric:tabular-nums;font-family:ui-monospace,monospace;font-size:.8rem}
+.review-bet{margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border)}
+.review-bet:last-child{margin-bottom:0;padding-bottom:0;border-bottom:none}
+.review-bet-head{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:10px;font-weight:600}
+tr.row-needs-review{background:rgba(245,166,35,.08)}
 .pager{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:12px;font-size:.8rem;color:var(--muted)}
 .empty-note{color:var(--muted);font-size:.85rem;padding:16px;text-align:center}
 .detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:16px}
@@ -118,6 +122,7 @@ tr:last-child td{border-bottom:none}
     <div class="admin-nav-item" data-section="users" onclick="AdminApp.showSection('users')">👤 Utilizadores</div>
     <div class="admin-nav-item" data-section="kyc" onclick="AdminApp.showSection('kyc')">🪪 KYC <span class="admin-nav-badge hidden" id="badge-kyc">0</span></div>
     <div class="admin-nav-item" data-section="withdrawals" onclick="AdminApp.showSection('withdrawals')">💸 Levantamentos <span class="admin-nav-badge hidden" id="badge-withdrawals">0</span></div>
+    <div class="admin-nav-item" data-section="bets-review" onclick="AdminApp.showSection('bets-review')">🎫 Apostas em Revisão <span class="admin-nav-badge hidden" id="badge-bets-review">0</span></div>
     <div class="admin-nav-item" data-section="deposits" onclick="AdminApp.showSection('deposits')">💰 Depósitos</div>
     <div class="admin-nav-item" data-section="casino" onclick="AdminApp.showSection('casino')">🎰 Cassino</div>
     <div class="admin-nav-item" data-section="responsible" onclick="AdminApp.showSection('responsible')">🛡️ Jogo Responsável</div>
@@ -139,6 +144,7 @@ tr:last-child td{border-bottom:none}
       <section id="section-users" class="hidden"></section>
       <section id="section-kyc" class="hidden"></section>
       <section id="section-withdrawals" class="hidden"></section>
+      <section id="section-bets-review" class="hidden"></section>
       <section id="section-deposits" class="hidden"></section>
       <section id="section-casino" class="hidden"></section>
       <section id="section-responsible" class="hidden"></section>

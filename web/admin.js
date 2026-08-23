@@ -108,6 +108,10 @@ const AdminApi = (() => {
 
     listDeposits: (qs) => request(`/admin/deposits?${qs}`),
 
+    listBetsNeedingReview: () => request("/admin/bets/needs-review"),
+    settleBetSelection: (id, outcome, reviewNotes) =>
+      request(`/admin/bets/selections/${id}/settle`, { method: "POST", body: { outcome, reviewNotes } }),
+
     listCasinoGames: (qs) => request(`/admin/casino/games?${qs}`),
     syncCasinoGames: () => request("/admin/casino/games/sync", { method: "POST" }),
     getCasinoAgentInfo: () => request("/admin/casino/agent-info"),
@@ -214,6 +218,7 @@ const AdminApp = (() => {
     mappingTeams: { page: 1, limit: 20, total: 0, search: "", maxConfidence: "" },
     mappingLeagues: { page: 1, limit: 20, total: 0, search: "", maxConfidence: "" },
     mappingFixtures: { page: 1, limit: 20, total: 0, maxConfidence: "", unlinkedOnly: false },
+    betsReview: [],
   };
 
   // --- Auth ---
@@ -282,6 +287,10 @@ const AdminApp = (() => {
       const fx = await AdminApi.listFixtureMappings("maxConfidence=69&limit=1");
       setBadge("badge-mapping", fx.total);
     } catch {}
+    try {
+      const br = await AdminApi.listBetsNeedingReview();
+      setBadge("badge-bets-review", br.bets.length);
+    } catch {}
   }
   function setBadge(id, count) {
     const el = document.getElementById(id);
@@ -301,7 +310,7 @@ const AdminApp = (() => {
   const SECTION_TITLES = {
     dashboard: "Dashboard", users: "Utilizadores", kyc: "Verificação KYC", withdrawals: "Levantamentos",
     deposits: "Depósitos", casino: "Cassino", responsible: "Jogo Responsável", mapping: "Mapeamento Pulsescore ↔ API-Football",
-    audit: "Audit Log", settings: "Definições",
+    "bets-review": "Apostas em Revisão", audit: "Audit Log", settings: "Definições",
   };
   function showSection(name) {
     state.section = name;
@@ -318,6 +327,7 @@ const AdminApp = (() => {
       casino: () => loadCasino(1),
       responsible: loadResponsible,
       mapping: () => loadMappingTeams(1),
+      "bets-review": loadBetsReview,
       audit: () => loadAudit(true),
       settings: loadSettings,
     };
@@ -732,6 +742,84 @@ const AdminApp = (() => {
         refreshBadges();
       } catch (err) {
         toast(err.message || "Erro ao rejeitar levantamento", "error");
+      }
+    });
+  }
+
+  // --- Apostas em revisão manual (mercados que o motor automático não sabe resolver sozinho —
+  // ver server/src/modules/betting/settlementRules.ts::classifyMarket). Cada Bet listado aqui já
+  // terminou (todas as seleções decidiram-se), mas pelo menos uma delas caiu em UNRESOLVABLE —
+  // fica visível com o mercado/seleção BRUTOS (tal como a Pulsescore mandou, sem tradução) para o
+  // admin decidir o resultado real e o motor de liquidação aplicar o mesmo cálculo de payout que
+  // aplicaria sozinho assim que TODAS as seleções do Bet estiverem decididas. ---
+
+  async function loadBetsReview() {
+    const data = await AdminApi.listBetsNeedingReview();
+    state.betsReview = data.bets;
+    renderBetsReview();
+  }
+
+  const SEL_STATUS_LABEL = { WON: "Ganhou", LOST: "Perdeu", VOID: "Anulada", NEEDS_REVIEW: "Por decidir", PENDING: "Pendente" };
+
+  function renderBetsReview() {
+    const el = document.getElementById("section-bets-review");
+    const bets = state.betsReview;
+    el.innerHTML = `
+      <div class="panel">
+        ${
+          bets.length
+            ? bets
+                .map(
+                  (b) => `
+          <div class="review-bet">
+            <div class="review-bet-head">
+              <span>${esc(b.user.username)} <span style="color:var(--muted);font-size:.78rem">(${esc(b.user.email)})</span></span>
+              <span class="mono">${b.type === "MULTIPLA" ? "Múltipla" : b.type === "BET_BUILDER" ? "Bet Builder" : "Simples"} · ${fmtMoney(b.stake)} · ${fmtDate(b.createdAt)}</span>
+            </div>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Jogo</th><th>Desporto</th><th>Mercado (bruto)</th><th>Seleção (bruta)</th><th>Odd</th><th>Placar final</th><th>Estado</th><th></th></tr></thead>
+              <tbody>
+                ${b.selections
+                  .map(
+                    (s) => `<tr class="${s.status === "NEEDS_REVIEW" ? "row-needs-review" : ""}">
+                    <td>${esc(s.home)} vs ${esc(s.away)}<br><span style="color:var(--muted);font-size:.76rem">${esc(s.league)}</span></td>
+                    <td class="mono">${esc(s.sport)}</td>
+                    <td class="mono">${esc(s.market)}</td>
+                    <td class="mono">${esc(s.selection)}</td>
+                    <td class="mono">${Number(s.odd).toFixed(2)}</td>
+                    <td class="mono">${s.finalHomeScore !== null && s.finalHomeScore !== undefined ? `${s.finalHomeScore} - ${s.finalAwayScore}` : "—"}</td>
+                    <td>${SEL_STATUS_LABEL[s.status] || s.status}</td>
+                    <td>${
+                      s.status === "NEEDS_REVIEW"
+                        ? `<div class="btn-row">
+                            <button class="btn small green" onclick='AdminApp.settleReviewSelection(${JSON.stringify(s.id)}, "WON", this)'>Ganhou</button>
+                            <button class="btn small outline" onclick='AdminApp.settleReviewSelection(${JSON.stringify(s.id)}, "LOST", this)'>Perdeu</button>
+                            <button class="btn small outline" onclick='AdminApp.settleReviewSelection(${JSON.stringify(s.id)}, "VOID", this)'>Anular</button>
+                           </div>`
+                        : ""
+                    }</td>
+                  </tr>`
+                  )
+                  .join("")}
+              </tbody>
+            </table></div>
+          </div>`
+                )
+                .join("")
+            : `<div class="empty-note">Sem apostas em revisão — o motor automático resolveu tudo sozinho.</div>`
+        }
+      </div>`;
+  }
+
+  async function settleReviewSelection(id, outcome, btn) {
+    await withBusyButton(btn, async () => {
+      try {
+        await AdminApi.settleBetSelection(id, outcome);
+        toast("Seleção decidida");
+        await loadBetsReview();
+        refreshBadges();
+      } catch (err) {
+        toast(err.message || "Erro ao decidir seleção", "error");
       }
     });
   }
@@ -1346,6 +1434,7 @@ const AdminApp = (() => {
     loadUsers, openUserDetail, applyUserStatus, applyUserRole, openAdjustBalance, submitAdjustBalance, provisionCasino,
     loadKyc, approveKyc, openRejectKyc, submitRejectKyc,
     loadWithdrawals, approveWithdrawal, openRejectWithdrawal, submitRejectWithdrawal,
+    loadBetsReview, settleReviewSelection,
     loadDeposits,
     loadCasino, syncCasino, showCasinoAgentInfo,
     setMappingTab, loadMappingTeams, openCorrectTeam, submitCorrectTeam,
