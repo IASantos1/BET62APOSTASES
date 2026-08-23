@@ -98,6 +98,7 @@ model KycSubmission {
   reviewedByUserId String?
   reviewedAt       DateTime?
   rejectionReason  String?
+  reviewNotes      String?
   createdAt        DateTime   @default(now())
 
   @@index([userId])
@@ -124,9 +125,21 @@ model KycDocument {
   storagePath String // caminho relativo dentro da pasta de uploads
   mimeType    String
   sizeBytes   Int
+  sha256      String? // hash integridade (para auditoria pós-upload, comparação contra duplas submissões)
+  status      KycDocStatus @default(PENDING)
+  reviewNotes String?
+  reviewedByUserId String?
+  reviewedAt  DateTime?
   uploadedAt  DateTime        @default(now())
 
   @@index([userId])
+  @@index([status])
+}
+
+enum KycDocStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 // ============ RESPONSIBLE GAMBLING ============
@@ -280,6 +293,9 @@ model BetSelection {
   finalHomeScore Int?
   finalAwayScore Int?
   settledAt      DateTime?
+  reviewNotes      String?
+  reviewedByUserId String?
+  reviewedAt       DateTime?
 
   @@index([betId])
   @@index([eventId])
@@ -373,6 +389,7 @@ model Withdrawal {
   reviewedByUserId String?
   reviewedAt       DateTime?
   rejectionReason  String?
+  reviewNotes      String?
   metadata         Json?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
@@ -486,6 +503,7 @@ model FixtureMapping {
   leagueMapping        LeagueMapping?  @relation(fields: [leagueMappingId], references: [id], onDelete: SetNull)
   kickoffPulsescore    DateTime?
   kickoffApiFootball   DateTime?
+  invertedHomeAway     Boolean?        // true = a API-Football tem casa/fora TROCADOS em relação à Pulsescore (quando fixtureMatch.invertedHomeAway === true)
   confidence           Int
   mappingMethod        MappingMethod
   verified             Boolean         @default(false)
@@ -495,6 +513,7 @@ model FixtureMapping {
 
   @@index([apiFootballFixtureId])
   @@index([confidence])
+  @@index([invertedHomeAway])
 }
 
 // Dicionário de aliases — permite ensinar o sistema a reconhecer "Man Utd" == "Manchester
@@ -547,11 +566,18 @@ model CasinoGame {
 // "account" é o identificador enviado nesse pedido (hoje: user.publicId) e que o provedor
 // devolve depois nos comandos "authenticate"/"balance" do callback.
 model CasinoAccount {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  account   String   @unique
-  createdAt DateTime @default(now())
+  id               String   @id @default(uuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account          String   @unique
+  // user_code que o provedor devolve em POST /v4/user/create (resposta de sucesso) — necessário
+  // para todos os endpoints user-specific: game-url (launch), user/info, freeround, statistics
+  // etc. null = createCasinoUser chamou sem erro mas a forma de resposta ainda não foi
+  // parseada (próximo deploy atualiza o parser e um novo provision tenta de novo).
+  providerUserCode Int?
+  createdAt        DateTime @default(now())
+
+  @@index([providerUserCode])
 }
 
 // Um registo por trans_guid recebido no callback (comandos bet/win/cancel) — chave de

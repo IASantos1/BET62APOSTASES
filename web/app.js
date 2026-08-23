@@ -750,8 +750,124 @@ function casinoPlayGame(gameCode) {
     return;
   }
   const g = casinoGamesByCode.get(gameCode);
-  const name = g ? casinoGameTitle(g) : "este jogo";
-  alert(`🎰 ${name}\n\nA preparar a sua sessão de jogo — disponível muito em breve.`);
+  const name = g ? casinoGameTitle(g) : "Jogo";
+  const img = g ? (g.gameImage || g.gameImageNarrow || "") : "";
+
+  openCasinoLoader(name, img, "A preparar a sua sessão de jogo…", "A ligar ao provedor Gold Palace");
+
+  const state = { cancelled: false };
+  document.getElementById("cg-frame").onload = () => {
+    if (!state.cancelled) hideCasinoLoader();
+  };
+  // Ligar evento close do modal para marcar cancelled
+  const _oldClose = closeCasinoGame;
+  const wrappedClose = () => {
+    state.cancelled = true;
+    _oldClose();
+  };
+  // (o botão Fechar e ESC ainda chamam closeCasinoGame global — marcamos cancelled via
+  // MutationObserver no modal hidden. Mais simples: sobrepor via oncancel listener inline:)
+  const modal = document.getElementById("casino-game-modal");
+  const obs = new MutationObserver(() => {
+    if (modal.classList.contains("hidden")) state.cancelled = true;
+  });
+  obs.observe(modal, { attributes: true, attributeFilter: ["class"] });
+
+  Bet62Api.provisionCasinoAccount()
+    .then((prov) => {
+      if (state.cancelled) return;
+      if (prov?.needsRetry) {
+        setCasinoLoader(
+          "Conta de cassino a ser ativada…",
+          "Tente novamente em 30 segundos, ou entre em contacto com o suporte se o problema persistir."
+        );
+        setTimeout(() => {
+          if (state.cancelled) return;
+          doLaunchCasino(gameCode, name, state);
+        }, 2000);
+        return;
+      }
+      doLaunchCasino(gameCode, name, state);
+    })
+    .catch((err) => {
+      if (state.cancelled) return;
+      const msg = err?.message || "Erro ao preparar sessão de jogo";
+      const code = err?.code || "";
+      let sub = "Por favor tente novamente mais tarde.";
+      if (code === "CASINO_ACCOUNT_PENDING") sub = "Tente novamente em 30 segundos.";
+      else if (err?.status === 403) sub = "Complete a validação de identidade (KYC) para poder jogar.";
+      else if (err?.status === 401) { openAuth("login"); closeCasinoGame(); return; }
+      setCasinoLoader(msg, sub, true);
+    });
+}
+
+function openCasinoLoader(name, img, text, sub) {
+  const modal = document.getElementById("casino-game-modal");
+  const cgName = document.getElementById("cg-name");
+  const cgImg = document.getElementById("cg-img");
+  const cgFrame = document.getElementById("cg-frame");
+  // Limpar iframe anterior (segurança: não deixa jogo anterior correr em background)
+  try { cgFrame.removeAttribute("src"); cgFrame.src = "about:blank"; } catch {}
+  cgName.textContent = name || "Jogo";
+  if (cgImg) { if (img) cgImg.src = img; else cgImg.style.visibility = "hidden"; }
+  setCasinoLoader(text, sub);
+  showCasinoLoader();
+  modal.classList.remove("hidden");
+  // Fechar com ESC
+  document.addEventListener("keydown", casinoEscHandler);
+}
+
+function casinoEscHandler(e) {
+  if (e.key === "Escape") closeCasinoGame();
+}
+
+function showCasinoLoader() {
+  document.getElementById("cg-loader").style.display = "flex";
+}
+function hideCasinoLoader() {
+  document.getElementById("cg-loader").style.display = "none";
+}
+function setCasinoLoader(text, sub, isError) {
+  const t = document.getElementById("cg-loader-text");
+  const s = document.getElementById("cg-loader-sub");
+  if (t) t.textContent = text || "";
+  if (s) s.textContent = sub || "";
+  if (isError) {
+    const sp = document.querySelector(".casino-game-spinner");
+    if (sp) sp.style.animation = "none";
+  }
+}
+
+function doLaunchCasino(gameCode, name, state) {
+  Bet62Api.launchCasinoGame(gameCode)
+    .then((res) => {
+      if (state.cancelled) return;
+      const url = res?.gameUrl;
+      if (!url) {
+        setCasinoLoader("URL de lançamento inválida", "O provedor não devolveu um link válido para este jogo.", true);
+        return;
+      }
+      setCasinoLoader("A abrir jogo…", "A carregar " + (res?.game?.gameName || name));
+      const frame = document.getElementById("cg-frame");
+      frame.src = url;
+    })
+    .catch((err) => {
+      if (state.cancelled) return;
+      const msg = err?.message || "Erro ao abrir jogo";
+      let sub = "Por favor tente novamente mais tarde.";
+      if (err?.status === 403) sub = "Complete a validação de identidade (KYC) para poder jogar.";
+      else if (err?.status === 401) { openAuth("login"); closeCasinoGame(); return; }
+      setCasinoLoader(msg, sub, true);
+    });
+}
+
+function closeCasinoGame() {
+  const modal = document.getElementById("casino-game-modal");
+  const cgFrame = document.getElementById("cg-frame");
+  // Parar jogo: remover src + about:blank (impede audio/jogo continuar a correr em background)
+  try { cgFrame.removeAttribute("src"); cgFrame.src = "about:blank"; } catch {}
+  modal.classList.add("hidden");
+  document.removeEventListener("keydown", casinoEscHandler);
 }
 
 // ====================== AUTH ======================

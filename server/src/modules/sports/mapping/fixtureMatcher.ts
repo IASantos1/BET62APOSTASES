@@ -16,6 +16,7 @@ export interface FixtureMatchResult {
   awayApiFootballTeamId: number | null;
   apiFootballLeagueId: number | null;
   season: number | null;
+  invertedHomeAway: boolean | null; // true = AF tem casa/fora TROCADOS relativamente à Pulsescore (trocar estatísticas)
   confidence: number;
   mappingMethod: MappingMethod;
   verified: boolean;
@@ -63,7 +64,7 @@ export async function findFixtureMapping(event: LiveEvent): Promise<FixtureMatch
       { eventId: event.id, homeFailed: !home.id, awayFailed: !away.id, leagueFailed: !league.id },
       "[MATCHING] fixture: pesquisa de equipa/liga falhou transitoriamente — não fica em cache, tenta-se de novo no próximo pedido"
     );
-    return { apiFootballFixtureId: null, homeApiFootballTeamId: null, awayApiFootballTeamId: null, apiFootballLeagueId: null, season: null, confidence: 0, mappingMethod: "SIMILARITY", verified: false };
+    return { apiFootballFixtureId: null, homeApiFootballTeamId: null, awayApiFootballTeamId: null, apiFootballLeagueId: null, season: null, confidence: 0, mappingMethod: "SIMILARITY", verified: false, invertedHomeAway: null };
   }
 
   let fixtureMatch: FixtureIdMatch | null = null;
@@ -126,6 +127,7 @@ export async function findFixtureMapping(event: LiveEvent): Promise<FixtureMatch
       leagueMappingId: league.id || null,
       kickoffPulsescore: event.startTime ? new Date(event.startTime) : null,
       kickoffApiFootball: fixtureMatch ? new Date(fixtureMatch.kickoffISO) : null,
+      invertedHomeAway: fixtureMatch?.invertedHomeAway ?? null,
       confidence,
       mappingMethod: method,
       verified: false,
@@ -145,6 +147,7 @@ function toResult(row: FixtureRow): FixtureMatchResult {
     awayApiFootballTeamId: row.awayTeamMapping?.apiFootballTeamId ?? null,
     apiFootballLeagueId: row.leagueMapping?.apiFootballLeagueId ?? null,
     season: row.leagueMapping?.season ?? null,
+    invertedHomeAway: row.invertedHomeAway ?? null,
     confidence: row.confidence,
     mappingMethod: row.mappingMethod,
     verified: row.verified,

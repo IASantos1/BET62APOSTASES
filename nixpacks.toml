@@ -1,0 +1,22 @@
+version = 1
+
+[phases.setup]
+nixPkgs = ["nodejs_24"]
+
+[phases.install]
+cmds = [
+  "echo '--- Railway Build: Node ---' && node -v && npm -v && corepack --version",
+  "echo '--- Railway Build: Ativar corepack + pnpm@9 oficial ---' && corepack enable && corepack prepare pnpm@^9.0.0 --activate",
+  "echo 'pnpm version:' && pnpm -v",
+  "pnpm config set store-dir /app/.pnpm-store",
+  "echo '--- Railway Build: pnpm install ---' && pnpm install --frozen-lockfile=false --prefer-offline",
+  "cd server && echo '--- Railway Build: prisma generate ---' && pnpm prisma generate"
+]
+
+[phases.build]
+cmds = [
+  "cd server && echo '--- Railway Build: tsc build (pnpm run build) ---' && pnpm run build"
+]
+
+[start]
+cmd = "cd server && echo '--- Railway Start: prisma migrate deploy ---' && pnpm prisma migrate deploy && echo '--- Railway Start: node dist/server.js ---' && node dist/server.js"

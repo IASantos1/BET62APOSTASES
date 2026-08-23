@@ -3,7 +3,12 @@ import WebSocket from "ws";
 import { env } from "../../../config/env";
 import { logger } from "../../../lib/logger";
 import type { LiveEvent, LiveOdds, LiveSelection, Sport } from "../types";
-import { SPORT_SLUGS, bookmakerFor, orderMarketsWithPrimaryFirst, sortNumericMarketFamilies, fetchLiveSportsWithEvents } from "./client";
+import { SPORT_SLUGS, bookmakerFor, orderMarketsWithPrimaryFirst, sortNumericMarketFamilies, fetchLiveSportsUnionAllBookmakers } from "./client";
+import { acquireDistributedLock, refreshDistributedLock } from "../../../lib/redis";
+
+const LOCK_KEY = "bet62:locks:pulsescore-ws";
+const LOCK_TTL_MS = 45_000;
+const LOCK_REFRESH_MS = 30_000;
 
 /**
  * Real-time WebSocket feed — confirmed via the official Pulsescore documentation (not
@@ -182,9 +187,34 @@ class PulsescoreWsManager extends EventEmitter {
   private reconnectTimers = new Map<Sport, NodeJS.Timeout>();
   private planTooLow = false;
   private maxConnections = 3; // matches the MAX plan (149€/mo) mentioned when this was set up
+  private isLeader = false;
+  private leaderRefreshTimer?: NodeJS.Timeout;
 
-  start() {
+  async start() {
     if (!env.PULSESCORE_API_KEY) return;
+    try {
+      this.isLeader = await acquireDistributedLock(LOCK_KEY, LOCK_TTL_MS);
+    } catch (err) {
+      logger.warn({ err: String(err).slice(0, 200) }, "[PULSESCORE WS] falhou aquisição de lock distribuído; a usar só REST/polling nesta réplica");
+      this.isLeader = false;
+    }
+    if (!this.isLeader) {
+      logger.info("[PULSESCORE WS] outra réplica é o líder upstream; esta instância só consome Pub/Sub Redis + REST/polling");
+      return;
+    }
+    this.leaderRefreshTimer = setInterval(async () => {
+      try {
+        const renewed = await refreshDistributedLock(LOCK_KEY, LOCK_TTL_MS);
+        if (!renewed) {
+          this.isLeader = false;
+          logger.warn("[PULSESCORE WS] perdemos o lock de líder upstream; a desligar conexões WS nesta réplica");
+          for (const sport of Array.from(this.sockets.keys())) this.disconnect(sport);
+          if (this.leaderRefreshTimer) clearInterval(this.leaderRefreshTimer);
+        }
+      } catch (err) {
+        logger.warn({ err: String(err).slice(0, 200) }, "[PULSESCORE WS] falhou renovação do lock líder");
+      }
+    }, LOCK_REFRESH_MS);
     this.refreshTargets();
     setInterval(() => this.refreshTargets(), REFRESH_INTERVAL_MS);
   }
@@ -194,22 +224,18 @@ class PulsescoreWsManager extends EventEmitter {
   }
 
   private async refreshTargets() {
-    if (this.planTooLow) return;
+    if (!this.isLeader || this.planTooLow) return;
     let targets: Sport[];
     try {
-      const liveSports = await fetchLiveSportsWithEvents();
-      // formula1 runs under a different bookmaker (unibetau) not covered by the default
-      // bookmaker's /live-events/sports summary, so it's never in liveSports — check it anyway.
-      const withFormula1: Sport[] = liveSports.filter((s) => s !== "formula1");
-      withFormula1.push("formula1");
-      targets = withFormula1.slice(0, this.maxConnections);
+      const liveSports = await fetchLiveSportsUnionAllBookmakers();
+      targets = liveSports.slice(0, this.maxConnections);
     } catch (err) {
       logger.warn({ err }, "Pulsescore WS: falha ao decidir a que desportos ligar, a manter ligações atuais");
       return;
     }
 
     for (const sport of targets) {
-      if (!this.sockets.has(sport)) this.connect(sport);
+      if (!this.sockets.has(sport) && this.isLeader) this.connect(sport);
     }
     for (const sport of this.sockets.keys()) {
       if (!targets.includes(sport)) this.disconnect(sport);

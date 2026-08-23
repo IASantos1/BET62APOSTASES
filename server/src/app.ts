@@ -1,5 +1,6 @@
 import path from "path";
 import express from "express";
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import helmet from "helmet";
 import pinoHttp from "pino-http";
@@ -42,6 +43,7 @@ export function createApp() {
   // helmet (X-Frame-Options, HSTS, noSniff, etc.) continuam ativas.
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
+  app.use(cookieParser());
   app.use(pinoHttp({ logger }));
 
   // Stripe webhook needs the raw body for signature verification — must be registered

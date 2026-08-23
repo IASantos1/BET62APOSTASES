@@ -187,7 +187,8 @@ function bookmakerPathSegment(bookmaker: string): string {
 }
 
 interface PulsescoreSelection {
-  canonicalOutcome: string;
+  canonicalOutcome?: string; // campo "name" docs Pulsescore; vindo como canonicalOutcome em amostras reais — defensivo ambos
+  name?: string;             // campo "name" oficial docs Pulsescore (fallback se existir)
   rawName: string;
   odds: number;
   isActive: boolean;
@@ -379,7 +380,7 @@ export async function fetchEventsFlat(sport: Sport, opts: { maxPages?: number; l
   let page = 1;
   while (page <= maxPages) {
     const data = await fetchEventsFlatPage(sport, page, limit, opts.bookmaker);
-    events.push(...extractEvents(data).map((evt) => normalizeEvent(evt, sport)));
+    events.push(...extractEvents(data).map((evt) => normalizeEvent(evt, sport, opts.bookmaker)));
     if (!data.hasNextPage) break;
     page += 1;
   }
@@ -428,18 +429,64 @@ interface PulsescoreLiveSportsSummary {
  * Returns only the sports we model here (via SLUG_TO_SPORT) that currently have at least one
  * live event, so pollOnce() in hybridService.ts doesn't waste a request per sport on ones with
  * nothing live right now.
+ *
+ * @param bookmaker Optional — specific bookmaker to query. Defaults to env.PULSESCORE_BOOKMAKER.
+ *   Use this to query the override bookmakers (unibetau for formula1, bet365 for baseball) whose
+ *   live sports summary isn't included in the default bookmaker's response.
+ * @param silent404 If true, return [] instead of throwing when the bookmaker returns 404
+ *   (some bookmaker+sport combinations simply don't exist on the Pulsescore side).
  */
-export async function fetchLiveSportsWithEvents(): Promise<Sport[]> {
+export async function fetchLiveSportsWithEvents(bookmaker?: string, silent404 = false): Promise<Sport[]> {
   assertConfigured();
-  const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(env.PULSESCORE_BOOKMAKER)}/live-events/sports`;
+  const resolvedBookmaker = bookmaker ?? env.PULSESCORE_BOOKMAKER;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(resolvedBookmaker)}/live-events/sports`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
+  if (res.status === 404 && silent404) return [];
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    logger.warn({ status: res.status, body: body.slice(0, 300) }, "Pulsescore: pedido de live-events/sports falhou");
-    throw Errors.internal(`Pulsescore devolveu ${res.status} para live-events/sports`);
+    logger.warn({ status: res.status, bookmaker: resolvedBookmaker, body: body.slice(0, 300) }, "Pulsescore: pedido de live-events/sports falhou");
+    throw Errors.internal(`Pulsescore devolveu ${res.status} para live-events/sports (${resolvedBookmaker})`);
   }
   const data = (await res.json()) as PulsescoreLiveSportsSummary;
   return data.sports.filter((s) => s.eventCount > 0 && SLUG_TO_SPORT[s.name]).map((s) => SLUG_TO_SPORT[s.name]!);
+}
+
+/**
+ * Fetches the union of live sports across ALL configured bookmakers — the default one
+ * (PULSESCORE_BOOKMAKER, usually paddypower) plus every override in SPORT_BOOKMAKER_OVERRIDE
+ * (unibetau for formula1, bet365 for baseball) — deduplicated by sport.
+ *
+ * This replaces the previous approach where formula1 and baseball were hardcoded blindly into
+ * the live set even when those bookmakers had zero live events, wasting REST rate-limit quota
+ * on fetchLiveEvents for empty sports every 25 s.
+ */
+export async function fetchLiveSportsUnionAllBookmakers(): Promise<Sport[]> {
+  const uniqueBookmakers = new Set<string>();
+  uniqueBookmakers.add(env.PULSESCORE_BOOKMAKER);
+  for (const overrideBookmaker of Object.values(SPORT_BOOKMAKER_OVERRIDE)) {
+    if (overrideBookmaker) uniqueBookmakers.add(overrideBookmaker);
+  }
+
+  const results = await Promise.all(
+    Array.from(uniqueBookmakers).map((book) =>
+      fetchLiveSportsWithEvents(book, true).catch((err): Sport[] => {
+        logger.warn({ bookmaker: book, err: String(err).slice(0, 200) }, "Pulsescore: live-events/sports falhou para esta bookmaker, a ignorar");
+        return [];
+      })
+    )
+  );
+
+  const seen = new Set<Sport>();
+  const union: Sport[] = [];
+  for (const sports of results) {
+    for (const s of sports) {
+      if (!seen.has(s)) {
+        seen.add(s);
+        union.push(s);
+      }
+    }
+  }
+  return union;
 }
 
 async function fetchLiveEventsPage(sport: Sport, page: number, limit: number, bookmaker?: string): Promise<unknown> {
@@ -469,7 +516,7 @@ export async function fetchLiveEvents(sport: Sport, opts: { maxPages?: number; l
   let page = 1;
   while (page <= maxPages) {
     const data = await fetchLiveEventsPage(sport, page, limit, opts.bookmaker);
-    const batch = extractEvents(data).map((evt) => normalizeEvent({ ...evt, live: true }, sport));
+    const batch = extractEvents(data).map((evt) => normalizeEvent({ ...evt, live: true }, sport, opts.bookmaker));
     events.push(...batch);
     const hasNextPage = (data as Record<string, unknown> | null)?.hasNextPage;
     if (!hasNextPage) break;
@@ -484,35 +531,58 @@ export async function fetchLiveEvents(sport: Sport, opts: { maxPages?: number; l
  * the sport-scoped fetchEventById()). Sport is instead read from the event payload's own
  * `sport` field and mapped back through SLUG_TO_SPORT; if that field is missing or unrecognized
  * the event is dropped (logged) rather than guessed at. Response shape NOT confirmed.
+ *
+ * @param eventId The numeric/id string of the live event (the "rawId" after stripping pulsescore: prefix)
+ * @param sport Optional — when the caller already knows the sport, we use bookmakerFor(sport) to
+ *   route the request to the correct override bookmaker (formula1→unibetau, baseball→bet365) instead
+ *   of always using the default PULSESCORE_BOOKMAKER (paddypower), which would 404 for F1/baseball.
  */
-export async function fetchLiveEventById(eventId: string): Promise<LiveEvent | null> {
+export async function fetchLiveEventById(eventId: string, sport?: Sport): Promise<LiveEvent | null> {
   assertConfigured();
-  const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(env.PULSESCORE_BOOKMAKER)}/live-events/events/${encodeURIComponent(eventId)}`;
+  const resolvedBookmaker = sport ? bookmakerFor(sport) : env.PULSESCORE_BOOKMAKER;
+  const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(resolvedBookmaker)}/live-events/events/${encodeURIComponent(eventId)}`;
   const res = await fetch(url, { headers: { accept: "*/*", "x-secret": env.PULSESCORE_API_KEY } });
   if (res.status === 404) return null;
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    logger.warn({ status: res.status, eventId, body: body.slice(0, 300) }, "Pulsescore: pedido de live-events/events/{id} falhou");
-    throw Errors.internal(`Pulsescore devolveu ${res.status} para o evento ao vivo "${eventId}"`);
+    logger.warn({ status: res.status, eventId, bookmaker: resolvedBookmaker, body: body.slice(0, 300) }, "Pulsescore: pedido de live-events/events/{id} falhou");
+    throw Errors.internal(`Pulsescore devolveu ${res.status} para o evento ao vivo "${eventId}" (${resolvedBookmaker})`);
   }
   const raw = extractSingleEvent(await res.json());
   if (!raw) return null;
-  const sport = SLUG_TO_SPORT[raw.sport];
-  if (!sport) {
+  const detectedSport = SLUG_TO_SPORT[raw.sport];
+  if (!detectedSport) {
     logger.warn({ rawSport: raw.sport, eventId }, "Pulsescore: live-events/events devolveu um sport não reconhecido");
     return null;
   }
-  return normalizeEvent({ ...raw, live: true }, sport);
+  return normalizeEvent({ ...raw, live: true }, detectedSport, resolvedBookmaker);
 }
 
 // Mantém as seleções inativas em vez de as descartar (o bookmaker desativa-as temporariamente,
 // ex: durante uma revisão VAR — ver LiveSelection em types.ts) para a UI as mostrar suspensas
 // em vez de as fazer desaparecer.
-function normalizeMarket(m: PulsescoreMarket): LiveOdds {
+// `bookmakerSlug` opcional: quando passado, grava qual casa forneceu este mercado (fonte de
+// auditoria para UI poder exibir "Odds fornecidas por Bet365" quando o mercado vem de fallback
+// cross-bookmaker). Valores possíveis = output de `bookmakerFor()` (paddypower / unibetau / bet365).
+function normalizeMarket(m: PulsescoreMarket, bookmakerSlug?: string): LiveOdds {
   return {
     market: m.rawName,
     isActive: m.isActive,
-    selections: Object.fromEntries(m.selections.map((s) => [s.rawName, { odd: s.odds, isActive: s.isActive }])),
+    canonicalMarket: m.canonicalMarket,
+    period: m.period,
+    line: m.line,
+    sourceBookmaker: bookmakerSlug,
+    selections: Object.fromEntries(
+      m.selections.map((s) => [
+        s.rawName,
+        {
+          odd: s.odds,
+          isActive: s.isActive,
+          canonicalName: s.name ?? s.canonicalOutcome,
+          sourceBookmaker: bookmakerSlug,
+        },
+      ]),
+    ),
   };
 }
 
@@ -679,7 +749,8 @@ function withSyntheticMoneyline(markets: PulsescoreMarket[]): PulsescoreMarket[]
   return markets;
 }
 
-function normalizeEvent(e: PulsescoreEvent, sport: Sport): LiveEvent {
+function normalizeEvent(e: PulsescoreEvent, sport: Sport, bookmakerSlug?: string): LiveEvent {
+  const bm = bookmakerSlug ?? bookmakerFor(sport);
   // Já não filtra mercados inativos aqui — passam para o frontend com isActive:false para
   // aparecerem suspensos (não clicáveis) em vez de desaparecerem silenciosamente.
   const orderedMarkets = sortNumericMarketFamilies(orderMarketsWithPrimaryFirst(withSyntheticMoneyline(e.markets)));
@@ -696,7 +767,7 @@ function normalizeEvent(e: PulsescoreEvent, sport: Sport): LiveEvent {
     ...parsePulsescoreScore(e.score, sport),
     minuteOrPeriod: formatMatchClock(e.matchClock, e.live ? "AO VIVO" : ""),
     status: e.live ? "live" : "scheduled",
-    odds: orderedMarkets.map(normalizeMarket),
+    odds: orderedMarkets.map((m) => normalizeMarket(m, bm)),
     updatedAt: new Date().toISOString(),
     source: "pulsescore",
     startTime: e.startTime,

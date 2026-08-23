@@ -1,6 +1,12 @@
 import { Router } from "express";
 import { asyncHandler } from "../../middleware/errorHandler";
+import { requireAuth, type AuthedRequest } from "../../middleware/auth";
+import { complianceGate } from "../../lib/complianceGate";
 import { listCasinoGames } from "./catalogSync";
+import { provisionCasinoAccount } from "./accountProvisioning";
+import { launchGame } from "./apiClient";
+import { Errors } from "../../lib/errors";
+import { prisma } from "../../lib/prisma";
 
 // Rotas públicas do Cassino (sem requireAuth) — mesmo padrão de sports/routes.ts: dados de
 // navegação/consulta que qualquer visitante deve poder ver antes de entrar na conta, distintas
@@ -43,5 +49,96 @@ router.get(
     res.json(result);
   })
 );
+
+// ========================================================================
+// ROTAS AUTENTICADAS (self-service do jogador)
+// Exigem: sessão válida + compliance (KYC aprovado, sem self-exclusion ativa)
+// ========================================================================
+const authedRouter = Router();
+authedRouter.use(requireAuth);
+// Cassino é atividade de jogo a dinheiro real — KYC e self-exclusion obrigatórios por
+// regulamento SRIJ/SGAJ quando COMPLIANCE_KYC_REQUIRED está on (default).
+authedRouter.use(complianceGate({ requireKyc: true, requireNotSelfExcluded: true }));
+
+// Garante que a conta do jogador existe tanto localmente (CasinoAccount) como no
+// provedor Gold Palace (POST /v4/user/create) e devolve o estado atual. Idempotente:
+// se já está tudo criado, devolve instantaneamente sem chamar o provedor de novo.
+authedRouter.post(
+  "/account/provision",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const result = await provisionCasinoAccount(req.user!.id);
+    res.json({
+      id: result.id,
+      userId: result.userId,
+      account: result.account,
+      providerUserCode: result.providerUserCode,
+      createdAt: result.createdAt,
+      justCreated: result.justCreated,
+      userCodeExtracted: result.userCodeExtracted,
+      needsRetry: result.providerUserCode === null,
+    });
+  })
+);
+
+// Lança um jogo real:
+//   1. Garante que a conta está provisionada (chama provision se não estiver)
+//   2. Busca providerId e gameCode no catálogo local CasinoGame
+//   3. Chama POST /v4/game/game-url no provedor
+//   4. Devolve o game_url para o frontend abrir num iframe white-label
+authedRouter.post(
+  "/games/:gameCode/launch",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const gameCode = req.params.gameCode;
+    if (!gameCode) throw Errors.badRequest("gameCode em falta");
+
+    // Chave única do catálogo é (providerId, gameCode) — um mesmo gameCode pode existir em
+    // múltiplos provedores (raro, mas possível). findFirst por gameCode igual e
+    // launch_enable=true resolve com robustez (catálogo só tem 1 jogo por código).
+    const game = await prisma.casinoGame.findFirst({
+      where: { gameCode, launchEnable: true },
+    });
+    if (!game) throw Errors.notFound("Jogo não encontrado no catálogo");
+
+    const provisioned = await provisionCasinoAccount(req.user!.id);
+    if (provisioned.providerUserCode === null) {
+      throw Errors.badRequest(
+        "A sua conta de cassino ainda está a ser criada no provedor. Tente novamente em 30 segundos. Se o problema persistir, entre em contacto com o suporte.",
+        { code: "CASINO_ACCOUNT_PENDING" }
+      );
+    }
+
+    const host = req.get("host") ?? "localhost";
+    const proto = req.protocol;
+    const returnUrl = `${proto}://${host}/#cassino`;
+
+    const launchResult = await launchGame({
+      userCode: provisioned.providerUserCode,
+      providerId: game.providerId,
+      gameSymbol: game.gameCode,
+      returnUrl,
+      lang: 1,
+    });
+
+    if (!launchResult.gameUrl) {
+      throw Errors.internal(
+        "O provedor de cassino devolveu um URL de lançamento inválido. Tente novamente.",
+        { code: "CASINO_NO_LAUNCH_URL" }
+      );
+    }
+
+    res.json({
+      gameUrl: launchResult.gameUrl,
+      game: {
+        gameCode: game.gameCode,
+        gameName: game.gameName,
+        providerId: game.providerId,
+        gameImage: game.gameImage,
+      },
+      providerUserCode: provisioned.providerUserCode,
+    });
+  })
+);
+
+router.use(authedRouter);
 
 export default router;

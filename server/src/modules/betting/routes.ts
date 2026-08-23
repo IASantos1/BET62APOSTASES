@@ -4,6 +4,8 @@ import { asyncHandler } from "../../middleware/errorHandler";
 import { requireAuth, type AuthedRequest } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
 import { placeBets, listMyBets } from "./service";
+import { userRateLimit } from "../../lib/userRateLimit";
+import { complianceGate } from "../../lib/complianceGate";
 
 const router = Router();
 
@@ -16,9 +18,27 @@ const selectionSchema = z.object({
   stake: z.number().positive().optional(),
 });
 
+const placeBetLimiter = userRateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  redisPrefix: "bets:place",
+  message: {
+    error: {
+      code: "TOO_MANY_REQUESTS",
+      message: "Limite de apostas por minuto atingido. Tente novamente em instantes.",
+    },
+  },
+});
+
 router.post(
   "/",
   requireAuth,
+  placeBetLimiter,
+  complianceGate({
+    requireKyc: true,
+    requireNotSelfExcluded: true,
+    checkWeeklyLossLimit: true,
+  }),
   validateBody(
     z.object({
       mode: z.enum(["SIMPLES", "MULTIPLA", "BET_BUILDER"]),

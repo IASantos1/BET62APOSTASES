@@ -13,10 +13,35 @@ import {
   updatePersonalInfo,
   updatePreferences,
 } from "./service";
-import { getKycDocumentFile, listMyKycDocuments, saveKycDocument, MAX_FILE_SIZE_BYTES } from "./kycDocuments";
+import { getKycDocumentFile, listMyKycDocuments, saveKycDocument, MAX_FILE_SIZE_BYTES, safeContentDisposition } from "./kycDocuments";
+import { userRateLimit } from "../../lib/userRateLimit";
 
 const router = Router();
 router.use(requireAuth);
+
+const writeLimiter = userRateLimit({
+  windowMs: 60 * 1000,
+  limit: 30,
+  redisPrefix: "users:write",
+  message: {
+    error: {
+      code: "TOO_MANY_REQUESTS",
+      message: "Demasiadas operações em pouco tempo. Tente novamente dentro de 1 minuto.",
+    },
+  },
+});
+
+const kycUploadLimiter = userRateLimit({
+  windowMs: 5 * 60 * 1000,
+  limit: 5,
+  redisPrefix: "users:kyc:upload",
+  message: {
+    error: {
+      code: "TOO_MANY_REQUESTS",
+      message: "Limite de uploads de documentos atingido. Tente novamente em 5 minutos.",
+    },
+  },
+});
 
 // Memória, não disco temporário — os ficheiros são pequenos (imagem/PDF de um documento) e
 // saveKycDocument() já escreve o resultado final direto para KYC_UPLOAD_DIR.
@@ -31,6 +56,7 @@ router.get(
 
 router.patch(
   "/me",
+  writeLimiter,
   validateBody(
     z.object({
       name: z.string().min(2).max(120).optional(),
@@ -45,6 +71,7 @@ router.patch(
 
 router.patch(
   "/me/preferences",
+  writeLimiter,
   validateBody(
     z.object({
       locale: z.enum(["pt", "en", "es"]).optional(),
@@ -59,6 +86,7 @@ router.patch(
 
 router.post(
   "/me/kyc",
+  writeLimiter,
   validateBody(
     z.object({
       docType: z.enum(["CITIZEN_CARD", "PASSPORT", "DRIVING_LICENSE"]),
@@ -74,6 +102,7 @@ router.post(
 // docs/KYC_DOCUMENTS.md. `type` vem no corpo multipart junto com o ficheiro em `file`.
 router.post(
   "/me/kyc/documents",
+  kycUploadLimiter,
   kycUpload.single("file"),
   asyncHandler(async (req: AuthedRequest, res) => {
     if (!req.file) throw Errors.badRequest("Nenhum ficheiro enviado");
@@ -97,13 +126,17 @@ router.get(
     if (!req.params.id) throw Errors.badRequest("Parâmetro id em falta");
     const { doc, absolutePath } = await getKycDocumentFile(req.params.id, req.user!.id);
     res.setHeader("Content-Type", doc.mimeType);
-    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(doc.fileName)}"`);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+    res.setHeader("Content-Disposition", safeContentDisposition(doc.fileName));
     res.sendFile(absolutePath);
   })
 );
 
 router.patch(
   "/me/limits",
+  writeLimiter,
   validateBody(
     z.object({
       dailyDepositLimit: z.number().nonnegative().optional(),
@@ -119,6 +152,7 @@ router.patch(
 
 router.post(
   "/me/self-exclusion",
+  writeLimiter,
   validateBody(
     z.object({
       days: z.union([z.literal(1), z.literal(7), z.literal(30), z.literal(90), z.null()]),

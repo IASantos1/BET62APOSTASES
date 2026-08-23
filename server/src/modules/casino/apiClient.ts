@@ -201,6 +201,42 @@ export interface LaunchGameOptions {
   isFinishJackpot?: boolean;
 }
 
+export interface LaunchGameResult {
+  gameUrl: string | null;
+  raw: unknown;
+}
+
+// Tenta extrair o URL de lançamento (game_url) de uma resposta de sucesso de
+// POST /v4/game/game-url. A forma exata de sucesso ainda NÃO foi vista ao vivo (ver
+// docs/CASINO_SLOTS.md), por isso cobre-se todos os shapes plausíveis com base nos
+// padrões já confirmados noutros endpoints do provedor (snake_case / camelCase /
+// aninhado em `data` / no topo / string crua). Devolve null se nenhum padrão bater.
+export function extractGameUrlFromLaunch(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (s.startsWith("http")) return s;
+  }
+  if (typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const candidates: unknown[] = [
+    obj.url, obj.game_url, obj.gameUrl, obj.launch_url, obj.launchUrl,
+    obj.iframe_url, obj.iframeUrl, obj.link, obj.href, obj.redirect_url, obj.redirectUrl,
+    obj.data,
+  ];
+  if (typeof obj.data === "object" && obj.data !== null) {
+    const d = obj.data as Record<string, unknown>;
+    candidates.push(d.url, d.game_url, d.gameUrl, d.launch_url, d.launchUrl, d.iframe_url, d.iframeUrl, d.link, d.href, d.redirect_url, d.redirectUrl);
+  }
+  for (const c of candidates) {
+    if (typeof c === "string") {
+      const s = c.trim();
+      if (s.startsWith("http")) return s;
+    }
+  }
+  return null;
+}
+
 /**
  * Confirmado: POST /v4/game/game-url — pedido testado com um user_code inexistente, devolveu
  * `USER_NOT_FOUND` (código 2002) propagado por postAgent(), confirmando o formato do corpo
@@ -209,7 +245,7 @@ export interface LaunchGameOptions {
  * ainda não funcionar (ver docs/CASINO_SLOTS.md) — por isso devolve-se sem tipar os campos em
  * vez de inventar uma forma.
  */
-export async function launchGame(options: LaunchGameOptions): Promise<unknown> {
+export async function launchGame(options: LaunchGameOptions): Promise<LaunchGameResult> {
   const res = await postAgent("/v4/game/game-url", {
     user_code: options.userCode,
     provider_id: options.providerId,
@@ -219,7 +255,7 @@ export async function launchGame(options: LaunchGameOptions): Promise<unknown> {
     rtp: options.rtp ?? 0,
     is_finish_jackpot: options.isFinishJackpot ?? true,
   });
-  return res.data;
+  return { gameUrl: extractGameUrlFromLaunch(res.data), raw: res.data };
 }
 
 /**

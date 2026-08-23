@@ -19,6 +19,9 @@ export interface ResolvedFixture {
   awayTeamId: number | null;
   leagueId: number | null;
   season: number | null;
+  invertedHomeAway: boolean | null; // true = AF trocou casa/fora (trocar estatísticas antes de mostrar)
+  confidence: number;
+  verified: boolean;
 }
 
 export async function resolveFixtureForEvent(event: LiveEvent): Promise<ResolvedFixture | null> {
@@ -30,7 +33,16 @@ export async function resolveFixtureForEvent(event: LiveEvent): Promise<Resolved
     awayTeamId: match.awayApiFootballTeamId,
     leagueId: match.apiFootballLeagueId,
     season: match.season,
+    invertedHomeAway: match.invertedHomeAway,
+    confidence: match.confidence,
+    verified: match.verified,
   };
+}
+
+/** Variante que NÃO exige fixture_id ligado — devolve a linha toda do mapping, mesmo com
+ *  confiança baixa / id null. Usado por endpoints de debug/admin (ex: /events/:id/mapping). */
+export async function getFullFixtureMapping(event: LiveEvent) {
+  return findFixtureMapping(event);
 }
 
 export async function resolveLeagueForEvent(event: LiveEvent): Promise<{ leagueId: number; season: number } | null> {

@@ -1,4 +1,4 @@
-import { Prisma, UserRole, UserStatus, KycStatus, WithdrawalStatus, DepositStatus } from "@prisma/client";
+import { Prisma, UserRole, UserStatus, KycStatus, WithdrawalStatus, DepositStatus, KycDocStatus } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { Errors } from "../../lib/errors";
 import { applyLedgerMovement } from "../wallet/service";
@@ -202,7 +202,13 @@ export async function listKycSubmissions(opts: { status?: KycStatus; page?: numb
   return { total, page, limit: take, submissions };
 }
 
-export async function reviewKyc(kycId: string, status: "APPROVED" | "REJECTED", rejectionReason: string | undefined, adminId: string) {
+export async function reviewKyc(
+  kycId: string,
+  status: "APPROVED" | "REJECTED",
+  rejectionReason: string | undefined,
+  adminId: string,
+  reviewNotes?: string
+) {
   const submission = await prisma.kycSubmission.findUnique({ where: { id: kycId } });
   if (!submission) throw Errors.notFound("Verificação não encontrada");
   if (submission.status === "APPROVED" || submission.status === "REJECTED") {
@@ -214,11 +220,57 @@ export async function reviewKyc(kycId: string, status: "APPROVED" | "REJECTED", 
 
   const updated = await prisma.kycSubmission.update({
     where: { id: kycId },
-    data: { status, rejectionReason: status === "REJECTED" ? rejectionReason : null, reviewedByUserId: adminId, reviewedAt: new Date() },
+    data: {
+      status,
+      rejectionReason: status === "REJECTED" ? rejectionReason : null,
+      reviewNotes: reviewNotes ?? null,
+      reviewedByUserId: adminId,
+      reviewedAt: new Date(),
+    },
   });
 
   await prisma.auditLog.create({
-    data: { userId: adminId, action: "ADMIN_KYC_REVIEWED", metadata: { targetUserId: submission.userId, kycId, status, rejectionReason } },
+    data: {
+      userId: adminId,
+      action: "ADMIN_KYC_REVIEWED",
+      metadata: { targetUserId: submission.userId, kycId, status, rejectionReason, reviewNotes },
+    },
+  });
+
+  return updated;
+}
+
+/** Revisão manual de um KycDocument (ficheiro enviado) — exige ADMIN.
+ *  Grava reviewedByUserId/reviewedAt/reviewNotes (já existiam no schema desde F1-3),
+ *  atualiza status APPROVED/REJECTED e cria AuditLog para compliance SRIJ. */
+export async function reviewKycDocument(
+  docId: string,
+  status: typeof KycDocStatus.APPROVED | typeof KycDocStatus.REJECTED,
+  adminId: string,
+  reviewNotes?: string
+) {
+  const doc = await prisma.kycDocument.findUnique({ where: { id: docId } });
+  if (!doc) throw Errors.notFound("Documento KYC não encontrado");
+  if (doc.status === "APPROVED" || doc.status === "REJECTED") {
+    throw Errors.conflict("Este documento já foi revisto");
+  }
+
+  const updated = await prisma.kycDocument.update({
+    where: { id: docId },
+    data: {
+      status,
+      reviewNotes: reviewNotes ?? null,
+      reviewedByUserId: adminId,
+      reviewedAt: new Date(),
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      userId: adminId,
+      action: "ADMIN_KYC_DOCUMENT_REVIEWED",
+      metadata: { targetUserId: doc.userId, kycDocumentId: docId, status, reviewNotes },
+    },
   });
 
   return updated;

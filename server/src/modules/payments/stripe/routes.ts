@@ -5,12 +5,32 @@ import { requireAuth, type AuthedRequest } from "../../../middleware/auth";
 import { validateBody } from "../../../middleware/validate";
 import { createCardDepositIntent, createMbWayDeposit, createMultibancoDeposit, getDepositStatus, handleStripeWebhookEvent } from "./service";
 import { Errors } from "../../../lib/errors";
+import { userRateLimit } from "../../../lib/userRateLimit";
+import { complianceGate } from "../../../lib/complianceGate";
 
 const router = Router();
+
+const depositLimiter = userRateLimit({
+  windowMs: 5 * 60 * 1000,
+  limit: 10,
+  redisPrefix: "payments:stripe:deposit",
+  message: {
+    error: {
+      code: "TOO_MANY_REQUESTS",
+      message: "Demasiados depósitos em pouco tempo. Tente novamente dentro de 5 minutos.",
+    },
+  },
+});
 
 router.post(
   "/deposits",
   requireAuth,
+  depositLimiter,
+  complianceGate({
+    requireKyc: true,
+    requireNotSelfExcluded: true,
+    checkDailyDepositLimit: true,
+  }),
   validateBody(
     z.object({
       provider: z.enum(["STRIPE_CARD", "STRIPE_MBWAY", "STRIPE_MULTIBANCO"]),

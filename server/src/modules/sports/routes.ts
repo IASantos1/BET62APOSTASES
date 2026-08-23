@@ -3,12 +3,12 @@ import { asyncHandler } from "../../middleware/errorHandler";
 import { hybridSportsService } from "./hybridService";
 import { getPrematchEvents } from "./prematch/service";
 import { getTodayCompetitions } from "./competitions/service";
-import { fetchEventById } from "./pulsescore/client";
+import { fetchEventById, fetchLiveEventById } from "./pulsescore/client";
 import { enrichEventFromOtherBookmakers } from "./pulsescore/crossBookmakerFallback";
 import { getHeadToHead, getPredictions, getStandings, type HeadToHeadMatch } from "./apifootball/client";
-import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent } from "./mapping/service";
+import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent, getFullFixtureMapping } from "./mapping/service";
 import { getUnifiedMatchData } from "./unified/service";
-import { ALL_SPORTS, type Sport } from "./types";
+import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
 import { logger } from "../../lib/logger";
 
@@ -50,7 +50,28 @@ router.get(
       throw Errors.badRequest("Parâmetro sport em falta ou inválido");
     }
     const rawId = req.params.id.startsWith("pulsescore:") ? req.params.id.slice("pulsescore:".length) : req.params.id;
-    const event = await fetchEventById(sport as Sport, rawId);
+
+    // O evento pode ser: (a) pré-jogo / scheduled → endpoint desporto-específico
+    // `/{bookmaker}/{sport}/events/{id}` OU (b) ao vivo → endpoint genérico
+    // `/{bookmaker}/live-events/events/{id}` (sem sport no path, confirmado via doc oficial).
+    // Tentamos os dois em cascata — se um throw/falhar, não matamos o pedido todo, só passamos
+    // para o próximo. O 500 anterior vinha de eventos ao vivo a bater só no endpoint pré-jogo,
+    // que devolvia != 404 (ex: 400 / 401) → throw Errors.internal.
+    let event: LiveEvent | null = null;
+    try {
+      event = await fetchEventById(sport as Sport, rawId);
+    } catch (err) {
+      logger.warn({ err: String(err).slice(0, 200), sport, eventId: rawId, source: "sport-events" }, "Sports refresh: fetchEventById (pré-jogo) falhou, a tentar live-events");
+    }
+
+    if (!event) {
+      try {
+        event = await fetchLiveEventById(rawId, sport as Sport);
+      } catch (err) {
+        logger.warn({ err: String(err).slice(0, 200), eventId: rawId, source: "live-events" }, "Sports refresh: fetchLiveEventById (ao vivo) falhou");
+      }
+    }
+
     if (!event) throw Errors.notFound("Evento não encontrado na Pulsescore");
     // Preenche mercados e estatísticas em falta (ex: Escanteios/Cartões/Marcador) indo buscá-los
     // a outras bookmakers configuradas em marketRouting.ts — só aqui, quando o utilizador abre o
@@ -59,9 +80,125 @@ router.get(
     // devolvê-lo sem o preenchimento extra, exatamente como antes desta funcionalidade existir.
     const completed = await enrichEventFromOtherBookmakers(sport as Sport, event).catch((err) => {
       logger.warn({ err, eventId: rawId }, "Pulsescore: falha ao preencher mercados/estatísticas em falta via outras bookmakers");
-      return event;
+      return event!;
     });
+
+    // DISPARAR LAZY MAPPING API-Football em background: mesmo que o user nunca abra o /stats
+    // nem o /matches/:id/live, o simples acto de abrir o Match Tracker já guarda permanentemente
+    // os IDs de equipa/liga/fixture na Base de Dados, para que os próximos pedidos (H2H,
+    // previsões, classificação, estatísticas) já encontrem tudo mapeado e NÃO VOLTEM a chamar
+    // a API-Football para ID resolution (só para os dados finais de estatísticas/H2H/etc).
+    // Ignorado completamente se falhar (não quebra o refresh do evento).
+    if ((sport as Sport) === "football") {
+      void resolveFixtureForEvent(completed).catch((err) => {
+        logger.debug({ err, eventId: completed.id }, "Mapping AF lazy trigger: falhou — ignorado (não bloqueia refresh do evento)");
+      });
+    }
+
     res.json({ event: completed });
+  })
+);
+
+/**
+ * Auditoria cross-bookmaker: quantos mercados no evento foram fornecidos por cada casa de
+ * apostas. Usado para debug do fallback e para o UI/admin confirmar que a união de mercados
+ * está mesmo a funcionar (ex: "paddypower: 12, bet365: 4, pinnacle_ps3838: 2").
+ *
+ * Tenta primeiro o evento em cache do hybridService (rápido, se estiver ao vivo). Se não
+ * encontrar, tenta refresh on-demand como no /refresh endpoint (cascata pré-jogo → live).
+ */
+router.get(
+  "/events/:id/odds/coverage",
+  asyncHandler(async (req, res) => {
+    const sport = req.query.sport;
+    if (typeof sport !== "string" || !ALL_SPORTS.includes(sport as Sport)) {
+      throw Errors.badRequest("Parâmetro sport em falta ou inválido");
+    }
+    const rawId = req.params.id.startsWith("pulsescore:") ? req.params.id.slice("pulsescore:".length) : req.params.id;
+
+    let event: LiveEvent | null = hybridSportsService.getById(req.params.id) ?? null;
+
+    if (!event) {
+      try {
+        event = await fetchEventById(sport as Sport, rawId);
+      } catch {
+        try {
+          event = await fetchLiveEventById(rawId, sport as Sport);
+        } catch {
+          event = null;
+        }
+      }
+    }
+    if (!event) throw Errors.notFound("Evento não encontrado");
+
+    const marketsCount: Record<string, number> = {};
+    const selectionsCount: Record<string, number> = {};
+    for (const o of event.odds) {
+      const b = o.sourceBookmaker ?? "unknown";
+      marketsCount[b] = (marketsCount[b] ?? 0) + 1;
+      for (const sel of Object.values(o.selections ?? {})) {
+        const sb = sel.sourceBookmaker ?? b;
+        selectionsCount[sb] = (selectionsCount[sb] ?? 0) + 1;
+      }
+    }
+
+    res.json({
+      eventId: event.id,
+      totalMarkets: event.odds.length,
+      marketsCount,
+      selectionsCount,
+    });
+  })
+);
+
+/**
+ * Debug do motor de mapeamento API-Football (admin) — devolve o estado atual da linha
+ * FixtureMapping: home/away/league teamIds, fixtureId da AF, confiança, verificação manual,
+ * e a flag CRÍTICA invertedHomeAway (true = as estatísticas da AF precisam de ser trocadas
+ * casa↔fora para continuar alinhadas com a Pulsescore).
+ *
+ * Se o mapping ainda não tiver sido criado, dispara-o nesta mesma chamada (lazy) para
+ * já ficar disponível nas próximas.
+ */
+router.get(
+  "/events/:id/mapping",
+  asyncHandler(async (req, res) => {
+    const sport = req.query.sport;
+    if (typeof sport !== "string" || !ALL_SPORTS.includes(sport as Sport)) {
+      throw Errors.badRequest("Parâmetro sport em falta ou inválido");
+    }
+    const rawId = req.params.id.startsWith("pulsescore:") ? req.params.id.slice("pulsescore:".length) : req.params.id;
+
+    let event: LiveEvent | null = hybridSportsService.getById(req.params.id) ?? null;
+    if (!event) {
+      try {
+        event = await fetchEventById(sport as Sport, rawId);
+      } catch {
+        try {
+          event = await fetchLiveEventById(rawId, sport as Sport);
+        } catch {
+          event = null;
+        }
+      }
+    }
+    if (!event) throw Errors.notFound("Evento não encontrado");
+
+    const state = await getFullFixtureMapping(event);
+
+    res.json({
+      pulsescoreEventKey: event.id,
+      sport: event.sport,
+      home: event.home,
+      away: event.away,
+      league: event.league,
+      startTime: event.startTime,
+      mapping: state,
+      willHaveStats:
+        event.sport === "football" &&
+        Boolean(state.apiFootballFixtureId) &&
+        state.confidence >= 70,
+      invertedHomeAway: state.invertedHomeAway, // true = stats AF precisam swap casa↔fora
+    });
   })
 );
 
