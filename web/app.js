@@ -1146,8 +1146,11 @@ function betTicketHtml(b) {
         ? "0.00"
         : Number(b.potentialReturn).toFixed(2);
 
-  const cashoutBtn = isPending
-    ? `<button class="bet-ticket-cashout-btn" id="cashout-btn-${b.id}" onclick='requestCashOut(${JSON.stringify(b.id)})' disabled>A verificar Cash Out…</button>`
+  // Botão de Cash Out fica logo no topo do bilhete (não lá em baixo, depois da lista de
+  // seleções) — pedido explícito: numa Múltipla com muitas seleções o botão ficava escondido,
+  // só visível a fazer scroll até ao fim do bilhete. Assim aparece sempre, mesmo sem scroll.
+  const cashoutRow = isPending
+    ? `<div class="bet-ticket-cashout-row"><button class="bet-ticket-cashout-btn" id="cashout-btn-${b.id}" onclick='requestCashOut(${JSON.stringify(b.id)})' disabled>A verificar Cash Out…</button></div>`
     : "";
 
   return `
@@ -1156,6 +1159,7 @@ function betTicketHtml(b) {
         <span class="bet-ticket-mode">${modeLabel} • ${b.selections.length} seleç${b.selections.length > 1 ? "ões" : "ão"}</span>
         <span class="bet-ticket-status ${statusCls}">${statusLabel}</span>
       </div>
+      ${cashoutRow}
       <div class="bet-ticket-legs">${legsHtml}</div>
       <div class="bet-ticket-punch"></div>
       <div class="bet-ticket-bottom">
@@ -1164,7 +1168,6 @@ function betTicketHtml(b) {
           <div>Odd${b.selections.length > 1 ? " total" : ""}<b>${Number(b.totalOdd).toFixed(2)}</b></div>
           <div>${returnLabel}<b>€ ${returnValue}</b></div>
         </div>
-        ${cashoutBtn}
       </div>
       <div class="bet-ticket-barcode"></div>
     </div>`;
