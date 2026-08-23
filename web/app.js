@@ -2307,7 +2307,10 @@ function translateSelectionLabel(rawLabel) {
   const trimmed = String(rawLabel).trim();
   const lower = trimmed.toLowerCase();
   if (SELECTION_WORD_MAP[lower]) return SELECTION_WORD_MAP[lower];
-  const overUnderMatch = trimmed.match(/^(over|under)\s*([\d.]+)?$/i);
+  // "Over 2.5" ou "Over 2.5 Goals"/"Under 3.5 Points" (reportado numa amostra real: o rótulo da
+  // seleção repete a unidade do mercado, não só o número) — o número fica, a unidade cai (o
+  // cabeçalho do mercado já diz "Golos"/"Pontos"/etc., ver translateMarketDisplayName).
+  const overUnderMatch = trimmed.match(/^(over|under)\s*([\d.]+)?\s*(goals?|points?|games?|corners?|cards?|runs?)?$/i);
   if (overUnderMatch) {
     const word = overUnderMatch[1].toLowerCase() === "over" ? "Mais de" : "Menos de";
     return overUnderMatch[2] ? `${word} ${overUnderMatch[2]}` : word;
@@ -2316,6 +2319,14 @@ function translateSelectionLabel(rawLabel) {
   if (handicapMatch) {
     const side = handicapMatch[1].toLowerCase() === "home" ? "Casa" : "Fora";
     return `${side} ${handicapMatch[2]}`;
+  }
+  // Dupla Hipótese: rótulos reais vêm como "<Equipa> and Draw" / "<Equipa1> and <Equipa2>" —
+  // só a palavra de ligação ("and"→"e") e "Draw"→"Empate" são traduzidos, os nomes das equipas
+  // (não vocabulário fixo) passam exatamente como vieram.
+  const doubleChanceMatch = trimmed.match(/^(.+?)\s+and\s+(.+)$/i);
+  if (doubleChanceMatch) {
+    const side = (s) => (/^draw$/i.test(s) ? "Empate" : s);
+    return `${side(doubleChanceMatch[1])} e ${side(doubleChanceMatch[2])}`;
   }
   return trimmed;
 }
