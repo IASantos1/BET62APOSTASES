@@ -1056,7 +1056,7 @@ async function refreshMyBetsList() {
         const selectionsHtml = b.selections
           .map(
             (s) =>
-              `<div class="bs-row-sel" style="margin:2px 0">${s.home} vs ${s.away} — ${translateMarketDisplayName(s.market, s.sport)}: <b>${translateSelectionLabel(s.selection)}</b> @ ${Number(s.odd).toFixed(2)}</div>`
+              `<div class="bs-row-sel" style="margin:2px 0">${s.home} vs ${s.away} — ${translateMarketDisplayName(s.market, s.sport, [s.selection])}: <b>${translateSelectionLabel(s.selection)}</b> @ ${Number(s.odd).toFixed(2)}</div>`
           )
           .join("");
         const resultLine =
@@ -2279,10 +2279,26 @@ function translateMarketBaseName(m, sport) {
   return null;
 }
 
-function translateMarketDisplayName(rawName, sport) {
+// Alguns nomes de mercado reconhecidos por palavra-chave implicam um vocabulário de seleção
+// conhecido — BTTS só devia ter seleções "Sim"/"Não". Reportado com um caso real em produção: um
+// mercado com o placar já 1-1 aos 86' a mostrar odds típicas de Resultado (equipa/empate/equipa,
+// empate fortemente favorito a 1.25 — faz sentido perto do fim com o placar atual, não faria
+// nenhum sentido para BTTS, que já estaria garantido "Sim" com 1-1 no placar) só apanhou "Ambas
+// as Equipas Marcam" porque o nome bruto continha a frase por coincidência, sem ser mesmo esse
+// mercado. Sem o texto bruto exato para confirmar o que é de facto (ver pedido ao utilizador), a
+// forma segura de não mostrar um rótulo enganador é confirmar que as seleções fazem sentido para
+// a categoria escolhida antes de a usar; se não fizerem, mantém o nome original em inglês.
+function marketSelectionsLookPlausible(basePt, selectionLabels) {
+  if (basePt !== "Ambas as Equipas Marcam") return true; // só validado para BTTS por agora
+  if (!selectionLabels || !selectionLabels.length) return true;
+  return selectionLabels.every((l) => /^(yes|no)$/i.test(String(l).trim()));
+}
+
+function translateMarketDisplayName(rawName, sport, selectionLabels) {
   if (!rawName) return rawName;
   const base = translateMarketBaseName(rawName, sport);
   if (!base) return rawName; // não reconhecido — mantém o nome original em inglês
+  if (!marketSelectionsLookPlausible(base, selectionLabels)) return rawName;
   return base + extractPeriodSuffix(rawName);
 }
 
@@ -2412,7 +2428,7 @@ function renderMarketGroups(e) {
       // mostra-se um único botão a cobrir a linha toda. O rótulo do mercado (group.market) pode
       // vir "Match Odds", "Grande Chance" ou até "Revisão VAR" consoante o bookmaker/desporto —
       // por isso a decisão compara o próprio grupo, não o texto do nome.
-      const marketNamePt = translateMarketDisplayName(group.market, e.sport);
+      const marketNamePt = translateMarketDisplayName(group.market, e.sport, Object.keys(group.selections || {}));
       if (group === primaryMarket && !group.isActive) {
         return `<div class="market-group"><h4>${marketNamePt}</h4><div class="selection-row">
           <div class="selection-btn suspended"><span class="sel-odd">Suspenso</span></div>
@@ -2694,7 +2710,7 @@ function renderBetslipPanel() {
       <div class="bs-row">
         <div class="bs-row-info">
           <div class="bs-row-teams">${s.home || ""}${s.away ? " vs " + s.away : ""}</div>
-          <div class="bs-row-sel">${translateMarketDisplayName(s.market, s.sport)}: <b>${translateSelectionLabel(s.selection)}</b> @ ${Number(s.odd).toFixed(2)}</div>
+          <div class="bs-row-sel">${translateMarketDisplayName(s.market, s.sport, [s.selection])}: <b>${translateSelectionLabel(s.selection)}</b> @ ${Number(s.odd).toFixed(2)}</div>
         </div>
         <div class="bs-row-actions">
           ${
