@@ -1,63 +1,99 @@
 /**
- * Cliente HTTP fino para a API do Bet62. Guarda os tokens JWT em localStorage
- * (aceitável para uma demo; para produção, considerar cookies httpOnly + CSRF token,
- * documentado em docs/COMPLIANCE.md) e renova automaticamente o access token
- * usando o refresh token quando uma chamada responde 401.
+ * Cliente HTTP Bet62. Usa cookies HttpOnly (bet62_access / bet62_refresh) emitidos pelo
+ * backend em login/register/refresh para autenticação — NÃO guarda JWTs em localStorage
+ * (defesa contra XSS). Para mutações (POST/PATCH/DELETE), lê o token CSRF do cookie
+ * bet62_csrf (definido pelo backend em /api/auth/csrf, /api/auth/session ou qualquer
+ * resposta autenticada) e envia-o no header X-CSRF-Token — mitigação de CSRF.
+ *
+ * O modo Bearer Authorization ainda é suportado pelo backend (para admin.js e integrações
+ * externas que usam tokens explícitos), mas o cliente principal do jogador NÃO o usa.
  */
 const Bet62Api = (() => {
   const API_BASE = window.BET62_CONFIG.API_BASE;
+  const CSRF_COOKIE = "bet62_csrf";
 
-  function getTokens() {
-    return {
-      accessToken: localStorage.getItem("bet62_access_token"),
-      refreshToken: localStorage.getItem("bet62_refresh_token"),
-    };
+  /**
+   * @param {string} name
+   * @returns {string | null}
+   */
+  function readCookie(name) {
+    const match = document.cookie.match(
+      "(?:^|; )" + name.replace(/([.$?*|{}()[\]\\/+^])/g, "\\$1") + "=([^;]*)"
+    );
+    return match ? decodeURIComponent(match[1]) : null;
   }
 
-  function setTokens(tokens) {
-    if (tokens.accessToken) localStorage.setItem("bet62_access_token", tokens.accessToken);
-    if (tokens.refreshToken) localStorage.setItem("bet62_refresh_token", tokens.refreshToken);
+  /**
+   * @param {string} name
+   * @param {string} value
+   */
+  function setCookieForDev(name, value) {
+    document.cookie = `${name}=${value}; path=/; samesite=lax`;
   }
 
-  function clearTokens() {
-    localStorage.removeItem("bet62_access_token");
-    localStorage.removeItem("bet62_refresh_token");
+  /** @type {{ authenticated: boolean; user?: unknown; csrfToken?: string } | null} */
+  let cachedSession = null;
+
+  /** @returns {Promise<string>} */
+  async function getCsrfToken() {
+    const fromCookie = readCookie(CSRF_COOKIE);
+    if (fromCookie) return fromCookie;
+    try {
+      const data = await request("/auth/csrf", { auth: false, retry: false });
+      const token = data?.csrfToken;
+      if (token) {
+        setCookieForDev(CSRF_COOKIE, token);
+        return token;
+      }
+    } catch {}
+    return "";
   }
 
+  /** @type {Promise<any> | null} */
   let refreshPromise = null;
 
   async function refreshAccessToken() {
-    const { refreshToken } = getTokens();
-    if (!refreshToken) throw new Error("Sem refresh token");
-
     if (!refreshPromise) {
-      refreshPromise = fetch(`${API_BASE}/auth/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken }),
-      })
-        .then(async (res) => {
-          if (!res.ok) throw new Error("Falha ao renovar sessão");
-          const data = await res.json();
-          setTokens(data);
-          return data;
-        })
-        .finally(() => {
-          refreshPromise = null;
+      refreshPromise = (async () => {
+        const csrf = await getCsrfToken();
+        /** @type {Record<string, string>} */
+        const headers = { "Content-Type": "application/json" };
+        if (csrf) headers["X-CSRF-Token"] = csrf;
+        const res = await fetch(`${API_BASE}/auth/refresh`, {
+          method: "POST",
+          credentials: "include",
+          headers,
+          body: JSON.stringify({}),
         });
+        if (!res.ok) {
+          clearSession();
+          throw new Error("Falha ao renovar sessão");
+        }
+        return res.json().catch(() => ({}));
+      })();
+      refreshPromise.finally(() => {
+        refreshPromise = null;
+      });
     }
     return refreshPromise;
   }
 
-  async function request(path, { method = "GET", body, auth = true, retry = true } = {}) {
+  /**
+   * @param {string} path
+   * @param {{ method?: string; body?: unknown; auth?: boolean; retry?: boolean }} [opts]
+   */
+  async function request(path, opts = {}) {
+    const { method = "GET", body, auth = true, retry = true } = opts;
+    /** @type {Record<string, string>} */
     const headers = { "Content-Type": "application/json" };
-    if (auth) {
-      const { accessToken } = getTokens();
-      if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    if (auth && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+      const csrf = await getCsrfToken();
+      if (csrf) headers["X-CSRF-Token"] = csrf;
     }
 
     const res = await fetch(`${API_BASE}${path}`, {
       method,
+      credentials: "include",
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
@@ -67,7 +103,7 @@ const Bet62Api = (() => {
         await refreshAccessToken();
         return request(path, { method, body, auth, retry: false });
       } catch {
-        clearTokens();
+        clearSession();
         throw new ApiError(401, "UNAUTHORIZED", "Sessão expirada. Faça login novamente.");
       }
     }
@@ -84,21 +120,30 @@ const Bet62Api = (() => {
     return data;
   }
 
-  // Só para upload de ficheiro (documentos KYC) — FormData, nunca JSON.stringify, e sem
-  // "Content-Type" manual (o browser define o boundary do multipart sozinho).
+  /**
+   * @param {string} path
+   * @param {FormData} formData
+   * @param {boolean} [retry]
+   */
   async function requestMultipart(path, formData, retry = true) {
+    /** @type {Record<string, string>} */
     const headers = {};
-    const { accessToken } = getTokens();
-    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    const csrf = await getCsrfToken();
+    if (csrf) headers["X-CSRF-Token"] = csrf;
 
-    const res = await fetch(`${API_BASE}${path}`, { method: "POST", headers, body: formData });
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      credentials: "include",
+      headers,
+      body: formData,
+    });
 
     if (res.status === 401 && retry) {
       try {
         await refreshAccessToken();
         return requestMultipart(path, formData, false);
       } catch {
-        clearTokens();
+        clearSession();
         throw new ApiError(401, "UNAUTHORIZED", "Sessão expirada. Faça login novamente.");
       }
     }
@@ -111,7 +156,29 @@ const Bet62Api = (() => {
     return data;
   }
 
+  function clearSession() {
+    cachedSession = null;
+    try {
+      document.cookie = "bet62_access=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      document.cookie = "bet62_refresh=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    } catch {}
+  }
+
+  function migrateOldTokensIfAny() {
+    try {
+      localStorage.removeItem("bet62_access_token");
+      localStorage.removeItem("bet62_refresh_token");
+    } catch {}
+  }
+  migrateOldTokensIfAny();
+
   class ApiError extends Error {
+    /**
+     * @param {number} status
+     * @param {string} code
+     * @param {string} message
+     * @param {unknown} [details]
+     */
     constructor(status, code, message, details) {
       super(message);
       this.status = status;
@@ -122,90 +189,184 @@ const Bet62Api = (() => {
 
   return {
     ApiError,
-    isAuthenticated: () => Boolean(getTokens().accessToken),
-    clearTokens,
-    setTokens,
+    clearTokens: clearSession,
+    clearSession,
 
-    // Auth
-    register: (payload) => request("/auth/register", { method: "POST", body: payload, auth: false }),
-    login: (identifier, password) =>
-      request("/auth/login", { method: "POST", body: { identifier, password }, auth: false }),
-    logout: async () => {
-      const { refreshToken } = getTokens();
-      if (refreshToken) {
-        await request("/auth/logout", { method: "POST", body: { refreshToken }, auth: false }).catch(() => {});
+    isAuthenticated: () => {
+      if (cachedSession?.authenticated) return true;
+      return Boolean(readCookie("bet62_access"));
+    },
+
+    getSession: async () => {
+      if (cachedSession) return cachedSession;
+      try {
+        const data = await request("/auth/session", { auth: false, retry: false });
+        cachedSession = data;
+        return data;
+      } catch {
+        return { authenticated: false };
       }
-      clearTokens();
+    },
+
+    /** @param {unknown} payload */
+    register: (payload) =>
+      request("/auth/register", { method: "POST", body: payload, auth: false }).then((r) => {
+        cachedSession = null;
+        return r;
+      }),
+
+    /**
+     * @param {string} identifier
+     * @param {string} password
+     */
+    login: (identifier, password) =>
+      request("/auth/login", {
+        method: "POST",
+        body: { identifier, password },
+        auth: false,
+      }).then((r) => {
+        cachedSession = null;
+        return r;
+      }),
+
+    logout: async () => {
+      try {
+        const csrf = await getCsrfToken();
+        /** @type {Record<string, string>} */
+        const headers = { "Content-Type": "application/json" };
+        if (csrf) headers["X-CSRF-Token"] = csrf;
+        await fetch(`${API_BASE}/auth/logout`, {
+          method: "POST",
+          credentials: "include",
+          headers,
+          body: JSON.stringify({}),
+        }).catch(() => {});
+      } catch {}
+      clearSession();
     },
 
     // Profile
     getProfile: () => request("/users/me"),
+    /** @param {unknown} payload */
     updatePersonal: (payload) => request("/users/me", { method: "PATCH", body: payload }),
-    updatePreferences: (payload) => request("/users/me/preferences", { method: "PATCH", body: payload }),
-    submitKyc: (docType, docNumber) => request("/users/me/kyc", { method: "POST", body: { docType, docNumber } }),
-    // type: "ID_DOCUMENT" | "BANK_STATEMENT" — documento pessoal e extrato bancário (para
-    // validar o IBAN indicado no levantamento), ver docs/KYC_DOCUMENTS.md.
+    /** @param {unknown} payload */
+    updatePreferences: (payload) =>
+      request("/users/me/preferences", { method: "PATCH", body: payload }),
+    /**
+     * @param {unknown} docType
+     * @param {unknown} docNumber
+     */
+    submitKyc: (docType, docNumber) =>
+      request("/users/me/kyc", { method: "POST", body: { docType, docNumber } }),
+    /**
+     * @param {unknown} type
+     * @param {File} file
+     */
     uploadKycDocument: (type, file) => {
       const formData = new FormData();
-      formData.append("type", type);
+      formData.append("type", String(type));
       formData.append("file", file);
       return requestMultipart("/users/me/kyc/documents", formData);
     },
     listMyKycDocuments: () => request("/users/me/kyc/documents"),
-    updateLimits: (payload) => request("/users/me/limits", { method: "PATCH", body: payload }),
-    selfExclude: (days, reason) => request("/users/me/self-exclusion", { method: "POST", body: { days, reason } }),
+    /** @param {unknown} payload */
+    updateLimits: (payload) =>
+      request("/users/me/limits", { method: "PATCH", body: payload }),
+    /**
+     * @param {unknown} days
+     * @param {unknown} reason
+     */
+    selfExclude: (days, reason) =>
+      request("/users/me/self-exclusion", { method: "POST", body: { days, reason } }),
 
     // Wallet
     getBalance: () => request("/wallet/balance"),
-    getTransactions: (cursor) => request(`/wallet/transactions${cursor ? `?cursor=${cursor}` : ""}`),
+    /** @param {string} [cursor] */
+    getTransactions: (cursor) =>
+      request(`/wallet/transactions${cursor ? `?cursor=${cursor}` : ""}`),
 
     // Payments
-    // Tudo confirmado dentro do nosso próprio layout, nunca uma segunda página:
-    // - STRIPE_CARD: devolve { depositId, clientSecret } — o frontend confirma com
-    //   stripe.confirmCardPayment() usando o Card Element montado no nosso modal.
-    // - STRIPE_MBWAY (precisa de `phone`): já vem confirmado no servidor, devolve
-    //   { depositId, status } — "processing" = a aguardar aprovação na app MB WAY do cliente.
-    // - STRIPE_MULTIBANCO: já vem confirmado no servidor, devolve
-    //   { depositId, entity, reference, expiresAt } para mostrar no nosso próprio layout.
-    createDeposit: (provider, amountEur, phone) => request("/payments/stripe/deposits", { method: "POST", body: { provider, amountEur, phone } }),
-    getDepositStatus: (depositId) => request(`/payments/stripe/deposits/${encodeURIComponent(depositId)}`),
-    saveBankAccount: (payload) => request("/payments/revolut/bank-accounts", { method: "POST", body: payload }),
+    /**
+     * @param {unknown} provider
+     * @param {unknown} amountEur
+     * @param {unknown} [phone]
+     */
+    createDeposit: (provider, amountEur, phone) =>
+      request("/payments/stripe/deposits", {
+        method: "POST",
+        body: { provider, amountEur, phone },
+      }),
+    /** @param {string} depositId */
+    getDepositStatus: (depositId) =>
+      request(`/payments/stripe/deposits/${encodeURIComponent(depositId)}`),
+    /** @param {unknown} payload */
+    saveBankAccount: (payload) =>
+      request("/payments/revolut/bank-accounts", { method: "POST", body: payload }),
     listBankAccounts: () => request("/payments/revolut/bank-accounts"),
+    /**
+     * @param {unknown} amountEur
+     * @param {unknown} bankAccountId
+     */
     requestWithdrawal: (amountEur, bankAccountId) =>
-      request("/payments/revolut/withdrawals", { method: "POST", body: { amountEur, bankAccountId } }),
+      request("/payments/revolut/withdrawals", {
+        method: "POST",
+        body: { amountEur, bankAccountId },
+      }),
     listWithdrawals: () => request("/payments/revolut/withdrawals"),
 
     // Apostas
-    // mode: "SIMPLES" (cada seleção vira o seu próprio bilhete, precisa de stake por seleção)
-    // ou "MULTIPLA" (todas as seleções combinadas num único bilhete, stake combinado). Devolve
-    // { bets, errors } — numa Simples parcialmente inválida (ex: uma odd mudou entretanto),
-    // as seleções válidas são colocadas na mesma e "errors" identifica as que falharam.
-    placeBets: (mode, selections, stake) => request("/bets", { method: "POST", body: { mode, selections, stake } }),
-    listMyBets: (cursor) => request(`/bets${cursor ? `?cursor=${cursor}` : ""}`),
+    /**
+     * @param {unknown} mode
+     * @param {unknown[]} selections
+     * @param {unknown} [stake]
+     */
+    placeBets: (mode, selections, stake) =>
+      request("/bets", { method: "POST", body: { mode, selections, stake } }),
+    /** @param {string} [cursor] */
+    listMyBets: (cursor) =>
+      request(`/bets${cursor ? `?cursor=${cursor}` : ""}`),
 
     // Sports
-    getLiveEvents: (sport) => request(`/sports/events${sport ? `?sport=${sport}` : ""}`, { auth: false }),
-    getPrematchEvents: (sport) => request(`/sports/prematch?sport=${sport}`, { auth: false }),
-    refreshEvent: (eventId, sport) => request(`/sports/events/${encodeURIComponent(eventId)}/refresh?sport=${sport}`, { auth: false }),
+    /** @param {string} [sport] */
+    getLiveEvents: (sport) =>
+      request(`/sports/events${sport ? `?sport=${sport}` : ""}`, { auth: false }),
+    /** @param {string} sport */
+    getPrematchEvents: (sport) =>
+      request(`/sports/prematch?sport=${sport}`, { auth: false }),
+    /**
+     * @param {string} eventId
+     * @param {string} sport
+     */
+    refreshEvent: (eventId, sport) =>
+      request(`/sports/events/${encodeURIComponent(eventId)}/refresh?sport=${sport}`, {
+        auth: false,
+      }),
     getCompetitions: () => request("/sports/competitions", { auth: false }),
-    // Placar/estado/cartões/cantos da Pulsescore + estatísticas complementares da API-Football
-    // (posse, remates, faltas, passes...) num único objeto, cada campo com a sua fonte
-    // explícita — ver docs/UNIFIED_MATCH_DATA.md. Não usado ainda pelo Match Tracker (que já
-    // atualiza score/relógio ao vivo via WebSocket, mais rápido do que um pedido REST desta
-    // API conseguiria); disponível para quem precisar de um só pedido com tudo já combinado.
-    getUnifiedMatch: (eventId) => request(`/sports/matches/${encodeURIComponent(eventId)}/live`, { auth: false }),
-    getH2H: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/h2h`, { auth: false }),
-    getPredictions: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/predictions`, { auth: false }),
-    getTeamStats: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/stats`, { auth: false }),
-    getStandings: (eventId) => request(`/sports/events/${encodeURIComponent(eventId)}/standings`, { auth: false }),
+    /** @param {string} eventId */
+    getUnifiedMatch: (eventId) =>
+      request(`/sports/matches/${encodeURIComponent(eventId)}/live`, { auth: false }),
+    /** @param {string} eventId */
+    getH2H: (eventId) =>
+      request(`/sports/events/${encodeURIComponent(eventId)}/h2h`, { auth: false }),
+    /** @param {string} eventId */
+    getPredictions: (eventId) =>
+      request(`/sports/events/${encodeURIComponent(eventId)}/predictions`, { auth: false }),
+    /** @param {string} eventId */
+    getTeamStats: (eventId) =>
+      request(`/sports/events/${encodeURIComponent(eventId)}/stats`, { auth: false }),
+    /** @param {string} eventId */
+    getStandings: (eventId) =>
+      request(`/sports/events/${encodeURIComponent(eventId)}/standings`, { auth: false }),
 
-    // Cassino — catálogo público (GET /api/casino/games), sem autenticação, ver
-    // server/src/modules/casino/routes.ts. `tag` mapeia para as categorias da página
-    // (megaways/jackpots/bonus/freespins/baccarat/blackjack/roulette/novos); `search` é livre.
-    getCasinoGames: ({ page, limit, tag, search, sort } = {}) => {
+    // Cassino
+    /**
+     * @param {{ page?: number; limit?: number; tag?: string; search?: string; sort?: string }} [opts]
+     */
+    getCasinoGames: (opts = {}) => {
+      const { page, limit, tag, search, sort } = opts;
       const params = new URLSearchParams();
-      if (page) params.set("page", page);
-      if (limit) params.set("limit", limit);
+      if (page) params.set("page", String(page));
+      if (limit) params.set("limit", String(limit));
       if (tag) params.set("tag", tag);
       if (search) params.set("search", search);
       if (sort) params.set("sort", sort);

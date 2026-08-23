@@ -7,6 +7,12 @@ const envSchema = z.object({
 
   DATABASE_URL: z.string().min(1, "DATABASE_URL é obrigatório"),
 
+  // Redis para escalonamento horizontal: usado por TtlCache, rate-limit store e Pub/Sub
+  // entre réplicas Railway do WebSocket gateway de desporto. Opcional em desenvolvimento
+  // local (sem REDIS_URL, tudo cai para Map em memória, funcional mas não partilhado entre N
+  // réplicas se Railway >= 2). No Railway oficial: "redis://default:PASS@HOST:PORT"
+  REDIS_URL: z.string().optional(),
+
   JWT_ACCESS_SECRET: z.string().min(32, "JWT_ACCESS_SECRET deve ter pelo menos 32 caracteres"),
   JWT_REFRESH_SECRET: z.string().min(32, "JWT_REFRESH_SECRET deve ter pelo menos 32 caracteres"),
   JWT_ACCESS_TTL: z.string().default("15m"),
@@ -62,6 +68,15 @@ const envSchema = z.object({
   // configurado, é o único mecanismo de autenticação confirmado — o campo "check" do corpo não
   // tem o algoritmo confirmado, por isso não é validado).
   CASINO_CALLBACK_TOKEN: z.string().default(""),
+
+  // --- Compliance / Responsible Gambling (gating em bets e depósitos) ---
+  // Desativar só em desenvolvimento local para testar o UI sem KYC.
+  // Em produção é OBRIGATÓRIO (licença SRIJ/SGAJ): "requisito KYC + RG antes de depósito/aposta".
+  COMPLIANCE_KYC_REQUIRED: z.coerce.boolean().default(true),
+  COMPLIANCE_RG_LIMITS_ENFORCED: z.coerce.boolean().default(true),
+  // IPs (separados por vírgula) que o provedor de cassino usa para fazer callbacks — whitelist
+  // no POST /casino/callback. Vazio = não aplica whitelist (só confia no Callback-Token).
+  CASINO_CALLBACK_IP_WHITELIST: z.string().default(""),
 });
 
 export type Env = z.infer<typeof envSchema>;

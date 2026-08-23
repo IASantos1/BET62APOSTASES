@@ -41,7 +41,9 @@ class HybridSportsService extends EventEmitter {
     pulsescoreWs.on("snapshot", ({ sport, events }: { sport: Sport; events: LiveEvent[] }) => {
       this.applySportSnapshot(sport, events);
     });
-    pulsescoreWs.start();
+    void pulsescoreWs.start().catch((err) => {
+      logger.warn({ err: String(err).slice(0, 200) }, "Pulsescore WS: falhou inicialização do líder (continuando só com REST/polling)");
+    });
 
     this.pollOnce();
     setInterval(() => this.pollOnce(), POLL_INTERVAL_MS);

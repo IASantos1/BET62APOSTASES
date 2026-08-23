@@ -87,32 +87,52 @@ async function finalizeBetIfComplete(betId: string) {
   });
 }
 
-/** Calcula e aplica o resultado final de um Bet cujas seleções estão TODAS decididas (WON/LOST/
- * VOID, nenhuma PENDING/NEEDS_REVIEW) — usado tanto pela liquidação automática como pela
- * correção manual do admin depois de resolver uma seleção NEEDS_REVIEW à mão. */
-export async function applyFinalOutcome(tx: Prisma.TransactionClient, bet: Bet, selections: BetSelection[]) {
+/** Calcula o resultado final de um Bet cujas seleções estão TODAS decididas (WON/LOST/VOID,
+ * nenhuma PENDING/NEEDS_REVIEW). Função pura sem efeitos secundários — extraída para testes
+ * unitários sem tocar em DB. */
+export function calculateBetResult(params: {
+  stake: Prisma.Decimal | number | string;
+  selections: Array<{ status: BetSelectionStatus; odd: Prisma.Decimal | number | string }>;
+}) {
+  const stake = new Prisma.Decimal(params.stake);
+  const selections = params.selections.map((s) => ({
+    status: s.status,
+    odd: new Prisma.Decimal(s.odd),
+  }));
+
   const anyLost = selections.some((s) => s.status === "LOST");
   const allVoid = selections.every((s) => s.status === "VOID");
 
   let status: BetStatus;
   let payout: Prisma.Decimal;
-  let ledgerType: "BET_WON" | "BET_REFUND" | null = null;
 
   if (anyLost) {
     status = "LOST";
     payout = new Prisma.Decimal(0);
   } else if (allVoid) {
     status = "VOID";
-    payout = bet.stake; // stake inteiro devolvido — evento(s) cancelado(s)/adiado(s)
-    ledgerType = "BET_REFUND";
+    payout = stake;
   } else {
-    // Só WON e VOID (nenhum LOST, nenhum PENDING/NEEDS_REVIEW): as seleções VOID saem do
-    // cálculo da odd (tratadas como 1.0 — "empate anula aposta" na Múltipla), as WON decidem.
     status = "WON";
-    const effectiveOdd = selections.filter((s) => s.status === "WON").reduce((acc, s) => acc.mul(s.odd), new Prisma.Decimal(1));
-    payout = bet.stake.mul(effectiveOdd);
-    ledgerType = "BET_WON";
+    const effectiveOdd = selections
+      .filter((s) => s.status === "WON")
+      .reduce((acc, s) => acc.mul(s.odd), new Prisma.Decimal(1));
+    payout = stake.mul(effectiveOdd);
   }
+
+  const netResult = payout.sub(stake);
+  return { status, payout, netResult, stake };
+}
+
+/** Calcula e aplica o resultado final de um Bet cujas seleções estão TODAS decididas (WON/LOST/
+ * VOID, nenhuma PENDING/NEEDS_REVIEW) — usado tanto pela liquidação automática como pela
+ * correção manual do admin depois de resolver uma seleção NEEDS_REVIEW à mão. */
+export async function applyFinalOutcome(tx: Prisma.TransactionClient, bet: Bet, selections: BetSelection[]) {
+  const result = calculateBetResult({ stake: bet.stake, selections });
+  const status = result.status;
+  const payout = result.payout;
+  let ledgerType: "BET_WON" | "BET_REFUND" | null =
+    status === "WON" ? "BET_WON" : status === "VOID" ? "BET_REFUND" : null;
 
   await tx.bet.update({ where: { id: bet.id }, data: { status, payout, settledAt: new Date() } });
 
@@ -120,7 +140,7 @@ export async function applyFinalOutcome(tx: Prisma.TransactionClient, bet: Bet, 
     await applyLedgerMovement({
       walletId: bet.walletId,
       type: ledgerType,
-      amount: payout, // positivo — crédito
+      amount: payout,
       referenceType: "bet",
       referenceId: bet.id,
       metadata: { betType: bet.type, stake: bet.stake.toString() },

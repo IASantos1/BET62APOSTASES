@@ -271,13 +271,27 @@ export async function listBetsNeedingReview() {
 /** O admin decide manualmente o resultado de UMA seleção presa em NEEDS_REVIEW (ex: um mercado
  * de handicap que o motor não tentou resolver sozinho) — depois disso, se todas as seleções do
  * Bet já estiverem decididas, o mesmo cálculo de payout da liquidação automática aplica-se. */
-export async function manualSettleSelection(selectionId: string, outcome: "WON" | "LOST" | "VOID", adminUserId: string) {
+export async function manualSettleSelection(
+  selectionId: string,
+  outcome: "WON" | "LOST" | "VOID",
+  adminUserId: string,
+  reviewNotes?: string
+) {
   await prisma.$transaction(async (tx) => {
     const sel = await tx.betSelection.findUniqueOrThrow({ where: { id: selectionId } });
     if (sel.status !== "NEEDS_REVIEW" && sel.status !== "PENDING") {
       throw Errors.conflict("Esta seleção já foi liquidada.");
     }
-    await tx.betSelection.update({ where: { id: sel.id }, data: { status: outcome, settledAt: new Date() } });
+    await tx.betSelection.update({
+      where: { id: sel.id },
+      data: {
+        status: outcome,
+        settledAt: new Date(),
+        reviewNotes: reviewNotes ?? null,
+        reviewedByUserId: adminUserId,
+        reviewedAt: new Date(),
+      },
+    });
 
     const bet = await tx.bet.findUniqueOrThrow({ where: { id: sel.betId }, include: { selections: true } });
     const stillUndecided = bet.selections.some((s) => (s.id === sel.id ? false : s.status === "PENDING" || s.status === "NEEDS_REVIEW"));
@@ -288,6 +302,6 @@ export async function manualSettleSelection(selectionId: string, outcome: "WON" 
   });
 
   await prisma.auditLog.create({
-    data: { userId: adminUserId, action: "BET_MANUAL_SETTLE", metadata: { selectionId, outcome } },
+    data: { userId: adminUserId, action: "BET_MANUAL_SETTLE", metadata: { selectionId, outcome, reviewNotes } },
   });
 }

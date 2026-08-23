@@ -6,6 +6,7 @@ import { validateBody } from "../../../middleware/validate";
 import { prisma } from "../../../lib/prisma";
 import { Errors } from "../../../lib/errors";
 import { approveAndPayWithdrawal, listWithdrawals, rejectWithdrawal, requestWithdrawal } from "./service";
+import { userRateLimit } from "../../../lib/userRateLimit";
 
 function requireParamId(id: string | undefined): string {
   if (!id) throw Errors.badRequest("Parâmetro id em falta");
@@ -15,6 +16,18 @@ function requireParamId(id: string | undefined): string {
 const router = Router();
 router.use(requireAuth);
 
+const writeLimiter = userRateLimit({
+  windowMs: 5 * 60 * 1000,
+  limit: 10,
+  redisPrefix: "payments:revolut:write",
+  message: {
+    error: {
+      code: "TOO_MANY_REQUESTS",
+      message: "Demasiadas operações. Tente novamente dentro de 5 minutos.",
+    },
+  },
+});
+
 const ibanSchema = z
   .string()
   .regex(/^PT50\d{21}$/, "IBAN português inválido (formato PT50 + 21 dígitos)")
@@ -22,6 +35,7 @@ const ibanSchema = z
 
 router.post(
   "/bank-accounts",
+  writeLimiter,
   validateBody(
     z.object({
       accountHolder: z.string().min(2).max(120),
@@ -47,6 +61,7 @@ router.get(
 
 router.post(
   "/withdrawals",
+  writeLimiter,
   validateBody(z.object({ amountEur: z.number().positive(), bankAccountId: z.string().uuid() })),
   asyncHandler(async (req: AuthedRequest, res) => {
     const withdrawal = await requestWithdrawal({ userId: req.user!.id, ...req.body });

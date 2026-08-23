@@ -1,15 +1,5 @@
-/**
- * Cache TTL genérica em memória — mesma ideia já usada em sports/prematch/service.ts e
- * sports/competitions/service.ts (Map + fetchedAt), extraída para reutilizar em qualquer sítio
- * que precise de aparar chamadas repetidas a uma API externa (ex: API-Football) sem inventar
- * dados nem esconder erros: numa falha do `fetcher`, a promise rejeita normalmente (nada fica
- * em cache), quem chamou decide o que fazer.
- *
- * Por processo, não partilhada entre instâncias — suficiente aqui porque cada valor cacheado
- * já é, por si só, o resultado de uma chamada de rede cara a evitar repetir, não um dado que
- * precise de estar sincronizado entre réplicas (essas continuam a bater na mesma API-Football
- * de qualquer forma, só que com menos frequência).
- */
+import { createKvTtlCache, type KvTtlCache } from "./redis";
+
 export class TtlCache<V> {
   private store = new Map<string, { value: V; expiresAt: number }>();
 
@@ -30,9 +20,6 @@ export class TtlCache<V> {
   }
 }
 
-/** Coalescing simples: pedidos concorrentes para a mesma chave partilham a mesma promise em
- * voo, em vez de disparar N chamadas idênticas à API externa em paralelo (ex: vários
- * utilizadores a abrir o mesmo evento ao mesmo tempo). */
 export function cached<V>(cache: TtlCache<V>, inFlight: Map<string, Promise<V>>, key: string, fetcher: () => Promise<V>): Promise<V> {
   const hit = cache.get(key);
   if (hit !== undefined) return Promise.resolve(hit);
@@ -43,6 +30,63 @@ export function cached<V>(cache: TtlCache<V>, inFlight: Map<string, Promise<V>>,
   const promise = fetcher()
     .then((value) => {
       cache.set(key, value);
+      inFlight.delete(key);
+      return value;
+    })
+    .catch((err) => {
+      inFlight.delete(key);
+      throw err;
+    });
+  inFlight.set(key, promise);
+  return promise;
+}
+
+/** Cache TTL PARTILHADO entre réplicas Railway via Redis (com fallback em mem se Redis
+ * indisponível). Assíncrono por causa do Redis; usem-no em services que já são async. */
+export class SharedTtlCache<V> implements KvTtlCache<V> {
+  private readonly backend: KvTtlCache<V>;
+  private readonly fallback: TtlCache<V>;
+  private readonly ttlMs: number;
+
+  constructor(namespace: string, ttlMs: number) {
+    this.ttlMs = ttlMs;
+    this.backend = createKvTtlCache<V>(namespace);
+    this.fallback = new TtlCache<V>(this.ttlMs);
+  }
+
+  async get(key: string): Promise<V | undefined> {
+    try {
+      const shared = await this.backend.get(key);
+      if (shared !== undefined) return shared;
+    } catch {
+      /* continua para fallback mem abaixo */
+    }
+    return this.fallback.get(key);
+  }
+
+  async set(key: string, value: V): Promise<void> {
+    try {
+      await this.backend.set(key, value, this.ttlMs);
+    } catch {
+      /* ignora: fallback mem abaixo guarda sempre */
+    }
+    this.fallback.set(key, value);
+  }
+}
+
+export async function sharedCached<V>(
+  cache: SharedTtlCache<V>,
+  inFlight: Map<string, Promise<V>>,
+  key: string,
+  fetcher: () => Promise<V>
+): Promise<V> {
+  const hit = await cache.get(key);
+  if (hit !== undefined) return hit;
+  const pending = inFlight.get(key);
+  if (pending) return pending;
+  const promise = fetcher()
+    .then(async (value) => {
+      await cache.set(key, value);
       inFlight.delete(key);
       return value;
     })

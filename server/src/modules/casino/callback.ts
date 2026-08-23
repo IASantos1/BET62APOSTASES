@@ -5,6 +5,84 @@ import { logger } from "../../lib/logger";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../lib/errors";
 import { applyLedgerMovement } from "../wallet/service";
+import { getRedisClient, isRedisReady } from "../../lib/redis";
+
+// ---------- F2-4 IP whitelist ----------
+function parseIpWhitelist(): string[] {
+  if (!env.CASINO_CALLBACK_IP_WHITELIST) return [];
+  return env.CASINO_CALLBACK_IP_WHITELIST
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+function normalizeIp(ip: string): string {
+  if (ip.startsWith("::ffff:")) return ip.slice(7);
+  return ip;
+}
+function ipMatchesWhitelist(reqIp: string): boolean {
+  const list = parseIpWhitelist();
+  if (list.length === 0) return true;
+  const a = normalizeIp(reqIp);
+  const b = reqIp;
+  return list.some((entry) => {
+    const e = normalizeIp(entry);
+    return e === a || e === b;
+  });
+}
+
+// ---------- F2-4 Nonce replay prevention (Redis SET NX EX 24h + fallback mem) ----------
+const memNonceStore = new Map<string, number>();
+const NONCE_TTL_MS = 24 * 60 * 60 * 1000;
+
+function cleanupMemNonce() {
+  const now = Date.now();
+  for (const [k, exp] of memNonceStore.entries()) {
+    if (exp < now) memNonceStore.delete(k);
+  }
+}
+async function consumeNonce(command: string, body: CallbackEnvelope): Promise<boolean> {
+  const data = body.data ?? ({} as Record<string, unknown>);
+  const parts: string[] = [];
+  if (typeof data.nonce === "string" && data.nonce) parts.push(data.nonce);
+  if (typeof body.check === "string" && body.check) parts.push(body.check);
+  if (typeof body.timestamp === "string" && body.timestamp) parts.push(body.timestamp);
+  if (typeof data.trans_guid === "string" && data.trans_guid) parts.push(`tx:${data.trans_guid}`);
+  if (typeof data.cancel_trans_guid === "string" && data.cancel_trans_guid)
+    parts.push(`ctx:${data.cancel_trans_guid}`);
+  parts.push(`cmd:${command}`);
+  const nonceKey = "bet62:casino:callback_nonce:" + parts.join("|");
+  if (parts.length <= 1) {
+    logger.warn({ command }, "Cassino: callback sem nonce identificável; a aceitar (sem replay prevention)");
+    return true;
+  }
+  const r = getRedisClient();
+  if (r && isRedisReady()) {
+    try {
+      const res = await r.set(nonceKey, "1", "EX", 86400, "NX");
+      if (res === "OK") return true;
+      logger.warn({ command, nonceKey }, "Cassino: nonce duplicado detetado via Redis");
+      return false;
+    } catch (err) {
+      logger.warn({ err: String(err).slice(0, 200) }, "Cassino: Redis nonce falhou, a usar fallback mem");
+    }
+  }
+  cleanupMemNonce();
+  const now = Date.now();
+  const existing = memNonceStore.get(nonceKey);
+  if (existing && existing > now) {
+    logger.warn({ command, nonceKey }, "Cassino: nonce duplicado detetado via fallback mem");
+    return false;
+  }
+  memNonceStore.set(nonceKey, now + NONCE_TTL_MS);
+  return true;
+}
+async function idempotentBalanceResponse(accountId: unknown, res: Response) {
+  const account = typeof accountId === "string" ? accountId : undefined;
+  if (!account) return callbackError(res, "INVALID_ACCOUNT");
+  const casinoAccount = await findCasinoAccount(account);
+  if (!casinoAccount?.user.wallet) return callbackError(res, "ACCOUNT_NOT_FOUND");
+  res.json({ result: 0, status: "OK", data: { balance: toProviderBalance(casinoAccount.user.wallet.balance) } });
+}
 
 // Contrato de callback confirmado pelo utilizador (documentação real do goldslotpalase.com,
 // colada em chat — não um curl+resposta como o resto da integração, ver docs/CASINO_SLOTS.md).
@@ -207,8 +285,14 @@ async function handleStatus(data: { account?: string; trans_guid?: string }, res
 export async function casinoCallbackHandler(req: Request, res: Response) {
   const token = req.header("Callback-Token");
   if (!env.CASINO_CALLBACK_TOKEN || token !== env.CASINO_CALLBACK_TOKEN) {
-    logger.warn({ path: req.path }, "Cassino: callback rejeitado — Callback-Token inválido ou não configurado");
+    logger.warn({ path: req.path, ip: req.ip }, "Cassino: callback rejeitado — Callback-Token inválido ou não configurado");
     return callbackError(res, "UNAUTHORIZED");
+  }
+
+  // F2-4: IP whitelist. Se CASINO_CALLBACK_IP_WHITELIST vazio, ignora (só confia no token).
+  if (!ipMatchesWhitelist(req.ip ?? "")) {
+    logger.warn({ ip: req.ip, whitelist: env.CASINO_CALLBACK_IP_WHITELIST }, "Cassino: callback rejeitado — IP não whitelistado");
+    return callbackError(res, "IP_BLOCKED");
   }
 
   const body = req.body as CallbackEnvelope;
@@ -216,6 +300,15 @@ export async function casinoCallbackHandler(req: Request, res: Response) {
   const data = body?.data ?? {};
 
   try {
+    // F2-4: Nonce replay prevention para comandos mutantes (bet/win/cancel).
+    // Se nonce duplicado → responde idempotentemente com saldo atual, sem transação.
+    if (command === "bet" || command === "win" || command === "cancel") {
+      const nonceFresh = await consumeNonce(command, body);
+      if (!nonceFresh) {
+        return await idempotentBalanceResponse(data.account, res);
+      }
+    }
+
     switch (command) {
       case "authenticate":
         return await handleAuthenticate(data, res);

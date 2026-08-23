@@ -4,6 +4,7 @@ import { asyncHandler } from "../../middleware/errorHandler";
 import { requireAuth, requireRole, type AuthedRequest } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
 import { Errors } from "../../lib/errors";
+import { userRateLimit } from "../../lib/userRateLimit";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
 import { getKycDocumentFile } from "../users/kycDocuments";
@@ -37,6 +38,7 @@ import {
   adjustUserBalance,
   listKycSubmissions,
   reviewKyc,
+  reviewKycDocument,
   listWithdrawalsAdmin,
   listDepositsAdmin,
   listSelfExclusions,
@@ -73,6 +75,22 @@ const router = Router();
 // Todo o painel admin exige um token válido de conta com role ADMIN — não há acesso self-serve
 // a este papel (ver docs/ADMIN.md para como promover a primeira conta via SQL/Prisma Studio).
 router.use(requireAuth, requireRole("ADMIN"));
+
+// F2-5: Rate limit global por utilizador autenticado em TODAS as rotas do painel admin.
+// 180 req/min por admin (geralmente painel é manual, mas protege de fuga de memória ou
+// utilizadores com scripts). Redis prefix admin:global — usa Redis se disponível, senão mem.
+const adminLimiter = userRateLimit({
+  windowMs: 60 * 1000,
+  limit: 180,
+  redisPrefix: "admin:global",
+  message: {
+    error: {
+      code: "TOO_MANY_REQUESTS",
+      message: "Demasiados pedidos no painel admin. Tente novamente em instantes.",
+    },
+  },
+});
+router.use(adminLimiter);
 
 router.get(
   "/dashboard",
@@ -132,9 +150,20 @@ router.get(
 
 router.patch(
   "/kyc/:id",
-  validateBody(z.object({ status: z.enum(["APPROVED", "REJECTED"]), rejectionReason: z.string().max(500).optional() })),
+  validateBody(z.object({ status: z.enum(["APPROVED", "REJECTED"]), rejectionReason: z.string().max(500).optional(), reviewNotes: z.string().max(500).optional() })),
   asyncHandler(async (req: AuthedRequest, res) => {
-    res.json(await reviewKyc(requireParamId(req.params.id), req.body.status, req.body.rejectionReason, req.user!.id));
+    res.json(await reviewKyc(requireParamId(req.params.id), req.body.status, req.body.rejectionReason, req.user!.id, req.body.reviewNotes));
+  })
+);
+
+// Revisão manual por documento KYC individual (ficheiros ID/extrato) — complementa o
+// reviewKyc acima (que é para a KycSubmission, texto do número/tipo). Campos reviewNotes,
+// reviewedByUserId e reviewedAt já existem no schema desde F1-3; esta rota passa a gravá-los.
+router.patch(
+  "/kyc/documents/:id",
+  validateBody(z.object({ status: z.enum(["APPROVED", "REJECTED"]), reviewNotes: z.string().max(500).optional() })),
+  asyncHandler(async (req: AuthedRequest, res) => {
+    res.json(await reviewKycDocument(requireParamId(req.params.id), req.body.status, req.user!.id, req.body.reviewNotes));
   })
 );
 
@@ -190,9 +219,9 @@ router.get(
 
 router.post(
   "/bets/selections/:id/settle",
-  validateBody(z.object({ outcome: z.enum(["WON", "LOST", "VOID"]) })),
+  validateBody(z.object({ outcome: z.enum(["WON", "LOST", "VOID"]), reviewNotes: z.string().max(500).optional() })),
   asyncHandler(async (req: AuthedRequest, res) => {
-    await manualSettleSelection(requireParamId(req.params.id), req.body.outcome, req.user!.id);
+    await manualSettleSelection(requireParamId(req.params.id), req.body.outcome, req.user!.id, req.body.reviewNotes);
     res.json({ ok: true });
   })
 );

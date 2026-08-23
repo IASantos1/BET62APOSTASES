@@ -98,6 +98,7 @@ model KycSubmission {
   reviewedByUserId String?
   reviewedAt       DateTime?
   rejectionReason  String?
+  reviewNotes      String?
   createdAt        DateTime   @default(now())
 
   @@index([userId])
@@ -124,9 +125,21 @@ model KycDocument {
   storagePath String // caminho relativo dentro da pasta de uploads
   mimeType    String
   sizeBytes   Int
+  sha256      String? // hash integridade (para auditoria pós-upload, comparação contra duplas submissões)
+  status      KycDocStatus @default(PENDING)
+  reviewNotes String?
+  reviewedByUserId String?
+  reviewedAt  DateTime?
   uploadedAt  DateTime        @default(now())
 
   @@index([userId])
+  @@index([status])
+}
+
+enum KycDocStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 // ============ RESPONSIBLE GAMBLING ============
@@ -280,6 +293,9 @@ model BetSelection {
   finalHomeScore Int?
   finalAwayScore Int?
   settledAt      DateTime?
+  reviewNotes      String?
+  reviewedByUserId String?
+  reviewedAt       DateTime?
 
   @@index([betId])
   @@index([eventId])
@@ -373,6 +389,7 @@ model Withdrawal {
   reviewedByUserId String?
   reviewedAt       DateTime?
   rejectionReason  String?
+  reviewNotes      String?
   metadata         Json?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
