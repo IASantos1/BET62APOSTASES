@@ -1,11 +1,13 @@
 version = 1
 
 [phases.setup]
-nixPkgs = ["nodejs_24", "pnpm-9"]
+nixPkgs = ["nodejs_24"]
 
 [phases.install]
 cmds = [
   "echo 'Node:' && node -v",
+  "echo 'npm:' && npm -v",
+  "npm install -g pnpm@^9.0.0",
   "echo 'pnpm:' && pnpm -v",
   "pnpm config set store-dir /app/.pnpm-store",
   "pnpm install --frozen-lockfile=false",
@@ -14,7 +16,7 @@ cmds = [
 
 [phases.build]
 cmds = [
-  "echo 'Build server...' && cd server && pnpm run build"
+  "cd server && pnpm run build"
 ]
 
 [start]
