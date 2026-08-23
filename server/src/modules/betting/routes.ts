@@ -4,8 +4,10 @@ import { asyncHandler } from "../../middleware/errorHandler";
 import { requireAuth, type AuthedRequest } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
 import { placeBets, listMyBets } from "./service";
+import { getCashOutOffer, executeCashOut } from "./cashout";
 import { userRateLimit } from "../../lib/userRateLimit";
 import { complianceGate } from "../../lib/complianceGate";
+import { Errors } from "../../lib/errors";
 
 const router = Router();
 
@@ -58,6 +60,30 @@ router.get(
   asyncHandler(async (req: AuthedRequest, res) => {
     const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
     const result = await listMyBets(req.user!.id, { cursor });
+    res.json(result);
+  })
+);
+
+// Ver docs/BETTING.md#cash-out — valor recalculado do zero a cada pedido (nunca cacheado), as
+// odds ao vivo mudam constantemente.
+router.get(
+  "/:id/cashout",
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const betId = req.params.id;
+    if (!betId) throw Errors.badRequest("id em falta");
+    const offer = await getCashOutOffer(req.user!.id, betId);
+    res.json(offer);
+  })
+);
+
+router.post(
+  "/:id/cashout",
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const betId = req.params.id;
+    if (!betId) throw Errors.badRequest("id em falta");
+    const result = await executeCashOut(req.user!.id, betId);
     res.json(result);
   })
 );

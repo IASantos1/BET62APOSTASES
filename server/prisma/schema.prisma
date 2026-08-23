@@ -177,6 +177,7 @@ enum LedgerEntryType {
   BET_PLACED
   BET_WON
   BET_REFUND
+  BET_CASHOUT
   BONUS
   ADJUSTMENT
 }
@@ -245,6 +246,7 @@ enum BetStatus {
   LOST
   VOID         // evento cancelado/adiado — stake devolvido, nunca contado como ganho nem perda
   NEEDS_REVIEW // o mercado não é de um tipo que o motor de liquidação automática sabe resolver (ver betting/settlement.ts) — fica visível na fila de revisão manual do admin
+  CASHED_OUT   // utilizador encerrou a aposta antes do fim por um valor calculado nas odds ao vivo (ver betting/cashout.ts) — nunca liquidada pelo motor automático depois disto
 }
 
 enum BetSelectionStatus {

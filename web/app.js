@@ -1035,50 +1035,235 @@ function renderProfile() {
     (p.kycStatus === "APPROVED" ? "status-ok" : p.kycStatus === "REJECTED" ? "status-bad" : "status-pending");
 
   refreshWithdrawalsList();
-  refreshMyBetsList();
   refreshKycDocumentsList();
 }
 
-const BET_STATUS_LABELS = { PENDING: "Em curso", WON: "Ganha", LOST: "Perdida", VOID: "Anulada", NEEDS_REVIEW: "Em revisão" };
-const BET_STATUS_CLASS = { WON: "status-ok", LOST: "status-bad", PENDING: "status-pending", VOID: "status-pending", NEEDS_REVIEW: "status-pending" };
+// ====================== MINHAS APOSTAS: modal + bilhetes (Em Aberto/Resolvido/Cash Out/Anulada) ======================
+let myBetsCache = [];
+let myBetsCurrentTab = "open";
+let myBetsLiveRefreshTimer = null;
 
-async function refreshMyBetsList() {
-  const container = document.getElementById("my-bets-list");
-  if (!container || !Bet62Api.isAuthenticated()) return;
+const MYBETS_EMPTY_LABEL = {
+  open: "Sem apostas em aberto",
+  resolved: "Sem apostas resolvidas",
+  cashout: "Ainda não fez nenhum cash out",
+  void: "Sem apostas anuladas",
+};
+
+const TICKET_STATUS_META = {
+  PENDING: { cls: "st-pending", label: "Em Aberto" },
+  WON: { cls: "st-won", label: "Ganha" },
+  LOST: { cls: "st-lost", label: "Perdida" },
+  VOID: { cls: "st-void", label: "Anulada" },
+  NEEDS_REVIEW: { cls: "st-pending", label: "Em Revisão" },
+  CASHED_OUT: { cls: "st-cashout", label: "Cash Out" },
+};
+
+function betMatchesTab(b, tab) {
+  if (tab === "open") return b.status === "PENDING";
+  if (tab === "resolved") return b.status === "WON" || b.status === "LOST" || b.status === "NEEDS_REVIEW";
+  if (tab === "cashout") return b.status === "CASHED_OUT";
+  if (tab === "void") return b.status === "VOID";
+  return false;
+}
+
+function openMyBetsModal() {
+  if (!requireLogin()) return;
+  closeDrawers();
+  document.getElementById("mybets-modal").classList.remove("hidden");
+  ensureLiveSocket(); // para os bilhetes Em Aberto poderem mostrar relógio/placar ao vivo
+  loadMyBets();
+  startMyBetsLiveRefresh();
+}
+
+function closeMyBetsModal() {
+  document.getElementById("mybets-modal").classList.add("hidden");
+  stopMyBetsLiveRefresh();
+}
+
+function selectMyBetsTab(tab) {
+  myBetsCurrentTab = tab;
+  document.querySelectorAll("#mybets-tabs .mybets-tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
+  renderMyBetsBody();
+}
+
+async function loadMyBets() {
+  const body = document.getElementById("mybets-body");
+  if (!body) return;
+  body.innerHTML = skeletonCardsHtml(3);
   try {
     const { bets } = await Bet62Api.listMyBets();
-    if (!bets.length) {
-      container.innerHTML = '<div class="empty-note">Sem apostas ainda</div>';
-      return;
-    }
-    container.innerHTML = bets
-      .map((b) => {
-        const selectionsHtml = b.selections
-          .map(
-            (s) =>
-              `<div class="bs-row-sel" style="margin:2px 0">${s.home} vs ${s.away} — ${translateMarketDisplayName(s.market, s.sport, [s.selection], s.home, s.away)}: <b>${translateSelectionLabel(s.selection)}</b> @ ${Number(s.odd).toFixed(2)}</div>`
-          )
-          .join("");
-        const resultLine =
-          b.status === "WON" || b.status === "VOID"
-            ? `<div style="font-weight:700;color:var(--gold)">€ ${Number(b.payout).toFixed(2)}</div>`
-            : b.status === "LOST"
-              ? `<div style="color:var(--muted)">€ 0.00</div>`
-              : `<div style="color:var(--muted)">Retorno potencial € ${Number(b.potentialReturn).toFixed(2)}</div>`;
-        return `
-        <div class="limit-row" style="flex-direction:column;align-items:stretch;gap:6px;padding:12px 0">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span>${b.type === "MULTIPLA" ? "Múltipla" : "Simples"} — € ${Number(b.stake).toFixed(2)}</span>
-            <span class="status-badge ${BET_STATUS_CLASS[b.status] || "status-pending"}">${BET_STATUS_LABELS[b.status] || b.status}</span>
-          </div>
-          ${selectionsHtml}
-          ${resultLine}
-        </div>`;
-      })
-      .join("");
+    myBetsCache = bets;
+    renderMyBetsBody();
   } catch {
-    /* silencioso */
+    body.innerHTML = '<div class="empty-note">Não foi possível carregar as apostas.</div>';
   }
+}
+
+function renderMyBetsBody() {
+  const body = document.getElementById("mybets-body");
+  if (!body) return;
+  const bets = myBetsCache.filter((b) => betMatchesTab(b, myBetsCurrentTab));
+  if (!bets.length) {
+    body.innerHTML = `<div class="empty-note">${MYBETS_EMPTY_LABEL[myBetsCurrentTab]}</div>`;
+    return;
+  }
+  body.innerHTML = bets.map((b) => betTicketHtml(b)).join("");
+  if (myBetsCurrentTab === "open") refreshMyBetsCashOutOffers();
+}
+
+function betTicketLegHtml(s, isPending) {
+  const marketPt = translateMarketDisplayName(s.market, s.sport, [s.selection], s.home, s.away);
+  const selPt = translateSelectionLabel(s.selection);
+  const liveEvent = isPending ? liveEventsById.get(s.eventId) : null;
+  const liveHtml = liveEvent
+    ? `<div class="bet-ticket-live"><span class="live-dot"></span> ${liveEvent.minuteOrPeriod || "AO VIVO"} • ${liveEvent.homeScore ?? "-"} - ${liveEvent.awayScore ?? "-"}</div>`
+    : "";
+  return `
+    <div class="bet-ticket-leg" data-eid="${s.eventId}">
+      <div class="bet-ticket-leg-teams">${s.home} vs ${s.away}</div>
+      <div class="bet-ticket-leg-market">${marketPt}: <b>${selPt}</b> <span class="bet-ticket-leg-odd">@ ${Number(s.odd).toFixed(2)}</span></div>
+      ${liveHtml}
+    </div>`;
+}
+
+function betTicketHtml(b) {
+  const isPending = b.status === "PENDING";
+  const anyLegLive = isPending && b.selections.some((s) => liveEventsById.has(s.eventId));
+  const stateClass = isPending ? (anyLegLive ? "is-live" : "is-open") : b.status === "WON" ? "is-won" : b.status === "LOST" ? "is-lost" : b.status === "CASHED_OUT" ? "is-cashout" : "is-void";
+  const statusMeta = TICKET_STATUS_META[b.status] || { cls: "st-pending", label: b.status };
+  const statusCls = anyLegLive && isPending ? "st-live" : statusMeta.cls;
+  const statusLabel = anyLegLive && isPending ? "Ao Vivo" : statusMeta.label;
+  const legsHtml = b.selections.map((s) => betTicketLegHtml(s, isPending)).join("");
+  const modeLabel = b.type === "MULTIPLA" ? "Múltipla" : b.type === "BET_BUILDER" ? "Bet Builder" : "Simples";
+
+  const returnLabel =
+    b.status === "WON" ? "Ganho" : b.status === "CASHED_OUT" ? "Recebido" : b.status === "VOID" ? "Devolvido" : b.status === "LOST" ? "Retorno" : "Retorno potencial";
+  const returnValue =
+    b.status === "WON" || b.status === "CASHED_OUT" || b.status === "VOID"
+      ? Number(b.payout).toFixed(2)
+      : b.status === "LOST"
+        ? "0.00"
+        : Number(b.potentialReturn).toFixed(2);
+
+  const cashoutBtn = isPending
+    ? `<button class="bet-ticket-cashout-btn" id="cashout-btn-${b.id}" onclick='requestCashOut(${JSON.stringify(b.id)})' disabled>A verificar Cash Out…</button>`
+    : "";
+
+  return `
+    <div class="bet-ticket ${stateClass}" data-bet-id="${b.id}">
+      <div class="bet-ticket-top">
+        <span class="bet-ticket-mode">${modeLabel} • ${b.selections.length} seleç${b.selections.length > 1 ? "ões" : "ão"}</span>
+        <span class="bet-ticket-status ${statusCls}">${statusLabel}</span>
+      </div>
+      <div class="bet-ticket-legs">${legsHtml}</div>
+      <div class="bet-ticket-punch"></div>
+      <div class="bet-ticket-bottom">
+        <div class="bet-ticket-figures">
+          <div>Stake<b>€ ${Number(b.stake).toFixed(2)}</b></div>
+          <div>Odd${b.selections.length > 1 ? " total" : ""}<b>${Number(b.totalOdd).toFixed(2)}</b></div>
+          <div>${returnLabel}<b>€ ${returnValue}</b></div>
+        </div>
+        ${cashoutBtn}
+      </div>
+      <div class="bet-ticket-barcode"></div>
+    </div>`;
+}
+
+// Só chamado para os bilhetes Em Aberto — pede à API o valor de cash out AGORA MESMO para cada
+// aposta visível (nunca calculado no browser: as odds ao vivo e a regra de elegibilidade vivem
+// só no servidor, ver server/src/modules/betting/cashout.ts).
+async function refreshMyBetsCashOutOffers() {
+  const openBets = myBetsCache.filter((b) => b.status === "PENDING");
+  await Promise.all(
+    openBets.map(async (b) => {
+      const btn = document.getElementById(`cashout-btn-${b.id}`);
+      if (!btn) return;
+      try {
+        const offer = await Bet62Api.getCashOutOffer(b.id);
+        if (offer.eligible && offer.value !== undefined) {
+          btn.disabled = false;
+          btn.textContent = `Cash Out € ${Number(offer.value).toFixed(2)}`;
+          btn.dataset.value = offer.value;
+        } else {
+          btn.disabled = true;
+          btn.textContent = "Cash Out indisponível";
+        }
+      } catch {
+        btn.disabled = true;
+        btn.textContent = "Cash Out indisponível";
+      }
+    })
+  );
+}
+
+async function requestCashOut(betId) {
+  const btn = document.getElementById(`cashout-btn-${betId}`);
+  const value = btn?.dataset.value;
+  if (!value) return;
+  if (!confirm(`Confirma o Cash Out desta aposta agora por € ${Number(value).toFixed(2)}? Esta ação não pode ser desfeita.`)) return;
+  btn.disabled = true;
+  btn.textContent = "A processar…";
+  try {
+    const result = await Bet62Api.cashOutBet(betId);
+    alert(`✅ Cash Out realizado: € ${Number(result.value).toFixed(2)} creditado na sua carteira.`);
+    await loadBalance();
+    await loadMyBets();
+  } catch (err) {
+    alert("Erro: " + err.message);
+    await loadMyBets(); // resincroniza (o valor/estado pode ter mudado entretanto)
+  }
+}
+
+function startMyBetsLiveRefresh() {
+  stopMyBetsLiveRefresh();
+  myBetsLiveRefreshTimer = setInterval(() => {
+    if (document.getElementById("mybets-modal")?.classList.contains("hidden")) return;
+    if (myBetsCurrentTab !== "open") return;
+    updateMyBetsLiveBadges();
+    refreshMyBetsCashOutOffers();
+  }, 12000);
+}
+
+function stopMyBetsLiveRefresh() {
+  if (myBetsLiveRefreshTimer) {
+    clearInterval(myBetsLiveRefreshTimer);
+    myBetsLiveRefreshTimer = null;
+  }
+}
+
+// Atualiza só o relógio/placar de cada perna já no DOM (sem reconstruir os bilhetes — perderia o
+// botão de Cash Out já carregado) — chamado a cada mensagem do WebSocket ao vivo enquanto o modal
+// está aberto no separador "Em Aberto", e também no timer de refresco periódico.
+function updateMyBetsLiveBadges() {
+  document.querySelectorAll("#mybets-body .bet-ticket-leg[data-eid]").forEach((legEl) => {
+    const liveEvent = liveEventsById.get(legEl.dataset.eid);
+    let liveEl = legEl.querySelector(".bet-ticket-live");
+    if (liveEvent) {
+      const html = `<span class="live-dot"></span> ${liveEvent.minuteOrPeriod || "AO VIVO"} • ${liveEvent.homeScore ?? "-"} - ${liveEvent.awayScore ?? "-"}`;
+      if (!liveEl) {
+        liveEl = document.createElement("div");
+        liveEl.className = "bet-ticket-live";
+        legEl.appendChild(liveEl);
+        const ticketEl = legEl.closest(".bet-ticket");
+        ticketEl?.classList.add("is-live");
+        const statusEl = ticketEl?.querySelector(".bet-ticket-status");
+        if (statusEl && statusEl.classList.contains("st-pending")) {
+          statusEl.classList.replace("st-pending", "st-live");
+          statusEl.textContent = "Ao Vivo";
+        }
+      }
+      liveEl.innerHTML = html;
+    } else if (liveEl) {
+      liveEl.remove();
+    }
+  });
+}
+
+function updateMyBetsLiveBadgesIfOpen() {
+  const modal = document.getElementById("mybets-modal");
+  if (!modal || modal.classList.contains("hidden") || myBetsCurrentTab !== "open") return;
+  updateMyBetsLiveBadges();
 }
 
 async function savePersonal() {
@@ -1310,6 +1495,7 @@ function updateHeader() {
   const authed = Bet62Api.isAuthenticated();
   document.getElementById("btn-header-login").classList.toggle("hidden", authed);
   document.getElementById("balance-display").classList.toggle("hidden", !authed);
+  document.getElementById("btn-header-mybets").classList.toggle("hidden", !authed);
   document.getElementById("btn-header-deposit").classList.toggle("hidden", !authed);
   document.getElementById("btn-avatar").classList.toggle("hidden", !authed);
 
@@ -1643,6 +1829,7 @@ function ensureLiveSocket() {
       currentMarketEvent = liveEventsById.get(currentMarketEvent.id);
     }
     if (currentMarketEvent && pageHistory[pageHistory.length - 1] === "market") renderMarketPage();
+    updateMyBetsLiveBadgesIfOpen();
   };
 }
 
