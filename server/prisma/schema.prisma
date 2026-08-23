@@ -503,6 +503,7 @@ model FixtureMapping {
   leagueMapping        LeagueMapping?  @relation(fields: [leagueMappingId], references: [id], onDelete: SetNull)
   kickoffPulsescore    DateTime?
   kickoffApiFootball   DateTime?
+  invertedHomeAway     Boolean?        // true = a API-Football tem casa/fora TROCADOS em relação à Pulsescore (quando fixtureMatch.invertedHomeAway === true)
   confidence           Int
   mappingMethod        MappingMethod
   verified             Boolean         @default(false)
@@ -512,6 +513,7 @@ model FixtureMapping {
 
   @@index([apiFootballFixtureId])
   @@index([confidence])
+  @@index([invertedHomeAway])
 }
 
 // Dicionário de aliases — permite ensinar o sistema a reconhecer "Man Utd" == "Manchester

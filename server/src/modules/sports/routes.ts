@@ -6,7 +6,7 @@ import { getTodayCompetitions } from "./competitions/service";
 import { fetchEventById, fetchLiveEventById } from "./pulsescore/client";
 import { enrichEventFromOtherBookmakers } from "./pulsescore/crossBookmakerFallback";
 import { getHeadToHead, getPredictions, getStandings, type HeadToHeadMatch } from "./apifootball/client";
-import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent } from "./mapping/service";
+import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent, getFullFixtureMapping } from "./mapping/service";
 import { getUnifiedMatchData } from "./unified/service";
 import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
@@ -82,6 +82,19 @@ router.get(
       logger.warn({ err, eventId: rawId }, "Pulsescore: falha ao preencher mercados/estatísticas em falta via outras bookmakers");
       return event!;
     });
+
+    // DISPARAR LAZY MAPPING API-Football em background: mesmo que o user nunca abra o /stats
+    // nem o /matches/:id/live, o simples acto de abrir o Match Tracker já guarda permanentemente
+    // os IDs de equipa/liga/fixture na Base de Dados, para que os próximos pedidos (H2H,
+    // previsões, classificação, estatísticas) já encontrem tudo mapeado e NÃO VOLTEM a chamar
+    // a API-Football para ID resolution (só para os dados finais de estatísticas/H2H/etc).
+    // Ignorado completamente se falhar (não quebra o refresh do evento).
+    if ((sport as Sport) === "football") {
+      void resolveFixtureForEvent(completed).catch((err) => {
+        logger.debug({ err, eventId: completed.id }, "Mapping AF lazy trigger: falhou — ignorado (não bloqueia refresh do evento)");
+      });
+    }
+
     res.json({ event: completed });
   })
 );
@@ -134,6 +147,57 @@ router.get(
       totalMarkets: event.odds.length,
       marketsCount,
       selectionsCount,
+    });
+  })
+);
+
+/**
+ * Debug do motor de mapeamento API-Football (admin) — devolve o estado atual da linha
+ * FixtureMapping: home/away/league teamIds, fixtureId da AF, confiança, verificação manual,
+ * e a flag CRÍTICA invertedHomeAway (true = as estatísticas da AF precisam de ser trocadas
+ * casa↔fora para continuar alinhadas com a Pulsescore).
+ *
+ * Se o mapping ainda não tiver sido criado, dispara-o nesta mesma chamada (lazy) para
+ * já ficar disponível nas próximas.
+ */
+router.get(
+  "/events/:id/mapping",
+  asyncHandler(async (req, res) => {
+    const sport = req.query.sport;
+    if (typeof sport !== "string" || !ALL_SPORTS.includes(sport as Sport)) {
+      throw Errors.badRequest("Parâmetro sport em falta ou inválido");
+    }
+    const rawId = req.params.id.startsWith("pulsescore:") ? req.params.id.slice("pulsescore:".length) : req.params.id;
+
+    let event: LiveEvent | null = hybridSportsService.getById(req.params.id) ?? null;
+    if (!event) {
+      try {
+        event = await fetchEventById(sport as Sport, rawId);
+      } catch {
+        try {
+          event = await fetchLiveEventById(rawId, sport as Sport);
+        } catch {
+          event = null;
+        }
+      }
+    }
+    if (!event) throw Errors.notFound("Evento não encontrado");
+
+    const state = await getFullFixtureMapping(event);
+
+    res.json({
+      pulsescoreEventKey: event.id,
+      sport: event.sport,
+      home: event.home,
+      away: event.away,
+      league: event.league,
+      startTime: event.startTime,
+      mapping: state,
+      willHaveStats:
+        event.sport === "football" &&
+        Boolean(state.apiFootballFixtureId) &&
+        state.confidence >= 70,
+      invertedHomeAway: state.invertedHomeAway, // true = stats AF precisam swap casa↔fora
     });
   })
 );

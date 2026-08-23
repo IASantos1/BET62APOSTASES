@@ -12,40 +12,126 @@ import type { SourcedPair, UnifiedMatchData } from "./types";
 // propósito — não são um tipo de estatística que a API-Football devolva (nem a Pulsescore, em
 // nenhuma amostra real confirmada) — ficam sempre `{home:null,away:null,source:null}` em vez de
 // inventados, ver docs/UNIFIED_MATCH_DATA.md.
+// Mapeamento TIPO_ESTATÍSTICA_AF (chaves) -> campo UnifiedMatchData.statistics.
+// INCLUI SINÓNIMOS (várias keys para o mesmo field) porque a API-Football por vezes envia
+// nomes ligeiramente diferentes entre ligas/planos (ex: "Passes %" vs "Pass accuracy").
+// Lookup é feito via normalizeStatType() abaixo: lowercase + sem espaços/acentos/sinais.
 const AF_TYPE_TO_FIELD: Record<string, keyof Omit<UnifiedMatchData["statistics"], "attacks" | "dangerousAttacks" | "momentum">> = {
   "Ball Possession": "possession",
+  "Ball Possession %": "possession",
+  "Possession": "possession",
+  "Possession %": "possession",
+  "ball_possession": "possession",
+
   "Total Shots": "shots",
+  "Shots Total": "shots",
+  "total_shots": "shots",
+  "shots": "shots",
+
   "Shots on Goal": "shotsOnTarget",
+  "Shots On Target": "shotsOnTarget",
+  "Shots Ontarget": "shotsOnTarget",
+  "On Target Shots": "shotsOnTarget",
+  "shots_on_goal": "shotsOnTarget",
+
   "Shots off Goal": "shotsOffTarget",
+  "Shots Off Target": "shotsOffTarget",
+  "Off Target Shots": "shotsOffTarget",
+  "shots_off_goal": "shotsOffTarget",
+
   "Blocked Shots": "blockedShots",
+  "Shots Blocked": "blockedShots",
+  "blocked_shots": "blockedShots",
+
   "Corner Kicks": "corners",
-  Fouls: "fouls",
-  Offsides: "offsides",
+  "Corners": "corners",
+  "Total Corners": "corners",
+  "corner_kicks": "corners",
+
+  "Fouls": "fouls",
+  "Fouls Committed": "fouls",
+  "fouls": "fouls",
+
+  "Offsides": "offsides",
+  "Offside": "offsides",
+  "offsides": "offsides",
+
   "Yellow Cards": "yellowCards",
+  "Yellow Card": "yellowCards",
+  "yellow_cards": "yellowCards",
+
   "Red Cards": "redCards",
+  "Red Card": "redCards",
+  "red_cards": "redCards",
+
   "Total passes": "passes",
+  "Total Passes": "passes",
+  "Passes": "passes",
+  "Passes Attempted": "passes",
+  "total_passes": "passes",
+  "passes": "passes",
+
   "Passes %": "passAccuracy",
+  "Pass Accuracy": "passAccuracy",
+  "Pass accuracy %": "passAccuracy",
+  "Pass Accuracy %": "passAccuracy",
+  "Accurate Passes %": "passAccuracy",
+  "pass_accuracy": "passAccuracy",
+
   "Goalkeeper Saves": "saves",
+  "Goal Keeper Saves": "saves",
+  "Saves": "saves",
+  "goalkeeper_saves": "saves",
+
+  "Shots insidebox": "shots",
+  "Shots inside box": "shots",
+  "Shots outsidebox": "shots",
+  "Shots outside box": "shots",
+  "Accurate passes": "passes",
+  "Passes Accurate": "passes",
+  "Passes accurate": "passes",
 };
+
+// Normaliza o s.type da API-Football para lookup no mapa acima:
+// lowercase + remove tudo exceto letras/números (espaços, %, -, _, pontuação) —
+// de forma que "Ball Possession %" e "ball possession" e "Ball_Possession" deem MESMO key.
+// Também mantém a chave original intacta (como veio) como fallback.
+function normalizeStatKey(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+const NORMALIZED_AF_MAP = new Map<string, keyof Omit<UnifiedMatchData["statistics"], "attacks" | "dangerousAttacks" | "momentum">>();
+for (const [k, v] of Object.entries(AF_TYPE_TO_FIELD)) {
+  NORMALIZED_AF_MAP.set(normalizeStatKey(k), v);
+}
 
 function parseStatValue(raw: number | string | null | undefined): number | null {
   if (raw === null || raw === undefined) return null;
   if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
-  const n = Number(raw.replace("%", "").trim());
+  const n = Number(String(raw).replace("%", "").trim());
   return Number.isFinite(n) ? n : null;
 }
 
-function apiFootballStatsByField(resp: ApiFootballStatisticsResponse | null): Partial<Record<string, { home: number | null; away: number | null }>> {
+function apiFootballStatsByField(
+  resp: ApiFootballStatisticsResponse | null,
+  invertedHomeAway: boolean = false
+): Partial<Record<string, { home: number | null; away: number | null }>> {
   if (!resp?.response?.length) return {};
-  const [homeTeam, awayTeam] = resp.response;
+  const resp0 = resp.response[0];
+  const resp1 = resp.response[1];
+  // AF normalmente envia [home, away] por ordem, mas quando houver inversão em relação
+  // à Pulsescore (gravação invertedHomeAway=true), trocamos os dois lados para a
+  // estatística continuar alinhada com a equipa CASA/FORA do evento (Pulsescore).
+  const homeTeam = invertedHomeAway ? resp1 : resp0;
+  const awayTeam = invertedHomeAway ? resp0 : resp1;
+
   const out: Record<string, { home: number | null; away: number | null }> = {};
   for (const s of homeTeam?.statistics ?? []) {
-    const field = AF_TYPE_TO_FIELD[s.type];
+    const field = NORMALIZED_AF_MAP.get(normalizeStatKey(s.type)) ?? AF_TYPE_TO_FIELD[s.type];
     if (!field) continue;
     (out[field] ??= { home: null, away: null }).home = parseStatValue(s.value);
   }
   for (const s of awayTeam?.statistics ?? []) {
-    const field = AF_TYPE_TO_FIELD[s.type];
+    const field = NORMALIZED_AF_MAP.get(normalizeStatKey(s.type)) ?? AF_TYPE_TO_FIELD[s.type];
     if (!field) continue;
     (out[field] ??= { home: null, away: null }).away = parseStatValue(s.value);
   }
@@ -66,18 +152,37 @@ const NEVER_AVAILABLE: SourcedPair = { home: null, away: null, source: null };
 async function buildFromLiveEvent(event: LiveEvent): Promise<UnifiedMatchData> {
   const psStats = event.statistics;
   let afStats: Partial<Record<string, { home: number | null; away: number | null }>> = {};
-  let mapping = { apiFootballFixtureId: null as number | null, confidence: 0, verified: false };
+  let mapping: { apiFootballFixtureId: number | null; confidence: number; verified: boolean } = {
+    apiFootballFixtureId: null,
+    confidence: 0,
+    verified: false,
+  };
 
   if (event.sport === "football") {
     try {
+      // Primeiro: tentar fixture mapeado (pode já ter resolvido anteriormente nesta mesma
+      // chamada ou em pedidos passados). O resolved.invertedHomeAway é a fonte VERDADEIRA.
       const resolved = await resolveFixtureForEvent(event);
-      if (resolved) {
-        mapping.apiFootballFixtureId = resolved.fixtureId;
-        const stats = await getFixtureStatistics(resolved.fixtureId).catch(() => null);
-        afStats = apiFootballStatsByField(stats);
-      }
+      // Leitura BD por baixo, para ter sempre a flag invertedHomeAway — mesmo que o
+      // resolveFixtureForEvent tenha sido null (ex: confiança baixa).
       const cached = await prisma.fixtureMapping.findUnique({ where: { pulsescoreEventKey: event.id } });
-      if (cached) mapping = { apiFootballFixtureId: cached.apiFootballFixtureId, confidence: cached.confidence, verified: cached.verified };
+      let inverted: boolean = false;
+      if (cached) {
+        mapping = {
+          apiFootballFixtureId: cached.apiFootballFixtureId,
+          confidence: cached.confidence,
+          verified: cached.verified,
+        };
+        if (cached.invertedHomeAway === true) inverted = true;
+      }
+      if (resolved) {
+        mapping.apiFootballFixtureId = resolved.fixtureId; // garantido != null
+        mapping.confidence = resolved.confidence;
+        mapping.verified = resolved.verified;
+        if (resolved.invertedHomeAway === true) inverted = true;
+        const stats = await getFixtureStatistics(resolved.fixtureId).catch(() => null);
+        afStats = apiFootballStatsByField(stats, inverted);
+      }
     } catch (err) {
       logger.warn({ err, matchId: event.id }, "Unified: falha ao obter estatísticas complementares da API-Football");
     }
