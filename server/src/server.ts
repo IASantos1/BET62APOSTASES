@@ -6,7 +6,7 @@ import { attachSportsWebsocketGateway } from "./modules/sports/websocket/gateway
 import { hybridSportsService } from "./modules/sports/hybridService";
 import { seedDefaultAliases } from "./modules/sports/mapping/aliasStore";
 import { settleEventFinished, checkEarlySettlement, sweepStaleBets } from "./modules/betting/settlement";
-import { sweepExpiredPromotions } from "./modules/promotions/service";
+import { sweepExpiredPromotions, seedRecommendedLaunchPromotion } from "./modules/promotions/service";
 import type { LiveEvent } from "./modules/sports/types";
 
 const app = createApp();
@@ -15,6 +15,7 @@ const server = http.createServer(app);
 attachSportsWebsocketGateway(server);
 hybridSportsService.start();
 seedDefaultAliases().catch((err) => logger.warn({ err }, "Mapping: falha ao semear aliases por omissão"));
+seedRecommendedLaunchPromotion().catch((err) => logger.warn({ err }, "Promotions: falha ao semear a promoção de lançamento"));
 
 // Liquidação de apostas — ver docs/BETTING.md. "remove" é o único momento em que o placar
 // final de um evento ainda está disponível (a Pulsescore nunca reporta um estado "finished"
