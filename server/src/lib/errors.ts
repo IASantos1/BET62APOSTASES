@@ -24,5 +24,6 @@ export const Errors = {
     new AppError(403, "SELF_EXCLUDED", message),
   kycRequired: (message = "Verificação de identidade (KYC) necessária para esta ação") =>
     new AppError(403, "KYC_REQUIRED", message),
-  internal: (message = "Erro interno do servidor") => new AppError(500, "INTERNAL_ERROR", message),
+  internal: (message = "Erro interno do servidor", details?: unknown) =>
+    new AppError(500, "INTERNAL_ERROR", message, details),
 };

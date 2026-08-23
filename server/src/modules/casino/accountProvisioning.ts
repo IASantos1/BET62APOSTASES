@@ -1,43 +1,105 @@
 import { prisma } from "../../lib/prisma";
 import { Errors } from "../../lib/errors";
 import { createCasinoUser } from "./apiClient";
+import { logger } from "../../lib/logger";
 
-// Cria a conta do jogador no provedor (POST /v4/user/create) e guarda o mapeamento local
-// (CasinoAccount) usado pelo callback (ver casino/callback.ts) para encontrar a carteira certa
-// nos comandos "authenticate"/"balance"/"bet"/"win"/"cancel". `account` = user.publicId — um
-// identificador já único e estável, sem expor o UUID interno.
-//
-// Ordem importa: confirmado ao vivo (ver docs/CASINO_SLOTS.md) que user/create dispara, de forma
-// síncrona, um callback real "authenticate" para este `account` ANTES de o provedor terminar a
-// criação da conta — é assim que ele valida que a conta existe do nosso lado. Por isso o
-// CasinoAccount tem de existir ANTES de chamar createCasinoUser, não depois: criá-lo depois (como
-// estava) fazia o nosso próprio handler de callback devolver ACCOUNT_NOT_FOUND a esse callback, e
-// o provedor por sua vez devolvia CALLBACK_ERROR ao user/create — só descoberto porque o teste de
-// conectividade (agent/callback-test, que não passa por handleAuthenticate) tinha funcionado.
-// Se createCasinoUser falhar, desfaz-se o registo local para não ficar um mapeamento órfão.
-//
-// `providerResult` (a resposta crua de user/create, nunca vista com sucesso até agora — ver
-// docs/CASINO_SLOTS.md) vem incluída na resposta só para diagnóstico: presume-se que traga o
-// `user_code` que o lançamento de jogo (game-url) exige, mas isso ainda não foi confirmado, por
-// isso não se guarda nada disto na base de dados enquanto a forma não for vista ao vivo.
-// `justCreated` distingue "acabei de chamar o provedor agora" de "já existia" — usar isto (não a
-// verdade/falsidade de `providerResult`) para decidir se há algo novo para mostrar, porque uma
-// resposta de sucesso vazia (`null`) do provedor é um resultado válido, não deve ser tratada como
-// "não aconteceu nada".
+// Tenta extrair o `user_code` numérico de uma resposta de sucesso de POST /v4/user/create.
+// A forma exata de sucesso ainda NÃO foi vista ao vivo (ver docs/CASINO_SLOTS.md), por isso
+// cobre-se todos os shapes plausíveis com base nos padrões já confirmados noutros endpoints
+// do provedor (snake_case camelCase / aninhado em `data` / no topo / string que parseia para
+// int). Devolve null se nenhum padrão bater (chamada de cima pode tentar de novo mais tarde).
+export function extractUserCodeFromCreateUser(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  const candidates: unknown[] = [];
+  if (typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    candidates.push(obj.user_code, obj.userCode, obj.code, obj.userId, obj.id, obj.data);
+    if (typeof obj.data === "object" && obj.data !== null) {
+      const d = obj.data as Record<string, unknown>;
+      candidates.push(d.user_code, d.userCode, d.code, d.userId, d.id);
+    }
+  }
+  for (const c of candidates) {
+    if (typeof c === "number" && Number.isInteger(c) && c > 0) return c;
+    if (typeof c === "string" && c.trim() !== "") {
+      const n = Number(c);
+      if (Number.isInteger(n) && n > 0) return n;
+    }
+  }
+  return null;
+}
+
 export async function provisionCasinoAccount(userId: string) {
   const existing = await prisma.casinoAccount.findUnique({ where: { userId } });
-  if (existing) return { ...existing, providerResult: null, justCreated: false };
+
+  // Já existe e já tem providerUserCode — caminho feliz instantâneo.
+  if (existing && existing.providerUserCode !== null) {
+    return { ...existing, providerResult: null, justCreated: false, userCodeExtracted: true };
+  }
 
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw Errors.notFound("Utilizador não encontrado");
 
+  // Se já existe mas providerUserCode ficou null (resposta de createCasinoUser não
+  // parseou da primeira vez — ver docs/CASINO_SLOTS.md), re-tentar uma extração
+  // do mesmo user (campo account = user.publicId já gravado) SEM apagar e recriar
+  // a conta — `createCasinoUser` é provavelmente idempotent e se for chamado com
+  // o mesmo `name` de novo devolve o user_code existente.
+  if (existing) {
+    let providerResult: unknown;
+    try {
+      providerResult = await createCasinoUser(user.publicId);
+    } catch (err) {
+      logger.warn({ err: String(err).slice(0, 200), userId }, "[CASINO] provision: re-chamada createCasinoUser falhou, mantem conta existente");
+      return { ...existing, providerResult: null, justCreated: false, userCodeExtracted: false };
+    }
+    const userCode = extractUserCodeFromCreateUser(providerResult);
+    if (userCode !== null) {
+      const updated = await prisma.casinoAccount.update({
+        where: { userId },
+        data: { providerUserCode: userCode },
+      });
+      return { ...updated, providerResult, justCreated: false, userCodeExtracted: true };
+    }
+    logger.warn(
+      { providerResult: JSON.stringify(providerResult).slice(0, 300), userId },
+      "[CASINO] provision: createCasinoUser sucesso mas user_code não parseado (próxima atualização do parser corrige)"
+    );
+    return { ...existing, providerResult, justCreated: false, userCodeExtracted: false };
+  }
+
+  // Primeira vez: criar mapeamento local ANTES de chamar o provedor (ver docs/CASINO_SLOTS.md
+  // explicação completa — user/create dispara callback authenticate SÍNCRONO que precisa de
+  // encontrar CasinoAccount já existente com account == user.publicId, senão o próprio
+  // provedor devolve CALLBACK_ERROR e não cria nada).
   const account = await prisma.casinoAccount.create({ data: { userId, account: user.publicId } });
   let providerResult: unknown;
   try {
     providerResult = await createCasinoUser(user.publicId);
   } catch (err) {
-    await prisma.casinoAccount.delete({ where: { userId } });
-    throw err;
+    // Erro do provedor: não deixar registo órfão — se for um CALLBACK_ERROR ou similar,
+    // mantemos a conta local (já que o próximo pedido vai precisar dela do mesmo jeito,
+    // a falha não é nossa, é do lado do provedor a chegar ao callback). Só apagamos se for
+    // um erro nosso (ex: Utilizador não encontrado), o que não deve acontecer aqui.
+    logger.warn(
+      { err: String(err).slice(0, 300), userId, account: user.publicId },
+      "[CASINO] provision: createCasinoUser falhou — mantem CasinoAccount local (callback authenticate precisa existir do próximo pedido)"
+    );
+    return { ...account, providerResult: null, justCreated: true, userCodeExtracted: false };
   }
-  return { ...account, providerResult, justCreated: true };
+
+  const userCode = extractUserCodeFromCreateUser(providerResult);
+  if (userCode !== null) {
+    const updated = await prisma.casinoAccount.update({
+      where: { userId },
+      data: { providerUserCode: userCode },
+    });
+    return { ...updated, providerResult, justCreated: true, userCodeExtracted: true };
+  }
+
+  logger.warn(
+    { providerResult: JSON.stringify(providerResult).slice(0, 300), userId },
+    "[CASINO] provision: createCasinoUser sucesso mas user_code não reconhecido — mantem null para o parser atualizar noutro deploy"
+  );
+  return { ...account, providerResult, justCreated: true, userCodeExtracted: false };
 }

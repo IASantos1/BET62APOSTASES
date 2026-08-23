@@ -566,11 +566,18 @@ model CasinoGame {
 // "account" é o identificador enviado nesse pedido (hoje: user.publicId) e que o provedor
 // devolve depois nos comandos "authenticate"/"balance" do callback.
 model CasinoAccount {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  account   String   @unique
-  createdAt DateTime @default(now())
+  id               String   @id @default(uuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account          String   @unique
+  // user_code que o provedor devolve em POST /v4/user/create (resposta de sucesso) — necessário
+  // para todos os endpoints user-specific: game-url (launch), user/info, freeround, statistics
+  // etc. null = createCasinoUser chamou sem erro mas a forma de resposta ainda não foi
+  // parseada (próximo deploy atualiza o parser e um novo provision tenta de novo).
+  providerUserCode Int?
+  createdAt        DateTime @default(now())
+
+  @@index([providerUserCode])
 }
 
 // Um registo por trans_guid recebido no callback (comandos bet/win/cancel) — chave de

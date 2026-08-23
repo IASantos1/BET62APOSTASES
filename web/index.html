@@ -386,6 +386,23 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
   .casino-search-wrap{width:100%;order:3}
   .casino-grid{grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
 }
+/* ========== CASINO GAME MODAL (iframe white-label full-screen) ========== */
+.casino-game-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;display:flex;flex-direction:column;align-items:stretch;justify-content:stretch}
+.casino-game-overlay.hidden{display:none}
+.casino-game-topbar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#000;border-bottom:1px solid #1a1a1a;flex-shrink:0}
+.casino-game-title{display:flex;align-items:center;gap:10px;min-width:0}
+.casino-game-title img{width:28px;height:28px;border-radius:6px;object-fit:cover;flex-shrink:0}
+.casino-game-name{font-weight:700;font-size:.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff}
+.casino-game-sub{font-size:.7rem;color:#888;margin-left:4px}
+.casino-game-close{background:transparent;border:1px solid #333;color:#ccc;padding:6px 12px;border-radius:16px;cursor:pointer;font-weight:600;font-size:.8rem;flex-shrink:0}
+.casino-game-close:hover{border-color:var(--red);color:#fff}
+.casino-game-iframe-wrap{flex:1;position:relative;min-height:0;background:#000}
+.casino-game-iframe-wrap iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000}
+.casino-game-loader{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#000;gap:14px;color:#fff;z-index:10}
+.casino-game-spinner{width:48px;height:48px;border:4px solid #222;border-top-color:var(--red);border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.casino-game-loader-text{font-size:.95rem;color:#bbb;text-align:center;max-width:420px;padding:0 20px}
+.casino-game-loader-sub{font-size:.8rem;color:#666}
 </style>
 </head>
 <body>
@@ -938,6 +955,32 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
             <button class="btn-outline" onclick="closeStats()">Fechar</button>
         </div>
     </div>
+</div>
+
+<!-- CASINO GAME MODAL: iframe white-label full-screen do slot/jogo escolhido. O jogo do provedor
+     corre dentro de um iframe no mesmo domínio da Bet62 (nunca sai do site, white-label total).
+     Barra topo mostra nome do jogo, logótipo e botão "Fechar" — o resto do viewport é o jogo. -->
+<div id="casino-game-modal" class="casino-game-overlay hidden" role="dialog" aria-modal="true" aria-label="Jogo de cassino">
+  <div class="casino-game-topbar">
+    <div class="casino-game-title">
+      <img id="cg-img" src="" alt="" onerror="this.style.visibility='hidden'" />
+      <div>
+        <span class="casino-game-name" id="cg-name">A carregar jogo…</span>
+        <span class="casino-game-sub" id="cg-sub">Bet62 Cassino</span>
+      </div>
+    </div>
+    <button class="casino-game-close" onclick="closeCasinoGame()" aria-label="Fechar jogo">✕ Fechar</button>
+  </div>
+  <div class="casino-game-iframe-wrap">
+    <div class="casino-game-loader" id="cg-loader">
+      <div class="casino-game-spinner"></div>
+      <div>
+        <div class="casino-game-loader-text" id="cg-loader-text">A preparar a sua sessão de jogo…</div>
+        <div class="casino-game-loader-sub" id="cg-loader-sub">Por favor aguarde um momento</div>
+      </div>
+    </div>
+    <iframe id="cg-frame" title="Jogo de cassino" allow="fullscreen; autoplay; clipboard-read; clipboard-write; gamepad; microphone; camera" sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-top-navigation-by-user-activation allow-modals allow-presentation"></iframe>
+  </div>
 </div>
 
 <footer>© 2026 Bet62 • 18+ • Jogo Responsável • Licenciado (SRIJ Portugal)</footer>

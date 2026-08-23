@@ -373,5 +373,13 @@ const Bet62Api = (() => {
       const qs = params.toString();
       return request(`/casino/games${qs ? `?${qs}` : ""}`, { auth: false });
     },
+    /** Garante que a conta cassino existe no provedor (idempotente) */
+    provisionCasinoAccount: () => request("/casino/account/provision", { method: "POST" }),
+    /**
+     * Lança um jogo real (chama provisionamento automaticamente se preciso)
+     * @param {string} gameCode
+     */
+    launchCasinoGame: (gameCode) =>
+      request(`/casino/games/${encodeURIComponent(gameCode)}/launch`, { method: "POST" }),
   };
 })();
