@@ -260,6 +260,36 @@ export async function adminCreatePromotion(input: PromotionInput) {
   });
 }
 
+// ============ SEED (arranque do servidor) ============
+
+/**
+ * Garante que a promoção de lançamento recomendada (secções 2/19/22 da spec "MODELO DE
+ * PROMOÇÕES BET62" colada pelo utilizador) existe assim que o servidor arranca — em vez de
+ * depender de alguém preencher o formulário em Admin → Promoções, que nunca chegou a acontecer
+ * na prática. Idempotente (mesmo padrão de seedDefaultAliases em sports/mapping/aliasStore.ts,
+ * chamado a par disto em server.ts): só cria se ainda não existir NENHUMA promoção WELCOME_BONUS
+ * (de qualquer estado, ativa ou não) — nunca duplica, nunca reescreve uma que o admin já tenha
+ * editado à mão. Valores exatos da secção 22 ("Configuração Inicial Recomendada").
+ */
+export async function seedRecommendedLaunchPromotion(): Promise<void> {
+  const already = await prisma.promotion.findFirst({ where: { type: "WELCOME_BONUS" } });
+  if (already) return;
+
+  await adminCreatePromotion({
+    type: "WELCOME_BONUS",
+    name: "Bónus de Boas-Vindas",
+    active: true,
+    bonusPercent: 50,
+    bonusMaxAmount: 20,
+    minDepositAmount: 10,
+    rolloverMultiplier: 5,
+    minOdd: 1.5,
+    validityDays: 7,
+    eligibleSports: [],
+  });
+  logger.info("[PROMOTIONS] promoção de lançamento (Bónus de Boas-Vindas) semeada automaticamente");
+}
+
 export async function adminUpdatePromotion(id: string, input: Partial<PromotionInput>) {
   return prisma.promotion.update({
     where: { id },
