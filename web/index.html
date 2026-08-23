@@ -311,7 +311,11 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .sports-menu-item.active{background:rgba(230,48,39,.08);color:var(--red)}
 .drawer-overlay{display:none}
 @media (max-width: 900px) {
-  .sidebar-left,.sidebar-right{position:fixed;top:0;bottom:0;width:280px;max-width:85vw;background:var(--bg);z-index:250;transition:transform .25s ease;box-shadow:0 0 30px rgba(0,0,0,.35)}
+  /* padding-top com env(safe-area-inset-top): em ecrã cheio (mobile/PWA), o cabeçalho do
+     boletim/menu lateral fica encostado ao topo do ecrã — sem isto o X de fechar ficava por
+     baixo do notch/barra de estado do telemóvel, impossível de tocar (mesma correção já feita
+     no cabeçalho principal e no modal de Minhas Apostas). */
+  .sidebar-left,.sidebar-right{position:fixed;top:0;bottom:0;width:280px;max-width:85vw;background:var(--bg);z-index:250;transition:transform .25s ease;box-shadow:0 0 30px rgba(0,0,0,.35);padding-top:calc(18px + env(safe-area-inset-top))}
   .sidebar-left{left:0;transform:translateX(-100%)}
   .sidebar-left.open{transform:translateX(0)}
   /* O boletim (sidebar-right) fica de ecrã inteiro em mobile/PWA em vez de só uma faixa lateral
