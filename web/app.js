@@ -912,8 +912,7 @@ async function doRegister() {
   const btn = document.getElementById("btn-register");
   btn.disabled = true;
   try {
-    const tokens = await Bet62Api.register({ name, email, username, password, birthDate, acceptedTerms });
-    Bet62Api.setTokens(tokens);
+    await Bet62Api.register({ name, email, username, password, birthDate, acceptedTerms });
     closeAuth();
     await afterAuthSuccess();
     alert("🎉 Conta criada com sucesso! Bem-vindo, " + name.split(" ")[0]);
@@ -933,8 +932,7 @@ async function doLogin() {
   const btn = document.getElementById("btn-login");
   btn.disabled = true;
   try {
-    const tokens = await Bet62Api.login(identifier, password);
-    Bet62Api.setTokens(tokens);
+    await Bet62Api.login(identifier, password);
     closeAuth();
     await afterAuthSuccess();
   } catch (err) {
