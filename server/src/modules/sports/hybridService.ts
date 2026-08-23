@@ -1,7 +1,7 @@
 import { EventEmitter } from "events";
 import { env } from "../../config/env";
 import { logger } from "../../lib/logger";
-import { fetchLiveEvents, fetchLiveSportsWithEvents } from "./pulsescore/client";
+import { fetchLiveEvents, fetchLiveSportsUnionAllBookmakers } from "./pulsescore/client";
 import { pulsescoreWs } from "./pulsescore/wsClient";
 import { getFixtureStatistics } from "./apifootball/client";
 import { resolveFixtureForEvent } from "./mapping/service";
@@ -54,10 +54,8 @@ class HybridSportsService extends EventEmitter {
     const live = new Set<Sport>();
 
     try {
-      const liveSports = await fetchLiveSportsWithEvents();
+      const liveSports = await fetchLiveSportsUnionAllBookmakers();
       for (const sport of liveSports) live.add(sport);
-      live.add("formula1"); // bookmaker diferente (unibetau), não aparece em /live-events/sports
-      live.add("baseball"); // bookmaker diferente (bet365), o summary da paddypower não é fiável para ele
 
       for (const sport of live) {
         if (wsCovered.has(sport)) continue; // já coberto pelo WebSocket, REST duplicaria

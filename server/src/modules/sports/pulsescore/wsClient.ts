@@ -3,7 +3,7 @@ import WebSocket from "ws";
 import { env } from "../../../config/env";
 import { logger } from "../../../lib/logger";
 import type { LiveEvent, LiveOdds, LiveSelection, Sport } from "../types";
-import { SPORT_SLUGS, bookmakerFor, orderMarketsWithPrimaryFirst, sortNumericMarketFamilies, fetchLiveSportsWithEvents } from "./client";
+import { SPORT_SLUGS, bookmakerFor, orderMarketsWithPrimaryFirst, sortNumericMarketFamilies, fetchLiveSportsUnionAllBookmakers } from "./client";
 import { acquireDistributedLock, refreshDistributedLock } from "../../../lib/redis";
 
 const LOCK_KEY = "bet62:locks:pulsescore-ws";
@@ -227,12 +227,8 @@ class PulsescoreWsManager extends EventEmitter {
     if (!this.isLeader || this.planTooLow) return;
     let targets: Sport[];
     try {
-      const liveSports = await fetchLiveSportsWithEvents();
-      // formula1 runs under a different bookmaker (unibetau) not covered by the default
-      // bookmaker's /live-events/sports summary, so it's never in liveSports — check it anyway.
-      const withFormula1: Sport[] = liveSports.filter((s) => s !== "formula1");
-      withFormula1.push("formula1");
-      targets = withFormula1.slice(0, this.maxConnections);
+      const liveSports = await fetchLiveSportsUnionAllBookmakers();
+      targets = liveSports.slice(0, this.maxConnections);
     } catch (err) {
       logger.warn({ err }, "Pulsescore WS: falha ao decidir a que desportos ligar, a manter ligações atuais");
       return;

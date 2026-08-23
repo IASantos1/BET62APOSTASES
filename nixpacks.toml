@@ -1,0 +1,21 @@
+version = 1
+
+[phases.setup]
+nixPkgs = ["nodejs_24", "pnpm-9"]
+
+[phases.install]
+cmds = [
+  "echo 'Node:' && node -v",
+  "echo 'pnpm:' && pnpm -v",
+  "pnpm config set store-dir /app/.pnpm-store",
+  "pnpm install --frozen-lockfile=false",
+  "cd server && pnpm prisma generate"
+]
+
+[phases.build]
+cmds = [
+  "echo 'Build server...' && cd server && pnpm run build"
+]
+
+[start]
+cmd = "cd server && pnpm prisma migrate deploy && node dist/server.js"

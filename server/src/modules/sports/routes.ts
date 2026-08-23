@@ -3,12 +3,12 @@ import { asyncHandler } from "../../middleware/errorHandler";
 import { hybridSportsService } from "./hybridService";
 import { getPrematchEvents } from "./prematch/service";
 import { getTodayCompetitions } from "./competitions/service";
-import { fetchEventById } from "./pulsescore/client";
+import { fetchEventById, fetchLiveEventById } from "./pulsescore/client";
 import { enrichEventFromOtherBookmakers } from "./pulsescore/crossBookmakerFallback";
 import { getHeadToHead, getPredictions, getStandings, type HeadToHeadMatch } from "./apifootball/client";
 import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent } from "./mapping/service";
 import { getUnifiedMatchData } from "./unified/service";
-import { ALL_SPORTS, type Sport } from "./types";
+import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
 import { logger } from "../../lib/logger";
 
@@ -50,7 +50,28 @@ router.get(
       throw Errors.badRequest("Parâmetro sport em falta ou inválido");
     }
     const rawId = req.params.id.startsWith("pulsescore:") ? req.params.id.slice("pulsescore:".length) : req.params.id;
-    const event = await fetchEventById(sport as Sport, rawId);
+
+    // O evento pode ser: (a) pré-jogo / scheduled → endpoint desporto-específico
+    // `/{bookmaker}/{sport}/events/{id}` OU (b) ao vivo → endpoint genérico
+    // `/{bookmaker}/live-events/events/{id}` (sem sport no path, confirmado via doc oficial).
+    // Tentamos os dois em cascata — se um throw/falhar, não matamos o pedido todo, só passamos
+    // para o próximo. O 500 anterior vinha de eventos ao vivo a bater só no endpoint pré-jogo,
+    // que devolvia != 404 (ex: 400 / 401) → throw Errors.internal.
+    let event: LiveEvent | null = null;
+    try {
+      event = await fetchEventById(sport as Sport, rawId);
+    } catch (err) {
+      logger.warn({ err: String(err).slice(0, 200), sport, eventId: rawId, source: "sport-events" }, "Sports refresh: fetchEventById (pré-jogo) falhou, a tentar live-events");
+    }
+
+    if (!event) {
+      try {
+        event = await fetchLiveEventById(rawId, sport as Sport);
+      } catch (err) {
+        logger.warn({ err: String(err).slice(0, 200), eventId: rawId, source: "live-events" }, "Sports refresh: fetchLiveEventById (ao vivo) falhou");
+      }
+    }
+
     if (!event) throw Errors.notFound("Evento não encontrado na Pulsescore");
     // Preenche mercados e estatísticas em falta (ex: Escanteios/Cartões/Marcador) indo buscá-los
     // a outras bookmakers configuradas em marketRouting.ts — só aqui, quando o utilizador abre o
@@ -59,7 +80,7 @@ router.get(
     // devolvê-lo sem o preenchimento extra, exatamente como antes desta funcionalidade existir.
     const completed = await enrichEventFromOtherBookmakers(sport as Sport, event).catch((err) => {
       logger.warn({ err, eventId: rawId }, "Pulsescore: falha ao preencher mercados/estatísticas em falta via outras bookmakers");
-      return event;
+      return event!;
     });
     res.json({ event: completed });
   })
