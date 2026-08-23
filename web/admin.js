@@ -765,7 +765,7 @@ const AdminApp = (() => {
     renderBetsReview();
   }
 
-  const SEL_STATUS_LABEL = { WON: "Ganhou", LOST: "Perdeu", VOID: "Anulada", NEEDS_REVIEW: "Por decidir", PENDING: "Pendente" };
+  const SEL_STATUS_LABEL = { WON: "Ganhou", LOST: "Perdeu", VOID: "Anulada", PUSH: "Empate (devolvido)", HALF_WIN: "Meio-Ganho", HALF_LOSS: "Meia-Perda", NEEDS_REVIEW: "Por decidir", PENDING: "Pendente" };
 
   function renderBetsReview() {
     const el = document.getElementById("section-bets-review");

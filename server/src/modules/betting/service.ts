@@ -343,6 +343,7 @@ export async function manualSettleSelection(
       data: {
         status: outcome,
         settledAt: new Date(),
+        settlementReason: "MANUAL_CORRECTION",
         reviewNotes: reviewNotes ?? null,
         reviewedByUserId: adminUserId,
         reviewedAt: new Date(),
