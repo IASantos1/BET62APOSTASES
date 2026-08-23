@@ -316,9 +316,9 @@ async function renderPrematchList() {
     if (r.status === "fulfilled" && r.value.source === "pulsescore") realEvents.push(...r.value.events);
   });
 
-  const filteredEvents = selectedLeague
-    ? realEvents.filter((e) => e.league && e.league.toLowerCase().includes(selectedLeague.toLowerCase()))
-    : realEvents;
+  const filteredEvents = realEvents
+    .filter((e) => !hasKickedOff(e)) // já passou da hora de início — deve estar em Ao Vivo, não aqui
+    .filter((e) => !selectedLeague || (e.league && e.league.toLowerCase().includes(selectedLeague.toLowerCase())));
   // Pedido explícito do utilizador: futebol sempre primeiro quando "Todos" os desportos estão
   // visíveis — os pedidos por desporto já resolvem por esta ordem (Promise.allSettled preserva a
   // ordem de `sports`, que começa em futebol), mas este sort explícito garante o agrupamento
@@ -374,6 +374,16 @@ function parseServerDate(d) {
   if (typeof d !== "string") return new Date(d);
   const hasExplicitTimezone = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(d.trim());
   return new Date(hasExplicitTimezone ? d : `${d.trim()}Z`);
+}
+
+// Um evento "pré-jogo" cuja hora de início já passou não deve continuar a aparecer em Pré-jogo
+// — mesmo que a Pulsescore ainda não o tenha movido para o feed Ao Vivo (o feed pode demorar um
+// ciclo de sondagem a apanhar), a nossa própria hora de início já sabe que devia ter começado.
+// Corta ali (não espera pela Pulsescore) para nunca ficar duplicado nos dois sítios ao mesmo
+// tempo — pedido explícito do utilizador.
+function hasKickedOff(e) {
+  if (!e.startTime) return false;
+  return parseServerDate(e.startTime).getTime() <= Date.now();
 }
 
 function formatKickoff(d) {
@@ -1962,7 +1972,32 @@ function highlightLiveCardHtml(e, icon) {
   return e.statistics?.sets ? renderSetsCard(e, clockClass, oddsHtml, icon[e.sport] || "") : renderGenericCard(e, clockClass, oddsHtml, icon[e.sport] || "");
 }
 
+// Banner de promoção na página Destaques — mesma fonte de dados da página Promoção
+// (/api/promotions/active), reaproveitando os mesmos rótulos/valores. Sem promoção ativa
+// configurada no admin, fica simplesmente sem banner (nunca inventa uma oferta).
+async function renderDestaquesPromoBanner() {
+  const el = document.getElementById("destaques-promo-banner");
+  if (!el) return;
+  try {
+    const { promotions } = await Bet62Api.getActivePromotionsPublic();
+    const primary = promotions.find((p) => p.type === "WELCOME_BONUS") || promotions[0];
+    if (!primary) {
+      el.innerHTML = "";
+      return;
+    }
+    el.innerHTML = `
+      <div class="fpromo-hero" style="cursor:pointer;margin-bottom:24px" onclick="showPage('promocao')">
+        <div class="fpromo-hero-badge">${FPROMO_ICON[primary.type] || "🚀"} ${escHtml(PROMO_TYPE_LABEL_PT[primary.type] || primary.name)}</div>
+        <div class="fpromo-hero-value"><span class="accent">${fpromoValueLabel(primary)}</span></div>
+        <div class="fpromo-hero-sub">${escHtml(primary.name)} · toca para ver os detalhes</div>
+      </div>`;
+  } catch {
+    el.innerHTML = "";
+  }
+}
+
 async function renderDestaquesHighlights() {
+  renderDestaquesPromoBanner();
   const prematchEl = document.getElementById("destaques-prematch-list");
   const liveEl = document.getElementById("destaques-live-list");
   if (!prematchEl || !liveEl) return;
@@ -1981,7 +2016,7 @@ async function renderDestaquesHighlights() {
   prematchResults.forEach((r) => {
     if (r.status === "fulfilled" && r.value.source === "pulsescore") prematchEvents.push(...r.value.events);
   });
-  const prematchHighlights = [...prematchEvents]
+  const prematchHighlights = [...prematchEvents.filter((e) => !hasKickedOff(e))]
     .sort((a, b) => (/uefa/i.test(a.league || "") ? 0 : 1) - (/uefa/i.test(b.league || "") ? 0 : 1))
     .slice(0, 5);
   prematchHighlights.forEach((e) => prematchEventsById.set(e.id, e));
