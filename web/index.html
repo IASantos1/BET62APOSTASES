@@ -498,7 +498,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .mybets-tabs::-webkit-scrollbar{display:none}
 .mybets-tab{padding:8px 14px;border-radius:20px;font-size:.78rem;font-weight:700;color:var(--muted);white-space:nowrap;cursor:pointer;border:1px solid transparent;letter-spacing:.3px}
 .mybets-tab.active{background:linear-gradient(135deg,rgba(245,200,66,.15),rgba(230,48,39,.1));border-color:var(--gold);color:var(--gold)}
-.mybets-body{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:16px;-webkit-overflow-scrolling:touch}
+.mybets-body{flex:1;overflow-y:auto;padding:16px 16px calc(16px + env(safe-area-inset-bottom)) 16px;display:flex;flex-direction:column;gap:16px;-webkit-overflow-scrolling:touch}
 
 /* Bilhete futurista: fundo em gradiente (segue o tema claro/escuro do site — var(--surface)/
    var(--surface2), não uma cor fixa), borda com brilho consoante o estado, "corte" de bilhete de
