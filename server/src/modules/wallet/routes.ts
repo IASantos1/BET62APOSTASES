@@ -15,6 +15,7 @@ router.get(
       balance: wallet.balance,
       lockedBalance: wallet.lockedBalance,
       available: wallet.balance.sub(wallet.lockedBalance),
+      bonusBalance: wallet.bonusBalance,
     });
   })
 );

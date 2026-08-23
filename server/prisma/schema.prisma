@@ -54,6 +54,7 @@ model User {
   auditLogs          AuditLog[]
   bets               Bet[]
   casinoAccount      CasinoAccount?
+  userPromotions     UserPromotion[]
 
   @@index([status])
 }
@@ -180,6 +181,15 @@ enum LedgerEntryType {
   BET_CASHOUT
   BONUS
   ADJUSTMENT
+  // ============ PROMOÇÕES (ver promotions/service.ts) ============
+  // Todos os movimentos abaixo mexem em Wallet.bonusBalance, NUNCA em Wallet.balance — o saldo
+  // promocional é sempre uma conta separada até ser convertido (ver BONUS_CONVERTED), exatamente
+  // como pedido: "o bónus não é convertível diretamente em dinheiro levantável".
+  BONUS_GRANTED    // bónus concedido (boas-vindas, depósito, freebet, cashback) creditado no saldo promocional
+  BONUS_STAKE      // parte (ou totalidade) do stake de uma aposta paga com saldo promocional
+  BONUS_WON        // ganho de uma aposta financiada (mesmo que parcialmente) por saldo promocional — volta para o saldo promocional, não para o real, até o rollover estar completo
+  BONUS_CONVERTED  // rollover completo: saldo promocional restante passa a saldo real levantável
+  BONUS_EXPIRED    // promoção expirou antes do rollover completo — saldo promocional restante é perdido
 }
 
 enum LedgerEntryStatus {
@@ -196,6 +206,11 @@ model Wallet {
   currency     String   @default("EUR")
   balance      Decimal  @default(0) @db.Decimal(14, 2)
   lockedBalance Decimal @default(0) @db.Decimal(14, 2) // reserved for pending withdrawals
+  // Saldo promocional (bónus) — SEMPRE separado de `balance`, nunca levantável diretamente (ver
+  // LedgerEntryType acima). Ao apostar, gasta-se PRIMEIRO deste saldo (ver
+  // promotions/service.ts::debitStakeForBet) — só quando este saldo não chega é que `balance`
+  // (saldo real) é tocado; assim o rollover avança a cada aposta feita, como pedido.
+  bonusBalance Decimal @default(0) @db.Decimal(14, 2)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -203,6 +218,7 @@ model Wallet {
   deposits    Deposit[]
   withdrawals Withdrawal[]
   bets        Bet[]
+  userPromotions UserPromotion[]
 }
 
 model LedgerEntry {
@@ -271,6 +287,13 @@ model Bet {
   payout          Decimal?  @db.Decimal(14, 2) // valor realmente creditado (WON) ou devolvido (VOID) — null enquanto PENDING
   settledAt       DateTime?
   createdAt       DateTime  @default(now())
+  // Parte do `stake` paga com saldo PROMOCIONAL (0 se a aposta foi paga só com saldo real) — ver
+  // promotions/service.ts. Guardado no momento da colocação porque decide para onde o ganho
+  // volta na liquidação (BONUS_WON para saldo promocional vs BET_WON para saldo real) — nunca
+  // recalculado depois, tal como a odd.
+  bonusStakeAmount Decimal @default(0) @db.Decimal(14, 2)
+  userPromotionId  String? // promoção ativa no momento da colocação, se o stake usou saldo promocional
+  userPromotion    UserPromotion? @relation(fields: [userPromotionId], references: [id])
 
   selections BetSelection[]
 
@@ -397,6 +420,74 @@ model Withdrawal {
   updatedAt        DateTime          @updatedAt
 
   @@index([userId, status])
+}
+
+// ============ PROMOÇÕES (bónus, rollover, cashback, freebet — ver promotions/service.ts) ============
+// Fase 1 do sistema pedido pelo utilizador (Bónus de Boas-Vindas + rollover, a "primeira
+// promoção recomendada para o lançamento" da spec) — Pontos/VIP/Missões ficam para uma fase
+// seguinte sobre esta mesma fundação (Wallet.bonusBalance + este modelo).
+
+enum PromotionType {
+  WELCOME_BONUS // % do primeiro depósito elegível, só uma vez por utilizador
+  DEPOSIT_BONUS // % de qualquer depósito, pode repetir-se
+  CASHBACK      // % das perdas líquidas de um período, creditado em saldo promocional
+  FREEBET       // valor fixo em saldo promocional, sem rollover próprio (usa o da promoção-mãe, se houver)
+}
+
+// Config de UMA promoção, editável pelo admin sem alterar código (pedido explícito — ver secção
+// 16/17 da spec: "valores devem poder ser alterados pelo administrador sem necessidade de
+// alterar o código"). `active:false` só impede NOVAS concessões — promoções já concedidas
+// (UserPromotion) continuam a decorrer normalmente até expirarem.
+model Promotion {
+  id                 String        @id @default(uuid())
+  type               PromotionType
+  name               String
+  active             Boolean       @default(true)
+  bonusPercent       Decimal?      @db.Decimal(6, 2) // ex: 50.00 (%) — null para FREEBET (valor fixo)
+  bonusFixedAmount   Decimal?      @db.Decimal(14, 2) // ex: valor fixo do FREEBET — null quando é % de depósito
+  bonusMaxAmount     Decimal?      @db.Decimal(14, 2) // teto do bónus concedido (ex: 20.00)
+  minDepositAmount   Decimal?      @db.Decimal(14, 2) // depósito mínimo para qualificar (WELCOME_BONUS/DEPOSIT_BONUS)
+  rolloverMultiplier Decimal       @db.Decimal(6, 2) @default(5) // rollover = bónus concedido × este valor
+  minOdd             Decimal       @db.Decimal(6, 2) @default(1.50) // odd mínima por seleção para a aposta contar para o rollover
+  validityDays       Int           @default(7) // dias até a promoção concedida expirar
+  eligibleSports     String[]      @default([]) // vazio = todos os desportos elegíveis
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  userPromotions UserPromotion[]
+}
+
+enum UserPromotionStatus {
+  ACTIVE
+  COMPLETED // rollover cumprido — saldo promocional restante já foi convertido para saldo real
+  EXPIRED   // prazo esgotado antes do rollover — saldo promocional restante foi perdido
+  CANCELLED // anulado manualmente pelo admin (ex: suspeita de abuso)
+}
+
+// UMA concessão de bónus a UM utilizador — snapshot dos valores da Promotion no momento da
+// concessão (bonusAmount/rolloverRequired/minOdd/expiresAt), para uma alteração posterior na
+// Promotion nunca mudar retroativamente uma promoção já em curso.
+model UserPromotion {
+  id                String               @id @default(uuid())
+  userId            String
+  user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  walletId          String
+  wallet            Wallet               @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  promotionId       String
+  promotion         Promotion            @relation(fields: [promotionId], references: [id])
+  bonusAmount       Decimal              @db.Decimal(14, 2) // valor realmente concedido (já com o teto aplicado)
+  rolloverRequired  Decimal              @db.Decimal(14, 2) // bonusAmount × rolloverMultiplier no momento da concessão
+  rolloverProgress  Decimal              @default(0) @db.Decimal(14, 2) // soma do stake de apostas elegíveis desde a concessão
+  minOdd            Decimal              @db.Decimal(6, 2) // copiado da Promotion no momento da concessão
+  status            UserPromotionStatus  @default(ACTIVE)
+  expiresAt         DateTime
+  completedAt       DateTime?
+  createdAt         DateTime             @default(now())
+
+  bets Bet[]
+
+  @@index([userId, status])
+  @@index([status, expiresAt])
 }
 
 // ============ AUDIT (compliance) ============

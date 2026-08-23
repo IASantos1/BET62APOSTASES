@@ -112,6 +112,10 @@ const AdminApi = (() => {
     settleBetSelection: (id, outcome, reviewNotes) =>
       request(`/admin/bets/selections/${id}/settle`, { method: "POST", body: { outcome, reviewNotes } }),
 
+    listPromotions: () => request("/admin/promotions"),
+    createPromotion: (input) => request("/admin/promotions", { method: "POST", body: input }),
+    updatePromotion: (id, input) => request(`/admin/promotions/${id}`, { method: "PATCH", body: input }),
+
     listCasinoGames: (qs) => request(`/admin/casino/games?${qs}`),
     syncCasinoGames: () => request("/admin/casino/games/sync", { method: "POST" }),
     getCasinoAgentInfo: () => request("/admin/casino/agent-info"),
@@ -219,6 +223,7 @@ const AdminApp = (() => {
     mappingLeagues: { page: 1, limit: 20, total: 0, search: "", maxConfidence: "" },
     mappingFixtures: { page: 1, limit: 20, total: 0, maxConfidence: "", unlinkedOnly: false },
     betsReview: [],
+    promotions: [],
   };
 
   // --- Auth ---
@@ -310,7 +315,7 @@ const AdminApp = (() => {
   const SECTION_TITLES = {
     dashboard: "Dashboard", users: "Utilizadores", kyc: "Verificação KYC", withdrawals: "Levantamentos",
     deposits: "Depósitos", casino: "Cassino", responsible: "Jogo Responsável", mapping: "Mapeamento Pulsescore ↔ API-Football",
-    "bets-review": "Apostas em Revisão", audit: "Audit Log", settings: "Definições",
+    "bets-review": "Apostas em Revisão", promotions: "Promoções", audit: "Audit Log", settings: "Definições",
   };
   function showSection(name) {
     state.section = name;
@@ -328,6 +333,7 @@ const AdminApp = (() => {
       responsible: loadResponsible,
       mapping: () => loadMappingTeams(1),
       "bets-review": loadBetsReview,
+      promotions: loadPromotions,
       audit: () => loadAudit(true),
       settings: loadSettings,
     };
@@ -820,6 +826,117 @@ const AdminApp = (() => {
         refreshBadges();
       } catch (err) {
         toast(err.message || "Erro ao decidir seleção", "error");
+      }
+    });
+  }
+
+  // --- Promoções (Bónus/Rollover, configurável sem tocar código — ver promotions/service.ts) ---
+
+  const PROMO_TYPE_LABEL = { WELCOME_BONUS: "Boas-Vindas", DEPOSIT_BONUS: "Depósito", CASHBACK: "Cashback", FREEBET: "Freebet" };
+
+  async function loadPromotions() {
+    const data = await AdminApi.listPromotions();
+    state.promotions = data.promotions;
+    renderPromotions();
+  }
+
+  function promoValueLabel(p) {
+    if (p.bonusPercent) return `${Number(p.bonusPercent)}%${p.bonusMaxAmount ? ` (máx ${fmtMoney(p.bonusMaxAmount)})` : ""}`;
+    if (p.bonusFixedAmount) return fmtMoney(p.bonusFixedAmount);
+    return "—";
+  }
+
+  function renderPromotions() {
+    const el = document.getElementById("section-promotions");
+    const promos = state.promotions;
+    el.innerHTML = `
+      <div class="panel">
+        <div class="toolbar"><button class="btn small" onclick="AdminApp.openPromotionForm()">+ Nova promoção</button></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Nome</th><th>Tipo</th><th>Valor</th><th>Rollover</th><th>Odd mínima</th><th>Prazo</th><th>Estado</th><th></th></tr></thead>
+          <tbody>${
+            promos.length
+              ? promos
+                  .map(
+                    (p) => `<tr>
+                <td><b>${esc(p.name)}</b></td>
+                <td>${PROMO_TYPE_LABEL[p.type] || esc(p.type)}</td>
+                <td class="mono">${promoValueLabel(p)}</td>
+                <td class="mono">${Number(p.rolloverMultiplier)}x</td>
+                <td class="mono">${Number(p.minOdd).toFixed(2)}</td>
+                <td class="mono">${p.validityDays} dias</td>
+                <td>${badge(p.active ? "ACTIVE" : "CLOSED")}</td>
+                <td><button class="btn small outline" onclick='AdminApp.openPromotionForm(${JSON.stringify(p.id)})'>Editar</button></td>
+              </tr>`
+                  )
+                  .join("")
+              : `<tr><td colspan="8" class="empty-note">Sem promoções configuradas</td></tr>`
+          }</tbody>
+        </table></div>
+      </div>`;
+  }
+
+  function openPromotionForm(id) {
+    const p = id ? state.promotions.find((x) => x.id === id) : null;
+    openModal(
+      p ? "Editar promoção" : "Nova promoção",
+      `
+      <div class="field"><label>Nome</label><input id="promo-name" type="text" value="${esc(p?.name ?? "")}" placeholder="Ex: Bónus de Boas-Vindas"></div>
+      <div class="field"><label>Tipo</label>
+        <select id="promo-type" ${p ? "disabled" : ""}>
+          ${Object.entries(PROMO_TYPE_LABEL).map(([k, v]) => `<option value="${k}" ${p?.type === k ? "selected" : ""}>${v}</option>`).join("")}
+        </select>
+      </div>
+      <div class="detail-grid">
+        <div class="field"><label>Bónus (% do depósito)</label><input id="promo-percent" type="number" step="1" value="${p?.bonusPercent ?? ""}" placeholder="Ex: 50"></div>
+        <div class="field"><label>Bónus (valor fixo €)</label><input id="promo-fixed" type="number" step="0.01" value="${p?.bonusFixedAmount ?? ""}" placeholder="Ex: 10"></div>
+        <div class="field"><label>Bónus máximo (€)</label><input id="promo-max" type="number" step="0.01" value="${p?.bonusMaxAmount ?? ""}" placeholder="Ex: 20"></div>
+        <div class="field"><label>Depósito mínimo (€)</label><input id="promo-mindeposit" type="number" step="0.01" value="${p?.minDepositAmount ?? ""}" placeholder="Ex: 10"></div>
+        <div class="field"><label>Rollover (x)</label><input id="promo-rollover" type="number" step="0.5" value="${p?.rolloverMultiplier ?? 5}"></div>
+        <div class="field"><label>Odd mínima</label><input id="promo-minodd" type="number" step="0.05" value="${p?.minOdd ?? 1.5}"></div>
+        <div class="field"><label>Prazo (dias)</label><input id="promo-validity" type="number" step="1" value="${p?.validityDays ?? 7}"></div>
+      </div>
+      <div class="field"><label>Desportos elegíveis (vazio = todos)</label><input id="promo-sports" type="text" value="${esc((p?.eligibleSports || []).join(", "))}" placeholder="Ex: football, basketball"></div>
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:14px">
+        <input type="checkbox" id="promo-active" ${p?.active !== false ? "checked" : ""} style="width:18px;height:18px"> Ativa
+      </label>
+      <div class="btn-row">
+        <button class="btn green" onclick='AdminApp.submitPromotionForm(${JSON.stringify(p?.id ?? null)}, this)'>${p ? "Guardar" : "Criar"}</button>
+        <button class="btn outline" onclick="AdminApp.closeModal()">Cancelar</button>
+      </div>`
+    );
+  }
+
+  async function submitPromotionForm(id, btn) {
+    const numOrNull = (elId) => {
+      const v = document.getElementById(elId).value.trim();
+      return v === "" ? null : Number(v);
+    };
+    const input = {
+      name: document.getElementById("promo-name").value.trim(),
+      bonusPercent: numOrNull("promo-percent"),
+      bonusFixedAmount: numOrNull("promo-fixed"),
+      bonusMaxAmount: numOrNull("promo-max"),
+      minDepositAmount: numOrNull("promo-mindeposit"),
+      rolloverMultiplier: Number(document.getElementById("promo-rollover").value),
+      minOdd: Number(document.getElementById("promo-minodd").value),
+      validityDays: Number(document.getElementById("promo-validity").value),
+      eligibleSports: document.getElementById("promo-sports").value.split(",").map((s) => s.trim()).filter(Boolean),
+      active: document.getElementById("promo-active").checked,
+    };
+    if (!input.name) return toast("Indica um nome", "error");
+    if (!input.bonusPercent && !input.bonusFixedAmount) return toast("Indica o bónus em % ou valor fixo", "error");
+    if (!id) input.type = document.getElementById("promo-type").value;
+
+    await withBusyButton(btn, async () => {
+      try {
+        if (id) await AdminApi.updatePromotion(id, input);
+        else await AdminApi.createPromotion(input);
+        toast(id ? "Promoção atualizada" : "Promoção criada");
+        closeModal();
+        loadPromotions();
+      } catch (err) {
+        toast(err.message || "Erro ao guardar promoção", "error");
       }
     });
   }
@@ -1435,6 +1552,7 @@ const AdminApp = (() => {
     loadKyc, approveKyc, openRejectKyc, submitRejectKyc,
     loadWithdrawals, approveWithdrawal, openRejectWithdrawal, submitRejectWithdrawal,
     loadBetsReview, settleReviewSelection,
+    loadPromotions, openPromotionForm, submitPromotionForm,
     loadDeposits,
     loadCasino, syncCasino, showCasinoAgentInfo,
     setMappingTab, loadMappingTeams, openCorrectTeam, submitCorrectTeam,

@@ -476,6 +476,7 @@ function showPage(page) {
   if (page === "esportes") { renderSportSubnav(); renderPrematchList(); }
   if (page === "destaques") renderDestaquesHighlights();
   if (page === "cassino") enterCasinoPage();
+  if (page === "promocao") loadPromocaoPage();
 }
 
 function goBack() {
@@ -971,6 +972,7 @@ async function loadProfile() {
     currentProfile = await Bet62Api.getProfile();
     await loadBalance();
     renderProfile();
+    loadPromotionsPanel();
   } catch (err) {
     if (err.status === 401) {
       currentProfile = null;
@@ -989,6 +991,190 @@ async function loadBalance() {
   } catch {
     /* silencioso: o saldo será atualizado na próxima ação bem-sucedida */
   }
+}
+
+// ====================== BÓNUS E PROMOÇÕES ======================
+// Carteira segmentada (Saldo Real/Promocional/Levantável) + progresso de rollover da promoção
+// ativa — ver server/src/modules/promotions/service.ts. bonusBalance NUNCA é levantável
+// diretamente (só depois de convertido para saldo real ao completar o rollover).
+const PROMO_STATUS_LABEL = { ACTIVE: "Ativa", COMPLETED: "Concluída", EXPIRED: "Expirada", CANCELLED: "Anulada" };
+const PROMO_TYPE_LABEL_PT = { WELCOME_BONUS: "Bónus de Boas-Vindas", DEPOSIT_BONUS: "Bónus de Depósito", CASHBACK: "Cashback", FREEBET: "Freebet" };
+
+async function loadPromotionsPanel() {
+  const el = document.getElementById("promotions-content");
+  if (!el || !Bet62Api.isAuthenticated()) return;
+  try {
+    const [balance, data] = await Promise.all([Bet62Api.getBalance(), Bet62Api.getMyPromotions()]);
+    renderPromotionsPanel(balance, data.promotions);
+  } catch (err) {
+    el.innerHTML = `<div style="color:var(--muted);text-align:center;padding:20px 0">Não foi possível carregar as promoções (${escHtml(err.message || "erro")})</div>`;
+  }
+}
+
+function fmtExpiryCountdown(iso) {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return { text: "Expira a qualquer momento", soon: true };
+  const days = Math.floor(ms / 86400000);
+  const hours = Math.floor((ms % 86400000) / 3600000);
+  const soon = days < 1;
+  if (days >= 1) return { text: `Expira em ${days}d ${hours}h`, soon };
+  const minutes = Math.floor((ms % 3600000) / 60000);
+  return { text: `Expira em ${hours}h ${minutes}m`, soon };
+}
+
+function renderPromotionsPanel(balance, promotions) {
+  const el = document.getElementById("promotions-content");
+  const bonusBalance = Number(balance.bonusBalance || 0);
+  const active = promotions.find((p) => p.status === "ACTIVE");
+  const history = promotions.filter((p) => p.status !== "ACTIVE");
+
+  let html = `
+    <div class="wallet-split">
+      <div class="wallet-split-card"><div class="wallet-split-label">Saldo Real</div><div class="wallet-split-value">€ ${Number(balance.balance).toFixed(2)}</div></div>
+      <div class="wallet-split-card bonus"><div class="wallet-split-label">Saldo Promocional</div><div class="wallet-split-value">€ ${bonusBalance.toFixed(2)}</div></div>
+      <div class="wallet-split-card withdrawable full"><div class="wallet-split-label">Saldo Levantável</div><div class="wallet-split-value">€ ${Number(balance.available).toFixed(2)}</div></div>
+    </div>`;
+
+  if (active) {
+    const required = Number(active.rolloverRequired);
+    const progress = Number(active.rolloverProgress);
+    const pct = required > 0 ? Math.min(100, (progress / required) * 100) : 100;
+    const expiry = fmtExpiryCountdown(active.expiresAt);
+    html += `
+      <div class="promo-card">
+        <div class="promo-card-head">
+          <span class="promo-card-name">🎁 ${escHtml(PROMO_TYPE_LABEL_PT[active.promotion?.type] || active.promotion?.name || "Promoção")}</span>
+          <span class="status-badge status-ok">${PROMO_STATUS_LABEL.ACTIVE}</span>
+        </div>
+        <div style="font-size:.82rem;color:var(--muted)">Bónus concedido: <b style="color:var(--text)">€ ${Number(active.bonusAmount).toFixed(2)}</b></div>
+        <div class="promo-progress-track"><div class="promo-progress-fill" style="width:${pct.toFixed(1)}%"></div></div>
+        <div class="promo-progress-label"><span>€ ${progress.toFixed(2)} apostado</span><span>${pct.toFixed(0)}% de € ${required.toFixed(2)} necessários</span></div>
+        <div class="promo-expiry ${expiry.soon ? "soon" : ""}">${expiry.text} · odd mínima ${Number(active.minOdd).toFixed(2)}</div>
+      </div>`;
+  }
+
+  if (history.length) {
+    html += `<div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin:14px 0 8px">Histórico</div>`;
+    html += history
+      .map(
+        (p) => `<div class="promo-history-item">
+          <span>${escHtml(PROMO_TYPE_LABEL_PT[p.promotion?.type] || p.promotion?.name || "Promoção")}</span>
+          <span class="status-badge ${p.status === "COMPLETED" ? "status-ok" : p.status === "EXPIRED" ? "status-bad" : "status-pending"}">${PROMO_STATUS_LABEL[p.status] || p.status}</span>
+        </div>`
+      )
+      .join("");
+  }
+
+  if (!active && !history.length) {
+    html += `<div style="color:var(--muted);text-align:center;padding:12px 0">Ainda sem promoções — faça o primeiro depósito para ativar o Bónus de Boas-Vindas.</div>`;
+  }
+
+  el.innerHTML = html;
+}
+
+// ====================== PÁGINA PROMOÇÃO (futurista) ======================
+// Nada de valores hardcoded — o hero e a grelha vêm sempre de /api/promotions/active (o que o
+// admin tiver configurado em "Promoções", ver admin/routes.ts), e o cartão de progresso (se
+// autenticado) de /api/promotions/mine. Reutiliza PROMO_TYPE_LABEL_PT/PROMO_STATUS_LABEL/
+// fmtExpiryCountdown já definidos acima para o painel do perfil.
+const FPROMO_ICON = { WELCOME_BONUS: "🎁", DEPOSIT_BONUS: "💰", CASHBACK: "🔁", FREEBET: "🎟️" };
+const FPROMO_TILE_CLASS = { WELCOME_BONUS: "", DEPOSIT_BONUS: "type-deposit", CASHBACK: "type-cashback", FREEBET: "type-freebet" };
+
+function fpromoValueLabel(p) {
+  if (p.bonusPercent) {
+    const pct = `${Number(p.bonusPercent)}%`;
+    return p.bonusMaxAmount ? `${pct} até € ${Number(p.bonusMaxAmount).toFixed(0)}` : pct;
+  }
+  if (p.bonusFixedAmount) return `€ ${Number(p.bonusFixedAmount).toFixed(2)}`;
+  return "—";
+}
+
+async function loadPromocaoPage() {
+  const el = document.getElementById("promocao-content");
+  if (!el) return;
+  try {
+    const [promotions, myPromotions] = await Promise.all([
+      Bet62Api.getActivePromotionsPublic().then((d) => d.promotions),
+      Bet62Api.isAuthenticated() ? Bet62Api.getMyPromotions().then((d) => d.promotions).catch(() => []) : Promise.resolve([]),
+    ]);
+    renderPromocaoPage(promotions, myPromotions);
+  } catch (err) {
+    el.innerHTML = `<div class="fpromo-empty">Não foi possível carregar as promoções (${escHtml(err.message || "erro")})</div>`;
+  }
+}
+
+function renderPromocaoPage(promotions, myPromotions) {
+  const el = document.getElementById("promocao-content");
+  const active = myPromotions.find((p) => p.status === "ACTIVE");
+  const primary = promotions.find((p) => p.type === "WELCOME_BONUS") || promotions[0];
+
+  let html = "";
+
+  if (primary) {
+    const eligible = primary.eligibleSports?.length ? primary.eligibleSports.join(", ") : "Todos os desportos";
+    html += `
+      <div class="fpromo-hero">
+        <div class="fpromo-hero-badge">${FPROMO_ICON[primary.type] || "🚀"} ${escHtml(PROMO_TYPE_LABEL_PT[primary.type] || primary.name)}</div>
+        <div class="fpromo-hero-value"><span class="accent">${fpromoValueLabel(primary)}</span></div>
+        <div class="fpromo-hero-sub">${escHtml(primary.name)}</div>
+        <div class="fpromo-hero-terms">
+          ${primary.minDepositAmount ? `<span class="fpromo-pill">Depósito mín. € ${Number(primary.minDepositAmount).toFixed(2)}</span>` : ""}
+          <span class="fpromo-pill">Rollover ${Number(primary.rolloverMultiplier)}x</span>
+          <span class="fpromo-pill">Odd mínima ${Number(primary.minOdd).toFixed(2)}</span>
+          <span class="fpromo-pill">Válido ${primary.validityDays} dias</span>
+          <span class="fpromo-pill">${escHtml(eligible)}</span>
+        </div>
+        ${!Bet62Api.isAuthenticated() ? `<button class="fpromo-cta" onclick="openAuth('register')">REGISTE-SE AGORA</button>` : !active ? `<button class="fpromo-cta" onclick="openDeposit()">FAZER DEPÓSITO</button>` : ""}
+      </div>`;
+  }
+
+  if (active) {
+    const required = Number(active.rolloverRequired);
+    const progress = Number(active.rolloverProgress);
+    const pct = required > 0 ? Math.min(100, (progress / required) * 100) : 100;
+    const expiry = fmtExpiryCountdown(active.expiresAt);
+    html += `
+      <div class="fpromo-active">
+        <div class="fpromo-active-head">
+          <span class="fpromo-active-name">⚡ A tua promoção ativa — ${escHtml(PROMO_TYPE_LABEL_PT[active.promotion?.type] || active.promotion?.name || "Promoção")}</span>
+          <span class="status-badge status-ok">${PROMO_STATUS_LABEL.ACTIVE}</span>
+        </div>
+        <div class="fpromo-active-ring"><div class="fpromo-active-fill" style="width:${pct.toFixed(1)}%"></div></div>
+        <div class="fpromo-active-label"><span>${pct.toFixed(0)}% do rollover cumprido</span><span class="${expiry.soon ? "soon" : ""}" style="${expiry.soon ? "color:var(--red);font-weight:700" : ""}">${expiry.text}</span></div>
+        <div class="fpromo-active-figures">
+          <div>Bónus concedido<b>€ ${Number(active.bonusAmount).toFixed(2)}</b></div>
+          <div>Apostado<b>€ ${progress.toFixed(2)}</b></div>
+          <div>Necessário<b>€ ${required.toFixed(2)}</b></div>
+          <div>Odd mínima<b>${Number(active.minOdd).toFixed(2)}</b></div>
+        </div>
+      </div>`;
+  }
+
+  if (promotions.length) {
+    html += `<div class="fpromo-section-title">🎯 Todas as Promoções Ativas</div><div class="fpromo-grid">`;
+    html += promotions
+      .map((p) => {
+        const eligible = p.eligibleSports?.length ? p.eligibleSports.join(", ") : "Todos os desportos";
+        return `<div class="fpromo-tile ${FPROMO_TILE_CLASS[p.type] || ""}">
+          <div class="fpromo-tile-icon">${FPROMO_ICON[p.type] || "🎁"}</div>
+          <div class="fpromo-tile-name">${escHtml(p.name)}</div>
+          <div class="fpromo-tile-value">${fpromoValueLabel(p)}</div>
+          <div class="fpromo-tile-terms">
+            ${p.minDepositAmount ? `<div>Depósito mínimo: <b>€ ${Number(p.minDepositAmount).toFixed(2)}</b></div>` : ""}
+            <div>Rollover: <b>${Number(p.rolloverMultiplier)}x</b></div>
+            <div>Odd mínima: <b>${Number(p.minOdd).toFixed(2)}</b></div>
+            <div>Prazo: <b>${p.validityDays} dias</b></div>
+            <div>Desportos: <b>${escHtml(eligible)}</b></div>
+          </div>
+        </div>`;
+      })
+      .join("");
+    html += `</div>`;
+  } else if (!primary) {
+    html += `<div class="fpromo-empty">Sem promoções ativas neste momento — volta em breve.</div>`;
+  }
+
+  el.innerHTML = html;
 }
 
 function renderGuestProfile() {
@@ -1146,9 +1332,11 @@ function betTicketHtml(b) {
         ? "0.00"
         : Number(b.potentialReturn).toFixed(2);
 
-  // Botão de Cash Out fica logo no topo do bilhete (não lá em baixo, depois da lista de
-  // seleções) — pedido explícito: numa Múltipla com muitas seleções o botão ficava escondido,
-  // só visível a fazer scroll até ao fim do bilhete. Assim aparece sempre, mesmo sem scroll.
+  // Botão de Cash Out fica em baixo, junto dos valores do bilhete (Stake/Odd/Retorno/ID) —
+  // pedido explícito do utilizador. Para isso não ficar escondido numa Múltipla com muitas
+  // seleções, a lista de seleções (.bet-ticket-legs) tem scroll interno próprio (ver CSS,
+  // max-height+overflow-y:auto) em vez de esticar o bilhete inteiro — o cabeçalho e o rodapé
+  // com Cash Out ficam sempre visíveis, só as seleções é que rolam por dentro quando são muitas.
   const cashoutRow = isPending
     ? `<div class="bet-ticket-cashout-row"><button class="bet-ticket-cashout-btn" id="cashout-btn-${b.id}" onclick='requestCashOut(${JSON.stringify(b.id)})' disabled>A verificar Cash Out…</button></div>`
     : "";
@@ -1159,7 +1347,6 @@ function betTicketHtml(b) {
         <span class="bet-ticket-mode">${modeLabel} • ${b.selections.length} seleç${b.selections.length > 1 ? "ões" : "ão"}</span>
         <span class="bet-ticket-status ${statusCls}">${statusLabel}</span>
       </div>
-      ${cashoutRow}
       <div class="bet-ticket-legs">${legsHtml}</div>
       <div class="bet-ticket-punch"></div>
       <div class="bet-ticket-bottom">
@@ -1167,8 +1354,10 @@ function betTicketHtml(b) {
           <div>Stake<b>€ ${Number(b.stake).toFixed(2)}</b></div>
           <div>Odd${b.selections.length > 1 ? " total" : ""}<b>${Number(b.totalOdd).toFixed(2)}</b></div>
           <div>${returnLabel}<b>€ ${returnValue}</b></div>
+          <div class="bt-id">ID<b>#${b.id.slice(0, 8).toUpperCase()}</b></div>
         </div>
       </div>
+      ${cashoutRow}
       <div class="bet-ticket-barcode"></div>
     </div>`;
 }
