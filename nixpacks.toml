@@ -5,19 +5,18 @@ nixPkgs = ["nodejs_24"]
 
 [phases.install]
 cmds = [
-  "echo 'Node:' && node -v",
-  "echo 'npm:' && npm -v",
-  "npm install -g pnpm@^9.0.0",
-  "echo 'pnpm:' && pnpm -v",
+  "echo '--- Railway Build: Node ---' && node -v && npm -v",
+  "echo '--- Railway Build: Instalar pnpm@9 via npm global ---' && (npm install -g pnpm@^9.0.0 --force || npm install -g pnpm@^9.0.0)",
+  "echo 'pnpm version:' && pnpm -v",
   "pnpm config set store-dir /app/.pnpm-store",
-  "pnpm install --frozen-lockfile=false",
-  "cd server && pnpm prisma generate"
+  "echo '--- Railway Build: pnpm install ---' && pnpm install --frozen-lockfile=false --prefer-offline",
+  "cd server && echo '--- Railway Build: prisma generate ---' && pnpm prisma generate"
 ]
 
 [phases.build]
 cmds = [
-  "cd server && pnpm run build"
+  "cd server && echo '--- Railway Build: tsc build (pnpm run build) ---' && pnpm run build"
 ]
 
 [start]
-cmd = "cd server && pnpm prisma migrate deploy && node dist/server.js"
+cmd = "cd server && echo '--- Railway Start: prisma migrate deploy ---' && pnpm prisma migrate deploy && echo '--- Railway Start: node dist/server.js ---' && node dist/server.js"
