@@ -64,14 +64,33 @@ function resolveMatchResult(selection: string, home: string, away: string, hs: n
   return (isHome && homeWon) || (isAway && !homeWon) ? "WON" : "LOST";
 }
 
-function resolveDoubleChance(selection: string, hs: number, as: number): SettlementOutcome {
-  const s = selection.replace(/\s+/g, "").toUpperCase();
+function resolveDoubleChance(selection: string, home: string, away: string, hs: number, as: number): SettlementOutcome {
   const draw = hs === as;
   const homeWon = hs > as;
   const awayWon = as > hs;
-  if (s === "1X" || s === "X1") return homeWon || draw ? "WON" : "LOST";
-  if (s === "X2" || s === "2X") return awayWon || draw ? "WON" : "LOST";
-  if (s === "12") return draw ? "LOST" : "WON";
+  const compact = selection.replace(/\s+/g, "").toUpperCase();
+  if (compact === "1X" || compact === "X1") return homeWon || draw ? "WON" : "LOST";
+  if (compact === "X2" || compact === "2X") return awayWon || draw ? "WON" : "LOST";
+  if (compact === "12") return draw ? "LOST" : "WON";
+
+  // Formato real confirmado numa amostra de produção (ver web/app.js::translateSelectionLabel):
+  // "<Equipa> and Draw" / "<Equipa1> and <Equipa2>" — a Pulsescore não manda "1X"/"X2"/"12"
+  // compacto, manda os dois lados por extenso ligados por "and". Sem isto NENHUMA aposta real de
+  // Dupla Hipótese teria conseguido liquidar sozinha (caía sempre em UNRESOLVABLE acima).
+  const m = selection.match(/^(.+?)\s+and\s+(.+)$/i);
+  if (m) {
+    const norm = (s: string) => s.trim().toLowerCase();
+    const isDrawToken = (s: string) => s === "draw" || s === "empate";
+    const sides = [norm(m[1]!), norm(m[2]!)];
+    const homeL = norm(home);
+    const awayL = norm(away);
+    const hasHome = sides.includes(homeL);
+    const hasAway = sides.includes(awayL);
+    const hasDraw = sides.some(isDrawToken);
+    if (hasHome && hasDraw) return homeWon || draw ? "WON" : "LOST";
+    if (hasAway && hasDraw) return awayWon || draw ? "WON" : "LOST";
+    if (hasHome && hasAway) return draw ? "LOST" : "WON";
+  }
   return "UNRESOLVABLE";
 }
 
@@ -102,7 +121,9 @@ function resolveBTTS(selection: string, hs: number, as: number): SettlementOutco
 }
 
 function resolveCorrectScore(selection: string, hs: number, as: number): SettlementOutcome {
-  const m = selection.replace(/\s+/g, "").match(/^(\d+)[-:](\d+)$/);
+  // Aceita hífen normal, travessão/en-dash e dois pontos como separador — uma amostra real
+  // mostrou "2 – 1" (en-dash, não hífen ASCII) no rótulo da seleção.
+  const m = selection.replace(/\s+/g, "").match(/^(\d+)[-–—:](\d+)$/);
   if (!m) return "UNRESOLVABLE";
   return Number(m[1]) === hs && Number(m[2]) === as ? "WON" : "LOST";
 }
@@ -131,7 +152,7 @@ export function resolveBetSelectionOutcome(sel: SelectionContext, stats: FinalSt
     case "MATCH_RESULT":
       return resolveMatchResult(sel.selection, sel.home, sel.away, stats.homeScore, stats.awayScore);
     case "DOUBLE_CHANCE":
-      return resolveDoubleChance(sel.selection, stats.homeScore, stats.awayScore);
+      return resolveDoubleChance(sel.selection, sel.home, sel.away, stats.homeScore, stats.awayScore);
     case "DRAW_NO_BET":
       return resolveDrawNoBet(sel.selection, sel.home, sel.away, stats.homeScore, stats.awayScore);
     case "OVER_UNDER_GOALS":
