@@ -455,6 +455,7 @@ const AdminApp = (() => {
             : "Cria a conta deste utilizador no provedor de Cassino (user/create) — ação real do lado deles, não reversível por nós. Só precisa de ser feita uma vez por utilizador."
         }
       </div>
+      <div id="casino-provider-result"></div>
 
       <div class="section-title">Últimos movimentos</div>
       <div class="table-wrap"><table>
@@ -504,19 +505,19 @@ const AdminApp = (() => {
       try {
         const result = await AdminApi.provisionCasinoAccount(id);
         toast(`Conta Cassino provisionada: ${result.account}`);
-        // A resposta crua de user/create nunca foi vista com sucesso antes — mostrar aqui em vez
-        // de só no toast, para se poder ler/copiar com calma e confirmar se traz o user_code que
-        // o lançamento de jogo (game-url) precisa (ver docs/CASINO_SLOTS.md). Usa `justCreated`
+        // A resposta crua de user/create nunca foi vista com sucesso antes — mostrada aqui dentro
+        // do mesmo ecrã já aberto (em vez de abrir um modal novo por cima, que já causou
+        // confusão), para se poder ler/copiar com calma e confirmar se traz o user_code que o
+        // lançamento de jogo (game-url) precisa (ver docs/CASINO_SLOTS.md). Usa `justCreated`
         // (não a verdade/falsidade de providerResult) porque uma resposta "null" de sucesso é
         // igualmente informação nova a mostrar, não deve ficar escondida.
         if (result.justCreated) {
-          openModal(
-            "Resposta do provedor (user/create)",
-            `<pre style="white-space:pre-wrap;word-break:break-all;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:.8rem">${esc(JSON.stringify(result.providerResult, null, 2))}</pre>
-            <div class="btn-row" style="margin-top:16px">
-              <button class="btn outline" style="width:100%" onclick="AdminApp.closeModal()">Fechar</button>
-            </div>`
-          );
+          const resultEl = document.getElementById("casino-provider-result");
+          if (resultEl) {
+            resultEl.innerHTML = `
+              <div class="field-hint" style="margin-top:8px">Resposta do provedor (user/create):</div>
+              <pre style="white-space:pre-wrap;word-break:break-all;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:.8rem;margin-top:4px">${esc(JSON.stringify(result.providerResult, null, 2))}</pre>`;
+          }
         }
       } catch (err) {
         toast(err.message || "Erro ao provisionar conta Cassino", "error");
