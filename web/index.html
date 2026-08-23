@@ -605,11 +605,10 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 
 <!-- ========== DESTAQUES ========== -->
 <div id="page-destaques" class="page">
-    <div class="promo-banner">
-        <div style="font-size:.8rem;color:var(--muted);margin-bottom:6px">BÓNUS DE BOAS-VINDAS</div>
-        <h2><span class="pct">100%</span> ATÉ 200€</h2>
-        <button style="margin-top:16px;background:var(--red);color:#fff;border:none;padding:12px 28px;border-radius:10px;font-weight:700;cursor:pointer" onclick="openAuth('register')">REGISTE-SE AGORA</button>
-    </div>
+    <!-- 100% dinâmico (ver renderDestaquesPromoBanner() em app.js) — vem de /api/promotions/active,
+         a mesma fonte da página Promoção. Sem valores hardcoded: se não houver promoção ativa
+         configurada no admin, este espaço fica simplesmente vazio (nunca inventa uma oferta). -->
+    <div id="destaques-promo-banner"></div>
     <div class="section-title">PRÉ-JOGO EM DESTAQUE</div>
     <div id="destaques-prematch-list"></div>
     <div class="section-title">AO VIVO EM DESTAQUE</div>

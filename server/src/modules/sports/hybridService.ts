@@ -9,6 +9,17 @@ import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
 
 const POLL_INTERVAL_MS = 25_000;
 
+// Margem antes de tratar um evento "desaparecido de um snapshot" como mesmo terminado — a
+// Pulsescore não confirma nenhum estado "interrompido"/"atrasado"/"cancelado" (ver
+// betting/settlement.ts), por isso não há forma de distinguir com confiança um jogo que só
+// terminou de um jogo temporariamente suspenso (chuva forte, emergência médica) que a Pulsescore
+// pode deixar de reportar por instantes antes de voltar a incluir. Sem esta margem, um jogo
+// suspenso desaparecia e liquidava (ou ia para revisão) no instante seguinte, mesmo continuando
+// "ao vivo" na realidade — pedido explícito do utilizador ("mantendo ele sempre ao vivo pra
+// quando ele voltar ao normal"). Bem acima do intervalo de sondagem REST (25s) e de várias
+// frames do WebSocket, para não reagir a uma única falha pontual do feed.
+const REMOVE_GRACE_MS = 90_000;
+
 /**
  * Sistema híbrido: Pulsescore fornece odds/resultados ao vivo para futebol, ténis, basquete,
  * hóquei de gelo, MMA, beisebol, voleibol e Fórmula 1; API-Football enriquece com estatísticas
@@ -32,6 +43,8 @@ const POLL_INTERVAL_MS = 25_000;
  */
 class HybridSportsService extends EventEmitter {
   private events = new Map<string, LiveEvent>();
+  // eventId -> primeira vez que reparámos que estava a faltar de um snapshot (ver REMOVE_GRACE_MS)
+  private missingSince = new Map<string, number>();
 
   start() {
     if (!env.PULSESCORE_API_KEY) {
@@ -78,26 +91,39 @@ class HybridSportsService extends EventEmitter {
 
   /** Substitui todos os eventos de um desporto de uma vez — usado tanto pelo polling REST
    * (um desporto por chamada) como por cada frame do WebSocket (todos os eventos ao vivo
-   * desse desporto naquele instante). Um evento que desaparece de um snapshot (jogo terminado,
-   * ou já não devolvido pela Pulsescore por qualquer razão) tem de ser removido tão depressa
-   * quanto o próximo ciclo de polling/frame WS — sem isto o gateway (ver websocket/gateway.ts)
-   * nunca avisava o frontend, que ficava com o jogo preso na página Ao Vivo indefinidamente.
+   * desse desporto naquele instante). Um evento que desaparece de um snapshot só é removido a
+   * sério depois de continuar ausente durante REMOVE_GRACE_MS (ver comentário na constante) —
+   * antes disso fica tal como estava, ainda "ao vivo" com o último estado conhecido. Sem
+   * qualquer margem, o gateway (ver websocket/gateway.ts) avisava o frontend e o motor de
+   * liquidação disparava logo no próximo ciclo — bom para um jogo mesmo terminado, mas errado
+   * para uma suspensão temporária que a Pulsescore pode deixar de reportar por instantes.
    */
   private applySportSnapshot(sport: Sport, events: LiveEvent[]) {
     const incomingIds = new Set(events.map((e) => e.id));
+    const now = Date.now();
     for (const [id, evt] of this.events) {
-      if (evt.sport === sport && !incomingIds.has(id)) {
-        this.events.delete(id);
-        // Segundo argumento (o último estado conhecido, com o placar final) adicionado para a
-        // liquidação de apostas (betting/settlement.ts) — a Pulsescore nunca reporta um estado
-        // "finished" explícito neste feed, o jogo simplesmente desaparece do próximo snapshot,
-        // por isso este é o único momento em que o placar final ainda está disponível.
-        // Aditivo: quem só ouvia `(id)` (ex: websocket/gateway.ts) continua a funcionar sem
-        // alterações.
-        this.emit("remove", id, evt);
+      if (evt.sport !== sport || incomingIds.has(id)) continue;
+      const missingSince = this.missingSince.get(id);
+      if (missingSince === undefined) {
+        this.missingSince.set(id, now); // primeira vez que falta — dá-lhe mais um ciclo antes de decidir
+        continue;
       }
+      if (now - missingSince < REMOVE_GRACE_MS) continue; // ainda dentro da margem, mantém como estava
+
+      this.events.delete(id);
+      this.missingSince.delete(id);
+      // Segundo argumento (o último estado conhecido, com o placar final) adicionado para a
+      // liquidação de apostas (betting/settlement.ts) — a Pulsescore nunca reporta um estado
+      // "finished" explícito neste feed, o jogo simplesmente desaparece do próximo snapshot,
+      // por isso este é o único momento em que o placar final ainda está disponível.
+      // Aditivo: quem só ouvia `(id)` (ex: websocket/gateway.ts) continua a funcionar sem
+      // alterações.
+      this.emit("remove", id, evt);
     }
-    for (const evt of events) this.ingest(evt);
+    for (const evt of events) {
+      this.missingSince.delete(evt.id); // voltou a aparecer — já não está "a faltar"
+      this.ingest(evt);
+    }
   }
 
   private ingest(evt: LiveEvent) {
