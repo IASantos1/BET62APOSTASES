@@ -1056,7 +1056,7 @@ async function refreshMyBetsList() {
         const selectionsHtml = b.selections
           .map(
             (s) =>
-              `<div class="bs-row-sel" style="margin:2px 0">${s.home} vs ${s.away} — ${translateMarketDisplayName(s.market, s.sport)}: <b>${translateSelectionLabel(s.selection)}</b> @ ${Number(s.odd).toFixed(2)}</div>`
+              `<div class="bs-row-sel" style="margin:2px 0">${s.home} vs ${s.away} — ${translateMarketDisplayName(s.market, s.sport, [s.selection], s.home, s.away)}: <b>${translateSelectionLabel(s.selection)}</b> @ ${Number(s.odd).toFixed(2)}</div>`
           )
           .join("");
         const resultLine =
@@ -2279,10 +2279,57 @@ function translateMarketBaseName(m, sport) {
   return null;
 }
 
-function translateMarketDisplayName(rawName, sport) {
+// Validação geral, não só para BTTS: vários nomes de mercado reconhecidos por palavra-chave
+// implicam um vocabulário de seleção conhecido (BTTS só devia ter "Sim"/"Não", Resultado só
+// devia ter 1/X/2 ou os nomes das equipas, etc.) — caso real que expôs isto em produção: um
+// mercado com o placar já 1-1 aos 86' a mostrar odds típicas de Resultado (equipa/empate/equipa,
+// empate fortemente favorito a 1.25 — faria sentido para Resultado perto do fim, NENHUM sentido
+// para BTTS, que já estaria "Sim" garantido com 1-1 no placar) só apanhou "Ambas as Equipas
+// Marcam" porque o nome bruto continha a frase por coincidência, sem ser mesmo esse mercado.
+//
+// Mesmo princípio (e, sempre que possível, o mesmo vocabulário exato) do motor de liquidação
+// automática — server/src/modules/betting/settlementRules.ts nunca resolve uma aposta sozinho só
+// por classificar o NOME do mercado; cada resolveX() também confirma que a SELEÇÃO bate no
+// formato esperado da categoria antes de decidir, caindo em UNRESOLVABLE (revisão manual) em
+// qualquer outro caso — nunca arrisca liquidar mal. Aqui o "custo" de falhar a validação é só
+// mostrar o nome em inglês em vez de um rótulo em português enganador, mas a disciplina é a
+// mesma: nunca confiar só na palavra-chave do nome do mercado.
+function marketSelectionsLookPlausible(basePt, selectionLabels, home, away) {
+  if (!selectionLabels || !selectionLabels.length) return true; // nada para validar
+  const norm = (s) => String(s).trim().toLowerCase();
+  const labels = selectionLabels.map(norm);
+  const homeL = home ? norm(home) : null;
+  const awayL = away ? norm(away) : null;
+
+  if (basePt === "Ambas as Equipas Marcam" || basePt === "Haverá Tie-Break") {
+    return labels.every((l) => /^(yes|sim|no|não|nao)$/.test(l));
+  }
+  if (basePt === "Cantos Ímpar/Par" || basePt === "Cartões Ímpar/Par" || basePt === "Golos Ímpar/Par") {
+    return labels.every((l) => /^(odd|even|ímpar|impar|par)$/.test(l));
+  }
+  if (basePt === "Resultado Exato" || basePt === "Resultado Exato (Prolongamento)") {
+    return labels.every((l) => /^\d+\s*[-–—:]\s*\d+$/.test(l));
+  }
+  if (basePt === "Resultado Final" || basePt === "Resultado (Prolongamento)" || basePt === "Empate Anula Aposta") {
+    return labels.every((l) => ["1", "x", "2", "home", "away", "draw", "empate", "casa", "fora"].includes(l) || l === homeL || l === awayL);
+  }
+  if (basePt === "Dupla Hipótese") {
+    return labels.every((l) => {
+      const compact = l.replace(/\s+/g, "");
+      return ["1x", "x1", "x2", "2x", "12"].includes(compact) || /^.+\s+and\s+.+$/.test(l);
+    });
+  }
+  if (basePt === "Total da Equipa" || /^mais\/menos de/i.test(basePt)) {
+    return labels.every((l) => /over|under|mais|menos/.test(l));
+  }
+  return true; // sem vocabulário fixo confirmado para esta categoria — sem validação adicional
+}
+
+function translateMarketDisplayName(rawName, sport, selectionLabels, home, away) {
   if (!rawName) return rawName;
   const base = translateMarketBaseName(rawName, sport);
   if (!base) return rawName; // não reconhecido — mantém o nome original em inglês
+  if (!marketSelectionsLookPlausible(base, selectionLabels, home, away)) return rawName;
   return base + extractPeriodSuffix(rawName);
 }
 
@@ -2307,7 +2354,10 @@ function translateSelectionLabel(rawLabel) {
   const trimmed = String(rawLabel).trim();
   const lower = trimmed.toLowerCase();
   if (SELECTION_WORD_MAP[lower]) return SELECTION_WORD_MAP[lower];
-  const overUnderMatch = trimmed.match(/^(over|under)\s*([\d.]+)?$/i);
+  // "Over 2.5" ou "Over 2.5 Goals"/"Under 3.5 Points" (reportado numa amostra real: o rótulo da
+  // seleção repete a unidade do mercado, não só o número) — o número fica, a unidade cai (o
+  // cabeçalho do mercado já diz "Golos"/"Pontos"/etc., ver translateMarketDisplayName).
+  const overUnderMatch = trimmed.match(/^(over|under)\s*([\d.]+)?\s*(goals?|points?|games?|corners?|cards?|runs?)?$/i);
   if (overUnderMatch) {
     const word = overUnderMatch[1].toLowerCase() === "over" ? "Mais de" : "Menos de";
     return overUnderMatch[2] ? `${word} ${overUnderMatch[2]}` : word;
@@ -2316,6 +2366,14 @@ function translateSelectionLabel(rawLabel) {
   if (handicapMatch) {
     const side = handicapMatch[1].toLowerCase() === "home" ? "Casa" : "Fora";
     return `${side} ${handicapMatch[2]}`;
+  }
+  // Dupla Hipótese: rótulos reais vêm como "<Equipa> and Draw" / "<Equipa1> and <Equipa2>" —
+  // só a palavra de ligação ("and"→"e") e "Draw"→"Empate" são traduzidos, os nomes das equipas
+  // (não vocabulário fixo) passam exatamente como vieram.
+  const doubleChanceMatch = trimmed.match(/^(.+?)\s+and\s+(.+)$/i);
+  if (doubleChanceMatch) {
+    const side = (s) => (/^draw$/i.test(s) ? "Empate" : s);
+    return `${side(doubleChanceMatch[1])} e ${side(doubleChanceMatch[2])}`;
   }
   return trimmed;
 }
@@ -2401,7 +2459,7 @@ function renderMarketGroups(e) {
       // mostra-se um único botão a cobrir a linha toda. O rótulo do mercado (group.market) pode
       // vir "Match Odds", "Grande Chance" ou até "Revisão VAR" consoante o bookmaker/desporto —
       // por isso a decisão compara o próprio grupo, não o texto do nome.
-      const marketNamePt = translateMarketDisplayName(group.market, e.sport);
+      const marketNamePt = translateMarketDisplayName(group.market, e.sport, Object.keys(group.selections || {}), e.home, e.away);
       if (group === primaryMarket && !group.isActive) {
         return `<div class="market-group"><h4>${marketNamePt}</h4><div class="selection-row">
           <div class="selection-btn suspended"><span class="sel-odd">Suspenso</span></div>
@@ -2683,7 +2741,7 @@ function renderBetslipPanel() {
       <div class="bs-row">
         <div class="bs-row-info">
           <div class="bs-row-teams">${s.home || ""}${s.away ? " vs " + s.away : ""}</div>
-          <div class="bs-row-sel">${translateMarketDisplayName(s.market, s.sport)}: <b>${translateSelectionLabel(s.selection)}</b> @ ${Number(s.odd).toFixed(2)}</div>
+          <div class="bs-row-sel">${translateMarketDisplayName(s.market, s.sport, [s.selection], s.home, s.away)}: <b>${translateSelectionLabel(s.selection)}</b> @ ${Number(s.odd).toFixed(2)}</div>
         </div>
         <div class="bs-row-actions">
           ${
