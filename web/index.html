@@ -520,10 +520,12 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .bet-ticket-status.st-lost{background:var(--surface2);color:var(--muted)}
 .bet-ticket-status.st-cashout{background:rgba(80,180,255,.16);color:#3b9ceb}
 .bet-ticket-status.st-void{background:var(--surface2);color:var(--muted)}
-.bet-ticket-legs{display:flex;flex-direction:column;gap:10px;padding:0 16px 14px;max-height:300px;overflow-y:auto;overscroll-behavior:contain}
-.bet-ticket-legs::-webkit-scrollbar{width:5px}
-.bet-ticket-legs::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.bet-ticket-legs{display:flex;flex-direction:column;gap:10px;padding:0 16px 14px}
 .bet-ticket-leg{border-left:2px solid var(--border);padding-left:10px}
+.bet-ticket-leg-extra{display:none}
+.bet-ticket-legs.expanded .bet-ticket-leg-extra{display:block}
+.bet-ticket-expand{width:100%;background:none;border:1px dashed var(--border);color:var(--muted);padding:8px;border-radius:10px;font-size:.76rem;font-weight:700;cursor:pointer;margin-top:2px}
+.bet-ticket-expand:hover{color:var(--text);border-color:var(--muted)}
 .bet-ticket-leg-teams{font-size:.86rem;font-weight:700;color:var(--text)}
 .bet-ticket-leg-market{font-size:.74rem;color:var(--muted);margin-top:2px}
 .bet-ticket-leg-market b{color:var(--text)}

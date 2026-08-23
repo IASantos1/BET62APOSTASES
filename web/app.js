@@ -1310,7 +1310,9 @@ function renderMyBetsBody() {
   if (myBetsCurrentTab === "open") refreshMyBetsCashOutOffers();
 }
 
-function betTicketLegHtml(s, isPending) {
+const BET_TICKET_VISIBLE_LEGS = 3;
+
+function betTicketLegHtml(s, isPending, extra) {
   const marketPt = translateMarketDisplayName(s.market, s.sport, [s.selection], s.home, s.away);
   const selPt = translateSelectionLabel(s.selection);
   const liveEvent = isPending ? liveEventsById.get(s.eventId) : null;
@@ -1318,11 +1320,21 @@ function betTicketLegHtml(s, isPending) {
     ? `<div class="bet-ticket-live"><span class="live-dot"></span> ${liveEvent.minuteOrPeriod || "AO VIVO"} • ${liveEvent.homeScore ?? "-"} - ${liveEvent.awayScore ?? "-"}</div>`
     : "";
   return `
-    <div class="bet-ticket-leg" data-eid="${s.eventId}">
+    <div class="bet-ticket-leg${extra ? " bet-ticket-leg-extra" : ""}" data-eid="${s.eventId}">
       <div class="bet-ticket-leg-teams">${s.home} vs ${s.away}</div>
       <div class="bet-ticket-leg-market">${marketPt}: <b>${selPt}</b> <span class="bet-ticket-leg-odd">@ ${Number(s.odd).toFixed(2)}</span></div>
       ${liveHtml}
     </div>`;
+}
+
+/** Alterna entre mostrar só as primeiras seleções e o bilhete completo — pedido explícito do
+ * utilizador para substituir o scroll interno (sentia-se "preso", cortava seleções a meio).
+ * Puramente CSS/DOM (mostra/esconde .bet-ticket-leg-extra), sem re-render nem novo pedido à API. */
+function toggleTicketLegs(btn) {
+  const container = btn.closest(".bet-ticket-legs");
+  if (!container) return;
+  const expanded = container.classList.toggle("expanded");
+  btn.textContent = expanded ? "▲ Mostrar menos" : btn.dataset.collapsedLabel;
 }
 
 function betTicketHtml(b) {
@@ -1332,7 +1344,13 @@ function betTicketHtml(b) {
   const statusMeta = TICKET_STATUS_META[b.status] || { cls: "st-pending", label: b.status };
   const statusCls = anyLegLive && isPending ? "st-live" : statusMeta.cls;
   const statusLabel = anyLegLive && isPending ? "Ao Vivo" : statusMeta.label;
-  const legsHtml = b.selections.map((s) => betTicketLegHtml(s, isPending)).join("");
+  const legsHtml = b.selections.map((s, i) => betTicketLegHtml(s, isPending, i >= BET_TICKET_VISIBLE_LEGS)).join("");
+  const hiddenCount = b.selections.length - BET_TICKET_VISIBLE_LEGS;
+  const collapsedLabel = `▾ Mostrar mais ${hiddenCount} seleç${hiddenCount > 1 ? "ões" : "ão"}`;
+  const expandToggle =
+    hiddenCount > 0
+      ? `<button class="bet-ticket-expand" data-collapsed-label="${escHtml(collapsedLabel)}" onclick="toggleTicketLegs(this)">${collapsedLabel}</button>`
+      : "";
   const modeLabel = b.type === "MULTIPLA" ? "Múltipla" : b.type === "BET_BUILDER" ? "Bet Builder" : "Simples";
 
   const returnLabel =
@@ -1345,10 +1363,10 @@ function betTicketHtml(b) {
         : Number(b.potentialReturn).toFixed(2);
 
   // Botão de Cash Out fica em baixo, junto dos valores do bilhete (Stake/Odd/Retorno/ID) —
-  // pedido explícito do utilizador. Para isso não ficar escondido numa Múltipla com muitas
-  // seleções, a lista de seleções (.bet-ticket-legs) tem scroll interno próprio (ver CSS,
-  // max-height+overflow-y:auto) em vez de esticar o bilhete inteiro — o cabeçalho e o rodapé
-  // com Cash Out ficam sempre visíveis, só as seleções é que rolam por dentro quando são muitas.
+  // pedido explícito do utilizador. Numa Múltipla com muitas seleções, só as primeiras
+  // BET_TICKET_VISIBLE_LEGS aparecem por omissão + um botão para expandir/recolher o resto (ver
+  // toggleTicketLegs) — troca do scroll interno anterior, que sentia "preso" e cortava a
+  // primeira seleção visível a meio quando a lista era arrastada.
   const cashoutRow = isPending
     ? `<div class="bet-ticket-cashout-row"><button class="bet-ticket-cashout-btn" id="cashout-btn-${b.id}" onclick='requestCashOut(${JSON.stringify(b.id)})' disabled>A verificar Cash Out…</button></div>`
     : "";
@@ -1359,7 +1377,7 @@ function betTicketHtml(b) {
         <span class="bet-ticket-mode">${modeLabel} • ${b.selections.length} seleç${b.selections.length > 1 ? "ões" : "ão"}</span>
         <span class="bet-ticket-status ${statusCls}">${statusLabel}</span>
       </div>
-      <div class="bet-ticket-legs">${legsHtml}</div>
+      <div class="bet-ticket-legs">${legsHtml}${expandToggle}</div>
       <div class="bet-ticket-punch"></div>
       <div class="bet-ticket-bottom">
         <div class="bet-ticket-figures">
