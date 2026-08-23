@@ -29,12 +29,35 @@ export interface LiveSelection {
   // campo confirmado com o MOTIVO da suspensão (VAR/pênalti/grande chance/cartão) — só este
   // sinal genérico ligado/desligado.
   isActive: boolean;
+  /** Nome normalizado da seleção (campo `name` da Pulsescore). Ex: "Over 2.5", "Liverpool".
+   *  Opcional porque historicamente a app só usava rawName como key do `selections`; o betting
+   *  engine não depende disto — é para UI exibir rótulo amigável mesmo se rawName for estranho. */
+  canonicalName?: string;
+  /** Slug da casa de apostas que forneceu esta odd individual (no caso de odds agregadas cross-
+   *  bookmaker por seleção). Opcional; se ausente, a casa é a `LiveOdds.sourceBookmaker` acima. */
+  sourceBookmaker?: string;
 }
 
 export interface LiveOdds {
-  market: string; // e.g. "1x2", "moneyline", "total_games"
+  market: string; // e.g. "1x2", "moneyline", "total_games" (rawName da Pulsescore — chave primária betting engine)
   isActive: boolean; // mercado suspenso como um todo (ver LiveSelection acima)
   selections: Record<string, LiveSelection>; // e.g. { home: {odd:1.85,isActive:true}, ... }
+  /** Campo normalizado PULSESCORE (docs: canonicalMarket). Ex: "match_winner", "total_goals".
+   *  Mais estável que market rawName para fazer matching "o mesmo mercado em casas diferentes"
+   *  (uma casa escreve "Full Time Result", outra "Resultado Final" → mesma canonicalMarket).
+   *  Opcional para manter compatibilidade retroativa; sempre preenchido quando disponível. */
+  canonicalMarket?: string;
+  /** Período normalizado (docs Pulsescore period). Ex: "fulltime", "first_half". Opcional. */
+  period?: string;
+  /** Linha numérica para mercados de Total/Handicap (Over/Under X gols, Handicap asiático ±X).
+   *  Vem do campo `line` da Pulsescore. Opcional. */
+  line?: number;
+  /** Slug da casa de apostas FONTE deste mercado. Quando a paddypower (default) não tem um mercado,
+   *  e o `crossBookmakerFallback` o busca em bet365/bwin/unibetau etc., este campo é preenchido
+   *  com a bookmaker real que forneceu os dados. Igual à chave ROUTING_ID (marketRouting.ts).
+   *  Opcional por compatibilidade retroativa. A betting engine não usa este campo para nada,
+   *  só para UI poder exibir badge "Odds fornecidas por Bet365" e auditoria. */
+  sourceBookmaker?: string;
 }
 
 export interface LiveTeamStats {

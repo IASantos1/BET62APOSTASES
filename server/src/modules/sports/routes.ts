@@ -86,6 +86,58 @@ router.get(
   })
 );
 
+/**
+ * Auditoria cross-bookmaker: quantos mercados no evento foram fornecidos por cada casa de
+ * apostas. Usado para debug do fallback e para o UI/admin confirmar que a união de mercados
+ * está mesmo a funcionar (ex: "paddypower: 12, bet365: 4, pinnacle_ps3838: 2").
+ *
+ * Tenta primeiro o evento em cache do hybridService (rápido, se estiver ao vivo). Se não
+ * encontrar, tenta refresh on-demand como no /refresh endpoint (cascata pré-jogo → live).
+ */
+router.get(
+  "/events/:id/odds/coverage",
+  asyncHandler(async (req, res) => {
+    const sport = req.query.sport;
+    if (typeof sport !== "string" || !ALL_SPORTS.includes(sport as Sport)) {
+      throw Errors.badRequest("Parâmetro sport em falta ou inválido");
+    }
+    const rawId = req.params.id.startsWith("pulsescore:") ? req.params.id.slice("pulsescore:".length) : req.params.id;
+
+    let event: LiveEvent | null = hybridSportsService.getById(req.params.id) ?? null;
+
+    if (!event) {
+      try {
+        event = await fetchEventById(sport as Sport, rawId);
+      } catch {
+        try {
+          event = await fetchLiveEventById(rawId, sport as Sport);
+        } catch {
+          event = null;
+        }
+      }
+    }
+    if (!event) throw Errors.notFound("Evento não encontrado");
+
+    const marketsCount: Record<string, number> = {};
+    const selectionsCount: Record<string, number> = {};
+    for (const o of event.odds) {
+      const b = o.sourceBookmaker ?? "unknown";
+      marketsCount[b] = (marketsCount[b] ?? 0) + 1;
+      for (const sel of Object.values(o.selections ?? {})) {
+        const sb = sel.sourceBookmaker ?? b;
+        selectionsCount[sb] = (selectionsCount[sb] ?? 0) + 1;
+      }
+    }
+
+    res.json({
+      eventId: event.id,
+      totalMarkets: event.odds.length,
+      marketsCount,
+      selectionsCount,
+    });
+  })
+);
+
 // Endpoint unificado (docs/UNIFIED_MATCH_DATA.md) — placar/estado/relógio/cartões/cantos da
 // Pulsescore (fonte principal) combinados com as estatísticas complementares da API-Football
 // (posse, remates, faltas, passes...) num único objeto, com a fonte de cada campo explícita.

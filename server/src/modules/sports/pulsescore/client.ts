@@ -187,7 +187,8 @@ function bookmakerPathSegment(bookmaker: string): string {
 }
 
 interface PulsescoreSelection {
-  canonicalOutcome: string;
+  canonicalOutcome?: string; // campo "name" docs Pulsescore; vindo como canonicalOutcome em amostras reais — defensivo ambos
+  name?: string;             // campo "name" oficial docs Pulsescore (fallback se existir)
   rawName: string;
   odds: number;
   isActive: boolean;
@@ -379,7 +380,7 @@ export async function fetchEventsFlat(sport: Sport, opts: { maxPages?: number; l
   let page = 1;
   while (page <= maxPages) {
     const data = await fetchEventsFlatPage(sport, page, limit, opts.bookmaker);
-    events.push(...extractEvents(data).map((evt) => normalizeEvent(evt, sport)));
+    events.push(...extractEvents(data).map((evt) => normalizeEvent(evt, sport, opts.bookmaker)));
     if (!data.hasNextPage) break;
     page += 1;
   }
@@ -515,7 +516,7 @@ export async function fetchLiveEvents(sport: Sport, opts: { maxPages?: number; l
   let page = 1;
   while (page <= maxPages) {
     const data = await fetchLiveEventsPage(sport, page, limit, opts.bookmaker);
-    const batch = extractEvents(data).map((evt) => normalizeEvent({ ...evt, live: true }, sport));
+    const batch = extractEvents(data).map((evt) => normalizeEvent({ ...evt, live: true }, sport, opts.bookmaker));
     events.push(...batch);
     const hasNextPage = (data as Record<string, unknown> | null)?.hasNextPage;
     if (!hasNextPage) break;
@@ -554,17 +555,34 @@ export async function fetchLiveEventById(eventId: string, sport?: Sport): Promis
     logger.warn({ rawSport: raw.sport, eventId }, "Pulsescore: live-events/events devolveu um sport não reconhecido");
     return null;
   }
-  return normalizeEvent({ ...raw, live: true }, detectedSport);
+  return normalizeEvent({ ...raw, live: true }, detectedSport, resolvedBookmaker);
 }
 
 // Mantém as seleções inativas em vez de as descartar (o bookmaker desativa-as temporariamente,
 // ex: durante uma revisão VAR — ver LiveSelection em types.ts) para a UI as mostrar suspensas
 // em vez de as fazer desaparecer.
-function normalizeMarket(m: PulsescoreMarket): LiveOdds {
+// `bookmakerSlug` opcional: quando passado, grava qual casa forneceu este mercado (fonte de
+// auditoria para UI poder exibir "Odds fornecidas por Bet365" quando o mercado vem de fallback
+// cross-bookmaker). Valores possíveis = output de `bookmakerFor()` (paddypower / unibetau / bet365).
+function normalizeMarket(m: PulsescoreMarket, bookmakerSlug?: string): LiveOdds {
   return {
     market: m.rawName,
     isActive: m.isActive,
-    selections: Object.fromEntries(m.selections.map((s) => [s.rawName, { odd: s.odds, isActive: s.isActive }])),
+    canonicalMarket: m.canonicalMarket,
+    period: m.period,
+    line: m.line,
+    sourceBookmaker: bookmakerSlug,
+    selections: Object.fromEntries(
+      m.selections.map((s) => [
+        s.rawName,
+        {
+          odd: s.odds,
+          isActive: s.isActive,
+          canonicalName: s.name ?? s.canonicalOutcome,
+          sourceBookmaker: bookmakerSlug,
+        },
+      ]),
+    ),
   };
 }
 
@@ -731,7 +749,8 @@ function withSyntheticMoneyline(markets: PulsescoreMarket[]): PulsescoreMarket[]
   return markets;
 }
 
-function normalizeEvent(e: PulsescoreEvent, sport: Sport): LiveEvent {
+function normalizeEvent(e: PulsescoreEvent, sport: Sport, bookmakerSlug?: string): LiveEvent {
+  const bm = bookmakerSlug ?? bookmakerFor(sport);
   // Já não filtra mercados inativos aqui — passam para o frontend com isActive:false para
   // aparecerem suspensos (não clicáveis) em vez de desaparecerem silenciosamente.
   const orderedMarkets = sortNumericMarketFamilies(orderMarketsWithPrimaryFirst(withSyntheticMoneyline(e.markets)));
@@ -748,7 +767,7 @@ function normalizeEvent(e: PulsescoreEvent, sport: Sport): LiveEvent {
     ...parsePulsescoreScore(e.score, sport),
     minuteOrPeriod: formatMatchClock(e.matchClock, e.live ? "AO VIVO" : ""),
     status: e.live ? "live" : "scheduled",
-    odds: orderedMarkets.map(normalizeMarket),
+    odds: orderedMarkets.map((m) => normalizeMarket(m, bm)),
     updatedAt: new Date().toISOString(),
     source: "pulsescore",
     startTime: e.startTime,

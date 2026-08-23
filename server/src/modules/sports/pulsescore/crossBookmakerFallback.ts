@@ -1,8 +1,8 @@
 import { logger } from "../../../lib/logger";
 import { calculateTeamSimilarity } from "../mapping/normalize";
 import type { LiveEvent, LiveOdds, LiveStatistics, LiveTeamStats, Sport } from "../types";
-import { bookmakerFor, fetchEventsFlat, fetchLiveEvents } from "./client";
-import { MARKET_ROUTING, MARKET_ROUTING_BOOKMAKERS, classifyRoutingMarket, pulsescoreSlugForRoutingId, type RoutingMarketKey } from "./marketRouting";
+import { SPORT_SLUGS, bookmakerFor, fetchEventsFlat, fetchLiveEvents } from "./client";
+import { MARKET_ROUTING, MARKET_ROUTING_BOOKMAKERS, VALID_SPORTS_BY_ROUTING_ID, classifyRoutingMarket, pulsescoreSlugForRoutingId, type RoutingMarketKey } from "./marketRouting";
 
 /**
  * Preenche mercados E estatísticas em falta na bookmaker principal do evento indo buscá-los a
@@ -125,6 +125,16 @@ async function getMatchedEvent(sport: Sport, event: LiveEvent, session: Fallback
   const slug = pulsescoreSlugForRoutingId(routingId);
   if (slug === session.primarySlug) return null; // já verificado — é de lá que `event` veio
   if (session.matchedEventCache.has(slug)) return session.matchedEventCache.get(slug)!;
+
+  // GUARD: se esta bookmaker NÃO cobre o desporto (tabela docs "Valid Sports per Bookmaker"),
+  // salta imediatamente sem gastar orçamento/pedido REST — garantidamente 0 eventos.
+  const psSport = SPORT_SLUGS[sport];
+  const coveredSports = VALID_SPORTS_BY_ROUTING_ID[routingId];
+  if (coveredSports && !coveredSports.has(psSport)) {
+    session.matchedEventCache.set(slug, null);
+    return null;
+  }
+
   if (session.bookmakerFetchBudget <= 0) return null;
 
   session.bookmakerFetchBudget -= 1;
@@ -153,6 +163,10 @@ async function fillMissingMarketsInto(sport: Sport, event: LiveEvent, session: F
       const market = findValidMarket(matched, key);
       if (!market) continue;
 
+      market.sourceBookmaker = routingId;
+      for (const sel of Object.values(market.selections ?? {})) {
+        sel.sourceBookmaker = routingId;
+      }
       filled.push(market);
       logger.info({ eventId: event.id, market: key, bookmaker: routingId }, "[FALLBACK] mercado preenchido por outra bookmaker");
       break; // achou nesta bookmaker — para de percorrer a lista deste mercado

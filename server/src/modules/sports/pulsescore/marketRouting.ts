@@ -25,23 +25,80 @@
 
 export const MARKET_ROUTING_DEFAULT_PRIMARY = "paddy_power";
 
+/** Lista de TODOS os routing IDs (nome amigável com underscores/dots) que sabemos mapear
+ *  para um segmento de path Pulsescore real — 31 bookmakers, ORDEM GERAL de preferência
+ *  (licenciado EU + Pinnacle exchange no topo). */
 export const MARKET_ROUTING_BOOKMAKERS: string[] = [
-  "paddy_power", "bet365", "unibet_au", "fanduel", "bwin", "william_hill", "ladbrokes",
-  "betfred", "draftkings", "pinnacle_ps3838", "polymarket", "betano_de", "betmgm_couk",
-  "betmgm_nl", "bc_game", "stake", "betway_mw", "10bet_couk", "sportsbet_au", "thunderpick",
-  "orbit_exchange", "betfair_sportsbook", "sky_bet", "cloudbet", "tipsport", "bet_right", "aba",
-  "betmgm_us", "betrivers", "betway", "star_sports",
+  "paddy_power", "bet365", "pinnacle_ps3838", "unibet_au", "betfair_exchange", "stake",
+  "betano_de", "bwin", "william_hill", "ladbrokes", "betfred", "10bet_couk", "betway_mw",
+  "betfair_sportsbook", "sky_bet", "betmgm_couk", "betmgm_nl", "betmgm_us", "cloudbet",
+  "draftkings", "fanduel", "betrivers", "bc_game", "polymarket", "thunderpick",
+  "sportsbet_au", "tipsport", "tab", "bet_at_home", "bet_right",
 ];
 
+/** Mapeamento OFICIAL 1:1 entre routing ID (underscore, friendly) → segmento path Pulsescore
+ *  (SEM versionamento; bet365 usa /v3/bet365 e é tratado à parte em client.ts::bookmakerPathSegment).
+ *  ✅ CONFIRMADO em https://pulsescore.net/docs (Bookmaker API References + WebSocket table endpoints) */
 const ROUTING_ID_TO_PULSESCORE_SLUG: Record<string, string> = {
   paddy_power: "paddypower",
   unibet_au: "unibetau",
   "10bet_couk": "10bet",
   pinnacle_ps3838: "ps3838",
+  william_hill: "willhill",
+  betano_de: "betano-de",
+  betmgm_couk: "betmgm-couk",
+  betmgm_nl: "betmgm-nl",
+  bc_game: "bcgame",
+  betway_mw: "betwaymw",
+  sportsbet_au: "sportsbet-com-au",
+  betfair_exchange: "orbitxch",
+  betfair_sportsbook: "betfair-sb",
+  sky_bet: "skybet",
+  bet_at_home: "betathome",
+  bet_right: "betright",
+  tab: "tab",
+  betmgm_us: "betmgm",
 };
 
-/** Ids com segmento de path REST confirmado nesta integração (ver aviso acima). */
-export const ROUTING_IDS_CONFIRMED = new Set(["paddy_power", "bet365", "unibet_au", "10bet_couk", "pinnacle_ps3838"]);
+/** 🔍 Desportos cobertos POR CASA, extraídos da tabela docs "Valid Sports per Bookmaker".
+ *  Se uma casa NÃO listar um sport aqui, o fallback NÃO TENTA ESSA CASA para esse desporto —
+ *  evita gastar rate limit com pedidos garantidos de 0 eventos (a docs confirmam que fecha WS 4004
+ *  se tentarmos sport não suportado; REST simplesmente devolve vazio mas custa quota). */
+export const VALID_SPORTS_BY_ROUTING_ID: Record<string, Set<string>> = {
+  bet365: new Set(["soccer", "basketball", "tennis", "ice-hockey", "rugby-league", "rugby-union", "volleyball", "handball", "table-tennis", "e-sports", "esports", "american-football", "baseball", "greyhounds", "horse-racing", "cricket"]),
+  betfair_exchange: new Set(["american-football", "australian-rules", "baseball", "basketball", "boxing", "cricket", "darts", "esports", "gaelic-games", "rugby-league", "rugby-union", "soccer", "tennis", "volleyball"]),
+  pinnacle_ps3838: new Set(["soccer", "basketball", "tennis", "american-football", "ice-hockey", "baseball", "rugby-league"]),
+  polymarket: new Set(["american-football", "baseball", "basketball", "boxing", "cricket", "esports", "lacrosse", "mma", "pickleball", "soccer", "table-tennis", "tennis", "volleyball"]),
+  unibet_au: new Set(["american-football", "australian-rules", "baseball", "basketball", "boxing", "cricket", "cycling", "darts", "esports", "formula-1", "futsal", "golf", "greyhounds", "handball", "horse-racing", "ice-hockey", "lacrosse", "mma", "motorsports", "rugby-league", "rugby-union", "snooker", "soccer", "table-tennis", "tennis", "volleyball"]),
+  fanduel: new Set(["american-football", "baseball", "basketball", "boxing", "cricket", "darts", "handball", "ice-hockey", "mma", "rugby-league", "rugby-union", "snooker", "soccer", "table-tennis", "tennis"]),
+  bwin: new Set(["american-football", "baseball", "basketball", "cricket", "darts", "futsal", "handball", "ice-hockey", "rugby-league", "rugby-union", "snooker", "soccer", "table-tennis", "tennis", "volleyball"]),
+  draftkings: new Set(["american-football", "australian-rules", "baseball", "basketball", "boxing", "cricket", "cycling", "darts", "esports", "golf", "handball", "ice-hockey", "lacrosse", "mma", "motorsports", "rugby-league", "rugby-union", "snooker", "soccer", "table-tennis", "tennis"]),
+  ladbrokes: new Set(["american-football", "baseball", "basketball", "boxing", "cricket", "darts", "esports", "greyhounds", "handball", "horse-racing", "ice-hockey", "mma", "rugby-league", "rugby-union", "soccer", "table-tennis", "tennis", "volleyball"]),
+  paddy_power: new Set(["american-football", "australian-rules", "baseball", "basketball", "boxing", "cricket", "darts", "esports", "golf", "greyhounds", "handball", "horse-racing", "ice-hockey", "mma", "motorsports", "rugby-league", "rugby-union", "snooker", "soccer", "table-tennis", "tennis", "volleyball"]),
+  betfred: new Set(["baseball", "basketball", "boxing", "cricket", "greyhounds", "horse-racing", "mma", "rugby-league", "soccer", "tennis"]),
+  betano_de: new Set(["american-football", "baseball", "basketball", "boxing", "cricket", "cycling", "darts", "formula-1", "golf", "handball", "ice-hockey", "motorsports", "rugby-league", "rugby-union", "soccer", "tennis", "volleyball"]),
+  betmgm_couk: new Set(["american-football", "baseball", "basketball", "boxing", "cricket", "darts", "handball", "ice-hockey", "rugby-league", "rugby-union", "snooker", "soccer", "table-tennis", "tennis", "volleyball"]),
+  betmgm_nl: new Set(["american-football", "baseball", "basketball", "boxing", "cricket", "darts", "handball", "ice-hockey", "rugby-league", "rugby-union", "snooker", "soccer", "table-tennis", "tennis", "volleyball"]),
+  stake: new Set(["american-football", "australian-rules", "baseball", "basketball", "boxing", "cricket", "darts", "esports", "ice-hockey", "mma", "rugby-union", "soccer", "table-tennis", "tennis", "volleyball", "water-polo"]),
+  betway_mw: new Set(["american-football", "australian-rules", "baseball", "basketball", "beach-volley", "boxing", "cricket", "darts", "futsal", "handball", "ice-hockey", "mma", "rugby-union", "snooker", "soccer", "table-tennis", "tennis", "volleyball"]),
+  "10bet_couk": new Set(["american-football", "australian-rules", "baseball", "basketball", "boxing", "cricket", "darts", "esports", "futsal", "handball", "ice-hockey", "mma", "rugby-league", "rugby-union", "snooker", "soccer", "table-tennis", "tennis", "volleyball"]),
+  sportsbet_au: new Set(["american-football", "australian-rules", "baseball", "basketball", "boxing", "cricket", "darts", "esports", "mma", "rugby-league", "rugby-union", "snooker", "soccer", "table-tennis", "tennis", "volleyball"]),
+  thunderpick: new Set(["american-football", "australian-rules", "badminton", "baseball", "basketball", "cricket", "darts", "esports", "ice-hockey", "martial-arts", "rugby-league", "rugby-union", "soccer", "table-tennis", "tennis", "volleyball"]),
+  betfair_sportsbook: new Set(["american-football", "australian-rules", "baseball", "basketball", "boxing", "cricket", "darts", "esports", "ice-hockey", "mma", "rugby-league", "snooker", "soccer", "table-tennis", "tennis", "volleyball"]),
+  sky_bet: new Set(["american-football", "australian-rules", "baseball", "basketball", "boxing", "cricket", "darts", "esports", "ice-hockey", "mma", "rugby-league", "rugby-union", "snooker", "soccer", "table-tennis", "tennis", "volleyball"]),
+  cloudbet: new Set(["american-football", "australian-rules", "badminton", "baseball", "basketball", "boxing", "cricket", "cycling", "esports", "golf", "ice-hockey", "mma", "rugby-league", "rugby-union", "soccer", "table-tennis", "tennis", "volleyball"]),
+  bet_at_home: new Set(["american-football", "australian-rules", "baseball", "basketball", "cricket", "ice-hockey", "rugby-league", "soccer", "tennis"]),
+  tipsport: new Set(["american-football", "australian-rules", "badminton", "baseball", "basketball", "beach-volley", "boxing", "esports", "handball", "ice-hockey", "mma", "padel", "rugby-league", "rugby-union", "snooker", "soccer", "table-tennis", "tennis"]),
+  tab: new Set(["american-football", "australian-rules", "baseball", "basketball", "boxing", "cricket", "rugby-league", "rugby-union", "snooker", "soccer"]),
+  betmgm_us: new Set(["american-football", "baseball", "basketball", "boxing", "cricket", "esports", "ice-hockey", "lacrosse", "mma", "rugby-league", "soccer", "table-tennis", "tennis"]),
+  betrivers: new Set(["american-football", "baseball", "basketball", "hockey", "soccer", "tennis"]),
+  bc_game: new Set(["soccer", "tennis", "basketball", "esports", "american-football", "ice-hockey", "baseball", "volleyball"]),
+  bet_right: new Set(["soccer", "tennis", "basketball", "australian-rules", "rugby-league", "rugby-union", "horse-racing", "greyhounds"]),
+};
+
+/** Ids com segmento de path REST + sports coverage confirmados AGORA via docs OFICIAIS (acima).
+ *  Antes eram só 5; agora 29 — cross-bookmaker fallback finalmente funciona. */
+export const ROUTING_IDS_CONFIRMED = new Set(MARKET_ROUTING_BOOKMAKERS);
 
 export function pulsescoreSlugForRoutingId(routingId: string): string {
   return ROUTING_ID_TO_PULSESCORE_SLUG[routingId] ?? routingId;
