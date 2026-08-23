@@ -280,6 +280,11 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .selection-btn.suspended{cursor:not-allowed;opacity:.5;background:var(--surface2)}
 .selection-btn.suspended .sel-odd{color:var(--muted);font-style:italic;font-weight:600}
 .market-suspended-badge{margin-left:8px;font-size:.62rem;font-weight:700;text-transform:uppercase;color:var(--red);background:rgba(230,48,39,.12);border-radius:6px;padding:2px 6px;letter-spacing:.03em}
+.bs-row.bs-row-suspended{opacity:.7;border-color:var(--red)}
+.bs-row.bs-row-adjusted{border-color:var(--gold)}
+.bs-row-badge{display:inline-block;margin-top:4px;font-size:.62rem;font-weight:700;text-transform:uppercase;border-radius:6px;padding:2px 6px;letter-spacing:.03em}
+.bs-row-badge.badge-suspended{color:var(--red);background:rgba(230,48,39,.12)}
+.bs-row-badge.badge-adjusted{color:var(--gold);background:rgba(245,200,66,.14)}
 /* ===== Layout: Menu lateral esquerdo (Competições + Desportos) e direito (Boletim) ===== */
 .app-shell{display:flex;align-items:flex-start}
 .main-col{flex:1;min-width:0}
@@ -412,7 +417,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .mybets-overlay:not(.hidden){display:flex}
 .mybets-panel{width:100%;max-width:640px;height:100%;background:var(--bg);display:flex;flex-direction:column;box-shadow:-10px 0 40px rgba(0,0,0,.4)}
 @media(min-width:700px){.mybets-panel{height:92vh;margin-top:4vh;border-radius:18px;overflow:hidden;border:1px solid var(--border)}}
-.mybets-header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--border);flex-shrink:0;background:linear-gradient(135deg,#0c0c0e,#1a1420)}
+.mybets-header{display:flex;align-items:center;justify-content:space-between;padding:calc(16px + env(safe-area-inset-top)) 18px 16px;border-bottom:1px solid var(--border);flex-shrink:0;background:linear-gradient(135deg,#0c0c0e,#1a1420)}
 .mybets-title{font-family:'Bebas Neue',sans-serif;font-size:1.3rem;letter-spacing:.5px;color:#fff;display:flex;align-items:center;gap:10px}
 .mybets-title i{color:var(--gold)}
 .mybets-close{background:transparent;border:1px solid var(--border);color:var(--muted);width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:.9rem;flex-shrink:0}

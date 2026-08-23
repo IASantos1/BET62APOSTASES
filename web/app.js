@@ -1830,6 +1830,7 @@ function ensureLiveSocket() {
     }
     if (currentMarketEvent && pageHistory[pageHistory.length - 1] === "market") renderMarketPage();
     updateMyBetsLiveBadgesIfOpen();
+    syncBetslipLiveState();
   };
 }
 
@@ -2845,9 +2846,49 @@ function toggleSelection(key, selection) {
     betslipStakes.delete(key);
   } else {
     betslipSelections.set(key, selection);
+    ensureLiveSocket(); // para o boletim poder detetar suspensão/mudança de odd em tempo real
   }
   if (currentMarketEvent) renderMarketGroups(currentMarketEvent);
   renderBetslipPanel();
+}
+
+// Compara cada seleção do boletim contra o snapshot ao vivo mais recente (liveEventsById, o
+// mesmo mapa da página Ao Vivo) — só faz sentido para jogos que já estão ao vivo neste momento
+// (pré-jogo não tem um feed contínuo de odds nesta integração, ver docs/SPORTS_DATA.md).
+// Duas situações distintas, pedido explícito do utilizador:
+// - Mercado/seleção suspenso pela casa agora mesmo (VAR, intervalo, etc.) → badge "Suspenso",
+//   bloqueia a submissão dessa seleção (ver submitBetslip) até voltar ao normal.
+// - Mercado ativo mas a odd mudou desde que foi adicionada ao boletim → badge "Odds Ajustada", a
+//   odd guardada é atualizada para a atual e a seleção continua utilizável — o utilizador pode
+//   confirmar a aposta na hora, já com o valor certo (nunca falha na submissão por odd
+//   desatualizada, já que aqui fica sempre sincronizada com o que o servidor vai ver).
+function syncBetslipLiveState() {
+  if (!betslipSelections.size) return;
+  let changed = false;
+  for (const s of betslipSelections.values()) {
+    const event = liveEventsById.get(s.eventId);
+    if (!event) continue; // não está ao vivo agora — sem dados para validar, mantém como está
+    const group = event.odds?.find((g) => g.market === s.market);
+    const sel = group?.selections?.[s.selection];
+    const isSuspended = !group || !group.isActive || !sel || !sel.isActive || !Number.isFinite(sel.odd);
+    if (isSuspended) {
+      if (s._liveState !== "suspended") {
+        s._liveState = "suspended";
+        changed = true;
+      }
+      continue;
+    }
+    const wasSuspended = s._liveState === "suspended";
+    if (Math.abs(sel.odd - s.odd) > 0.005) {
+      s.odd = sel.odd;
+      s._liveState = "adjusted";
+      changed = true;
+    } else if (wasSuspended) {
+      s._liveState = null; // voltou ao normal com a mesma odd de antes
+      changed = true;
+    }
+  }
+  if (changed) renderBetslipPanel();
 }
 
 // ====================== BOLETIM DE APOSTA (Simples / Múltipla) ======================
@@ -2915,6 +2956,7 @@ function renderBetslipPanel() {
   const hasDuplicateEvent = new Set(eventIds).size < eventIds.length;
   const canMultipla = selections.length >= 2 && !hasDuplicateEvent;
   if (!canMultipla && betslipMode === "multipla") betslipMode = "simples";
+  const hasSuspended = selections.some(([, s]) => s._liveState === "suspended");
 
   panels.forEach((el) => {
     if (!selections.length) {
@@ -2923,23 +2965,32 @@ function renderBetslipPanel() {
     }
 
     const rowsHtml = selections
-      .map(
-        ([key, s]) => `
-      <div class="bs-row">
+      .map(([key, s]) => {
+        const isSuspended = s._liveState === "suspended";
+        const isAdjusted = s._liveState === "adjusted";
+        const rowClass = isSuspended ? "bs-row-suspended" : isAdjusted ? "bs-row-adjusted" : "";
+        const badgeHtml = isSuspended
+          ? '<span class="bs-row-badge badge-suspended">Suspenso</span>'
+          : isAdjusted
+            ? '<span class="bs-row-badge badge-adjusted">Odds Ajustada</span>'
+            : "";
+        return `
+      <div class="bs-row ${rowClass}">
         <div class="bs-row-info">
           <div class="bs-row-teams">${s.home || ""}${s.away ? " vs " + s.away : ""}</div>
           <div class="bs-row-sel">${translateMarketDisplayName(s.market, s.sport, [s.selection], s.home, s.away)}: <b>${translateSelectionLabel(s.selection)}</b> @ ${Number(s.odd).toFixed(2)}</div>
+          ${badgeHtml}
         </div>
         <div class="bs-row-actions">
           ${
-            betslipMode === "simples"
+            betslipMode === "simples" && !isSuspended
               ? `<input type="number" min="0.5" step="0.5" class="bs-stake-input" value="${betslipStakes.get(key) || ""}" placeholder="€" oninput='setStake(${JSON.stringify(key)}, this.value)'>`
               : ""
           }
           <button class="bs-remove" onclick='toggleSelection(${JSON.stringify(key)})' aria-label="Remover">✕</button>
         </div>
-      </div>`
-      )
+      </div>`;
+      })
       .join("");
 
     let summaryHtml;
@@ -2964,10 +3015,11 @@ function renderBetslipPanel() {
         <div class="bs-tab ${betslipMode === "multipla" ? "active" : ""} ${canMultipla ? "" : "disabled"}" onclick="${canMultipla ? "setBetslipMode('multipla')" : ""}">Múltipla</div>
       </div>
       ${!canMultipla && selections.length >= 2 ? '<div class="field-hint" style="margin:8px 2px">Múltipla indisponível: há mais do que uma seleção do mesmo evento.</div>' : ""}
+      ${hasSuspended ? '<div class="field-hint" style="margin:8px 2px">Remova ou aguarde a(s) seleção(ões) suspensa(s) para poder confirmar.</div>' : ""}
       <div class="auth-error" id="bs-error"></div>
       <div class="bs-rows">${rowsHtml}</div>
       ${summaryHtml}
-      <button class="btn-save" id="bs-submit-btn" onclick="submitBetslip()">Confirmar Aposta</button>
+      <button class="btn-save" id="bs-submit-btn" onclick="submitBetslip()" ${hasSuspended ? "disabled" : ""}>Confirmar Aposta</button>
       <button class="btn-outline" onclick="clearBetslip()">Limpar Boletim</button>`;
   });
 }
@@ -2988,6 +3040,9 @@ function showBetslipError(msg) {
 async function submitBetslip() {
   if (!Bet62Api.isAuthenticated()) return openAuth("login");
   if (!betslipSelections.size) return alert("Escolha pelo menos uma seleção nos mercados para adicionar ao boletim.");
+  if ([...betslipSelections.values()].some((s) => s._liveState === "suspended")) {
+    return showBetslipError("Remova ou aguarde a(s) seleção(ões) suspensa(s) antes de confirmar.");
+  }
 
   const entries = [...betslipSelections.entries()];
   if (betslipMode === "simples") {
