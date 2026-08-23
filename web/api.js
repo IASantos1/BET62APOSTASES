@@ -287,6 +287,7 @@ const Bet62Api = (() => {
 
     // Promoções (Bónus/Rollover — ver docs de promoções)
     getMyPromotions: () => request("/promotions/mine"),
+    getActivePromotionsPublic: () => request("/promotions/active", { auth: false }),
 
     // Payments
     /**

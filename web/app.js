@@ -476,6 +476,7 @@ function showPage(page) {
   if (page === "esportes") { renderSportSubnav(); renderPrematchList(); }
   if (page === "destaques") renderDestaquesHighlights();
   if (page === "cassino") enterCasinoPage();
+  if (page === "promocao") loadPromocaoPage();
 }
 
 function goBack() {
@@ -1066,6 +1067,111 @@ function renderPromotionsPanel(balance, promotions) {
 
   if (!active && !history.length) {
     html += `<div style="color:var(--muted);text-align:center;padding:12px 0">Ainda sem promoções — faça o primeiro depósito para ativar o Bónus de Boas-Vindas.</div>`;
+  }
+
+  el.innerHTML = html;
+}
+
+// ====================== PÁGINA PROMOÇÃO (futurista) ======================
+// Nada de valores hardcoded — o hero e a grelha vêm sempre de /api/promotions/active (o que o
+// admin tiver configurado em "Promoções", ver admin/routes.ts), e o cartão de progresso (se
+// autenticado) de /api/promotions/mine. Reutiliza PROMO_TYPE_LABEL_PT/PROMO_STATUS_LABEL/
+// fmtExpiryCountdown já definidos acima para o painel do perfil.
+const FPROMO_ICON = { WELCOME_BONUS: "🎁", DEPOSIT_BONUS: "💰", CASHBACK: "🔁", FREEBET: "🎟️" };
+const FPROMO_TILE_CLASS = { WELCOME_BONUS: "", DEPOSIT_BONUS: "type-deposit", CASHBACK: "type-cashback", FREEBET: "type-freebet" };
+
+function fpromoValueLabel(p) {
+  if (p.bonusPercent) {
+    const pct = `${Number(p.bonusPercent)}%`;
+    return p.bonusMaxAmount ? `${pct} até € ${Number(p.bonusMaxAmount).toFixed(0)}` : pct;
+  }
+  if (p.bonusFixedAmount) return `€ ${Number(p.bonusFixedAmount).toFixed(2)}`;
+  return "—";
+}
+
+async function loadPromocaoPage() {
+  const el = document.getElementById("promocao-content");
+  if (!el) return;
+  try {
+    const [promotions, myPromotions] = await Promise.all([
+      Bet62Api.getActivePromotionsPublic().then((d) => d.promotions),
+      Bet62Api.isAuthenticated() ? Bet62Api.getMyPromotions().then((d) => d.promotions).catch(() => []) : Promise.resolve([]),
+    ]);
+    renderPromocaoPage(promotions, myPromotions);
+  } catch (err) {
+    el.innerHTML = `<div class="fpromo-empty">Não foi possível carregar as promoções (${escHtml(err.message || "erro")})</div>`;
+  }
+}
+
+function renderPromocaoPage(promotions, myPromotions) {
+  const el = document.getElementById("promocao-content");
+  const active = myPromotions.find((p) => p.status === "ACTIVE");
+  const primary = promotions.find((p) => p.type === "WELCOME_BONUS") || promotions[0];
+
+  let html = "";
+
+  if (primary) {
+    const eligible = primary.eligibleSports?.length ? primary.eligibleSports.join(", ") : "Todos os desportos";
+    html += `
+      <div class="fpromo-hero">
+        <div class="fpromo-hero-badge">${FPROMO_ICON[primary.type] || "🚀"} ${escHtml(PROMO_TYPE_LABEL_PT[primary.type] || primary.name)}</div>
+        <div class="fpromo-hero-value"><span class="accent">${fpromoValueLabel(primary)}</span></div>
+        <div class="fpromo-hero-sub">${escHtml(primary.name)}</div>
+        <div class="fpromo-hero-terms">
+          ${primary.minDepositAmount ? `<span class="fpromo-pill">Depósito mín. € ${Number(primary.minDepositAmount).toFixed(2)}</span>` : ""}
+          <span class="fpromo-pill">Rollover ${Number(primary.rolloverMultiplier)}x</span>
+          <span class="fpromo-pill">Odd mínima ${Number(primary.minOdd).toFixed(2)}</span>
+          <span class="fpromo-pill">Válido ${primary.validityDays} dias</span>
+          <span class="fpromo-pill">${escHtml(eligible)}</span>
+        </div>
+        ${!Bet62Api.isAuthenticated() ? `<button class="fpromo-cta" onclick="openAuth('register')">REGISTE-SE AGORA</button>` : !active ? `<button class="fpromo-cta" onclick="openDeposit()">FAZER DEPÓSITO</button>` : ""}
+      </div>`;
+  }
+
+  if (active) {
+    const required = Number(active.rolloverRequired);
+    const progress = Number(active.rolloverProgress);
+    const pct = required > 0 ? Math.min(100, (progress / required) * 100) : 100;
+    const expiry = fmtExpiryCountdown(active.expiresAt);
+    html += `
+      <div class="fpromo-active">
+        <div class="fpromo-active-head">
+          <span class="fpromo-active-name">⚡ A tua promoção ativa — ${escHtml(PROMO_TYPE_LABEL_PT[active.promotion?.type] || active.promotion?.name || "Promoção")}</span>
+          <span class="status-badge status-ok">${PROMO_STATUS_LABEL.ACTIVE}</span>
+        </div>
+        <div class="fpromo-active-ring"><div class="fpromo-active-fill" style="width:${pct.toFixed(1)}%"></div></div>
+        <div class="fpromo-active-label"><span>${pct.toFixed(0)}% do rollover cumprido</span><span class="${expiry.soon ? "soon" : ""}" style="${expiry.soon ? "color:var(--red);font-weight:700" : ""}">${expiry.text}</span></div>
+        <div class="fpromo-active-figures">
+          <div>Bónus concedido<b>€ ${Number(active.bonusAmount).toFixed(2)}</b></div>
+          <div>Apostado<b>€ ${progress.toFixed(2)}</b></div>
+          <div>Necessário<b>€ ${required.toFixed(2)}</b></div>
+          <div>Odd mínima<b>${Number(active.minOdd).toFixed(2)}</b></div>
+        </div>
+      </div>`;
+  }
+
+  if (promotions.length) {
+    html += `<div class="fpromo-section-title">🎯 Todas as Promoções Ativas</div><div class="fpromo-grid">`;
+    html += promotions
+      .map((p) => {
+        const eligible = p.eligibleSports?.length ? p.eligibleSports.join(", ") : "Todos os desportos";
+        return `<div class="fpromo-tile ${FPROMO_TILE_CLASS[p.type] || ""}">
+          <div class="fpromo-tile-icon">${FPROMO_ICON[p.type] || "🎁"}</div>
+          <div class="fpromo-tile-name">${escHtml(p.name)}</div>
+          <div class="fpromo-tile-value">${fpromoValueLabel(p)}</div>
+          <div class="fpromo-tile-terms">
+            ${p.minDepositAmount ? `<div>Depósito mínimo: <b>€ ${Number(p.minDepositAmount).toFixed(2)}</b></div>` : ""}
+            <div>Rollover: <b>${Number(p.rolloverMultiplier)}x</b></div>
+            <div>Odd mínima: <b>${Number(p.minOdd).toFixed(2)}</b></div>
+            <div>Prazo: <b>${p.validityDays} dias</b></div>
+            <div>Desportos: <b>${escHtml(eligible)}</b></div>
+          </div>
+        </div>`;
+      })
+      .join("");
+    html += `</div>`;
+  } else if (!primary) {
+    html += `<div class="fpromo-empty">Sem promoções ativas neste momento — volta em breve.</div>`;
   }
 
   el.innerHTML = html;

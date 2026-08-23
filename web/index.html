@@ -127,6 +127,54 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 :root[data-theme="light"] .promo-banner{background:linear-gradient(135deg,#fff0ef,#ffe1df)}
 .promo-banner h2{font-family:'Bebas Neue',sans-serif;font-size:2.2rem}
 .promo-banner .pct{color:var(--red);font-size:3rem}
+
+/* ====== Página Promoção — futurista (dados reais de /api/promotions/*) ====== */
+@keyframes fpromo-pulse{0%,100%{box-shadow:0 0 30px -6px var(--fp-glow),inset 0 0 40px -28px var(--fp-glow)}50%{box-shadow:0 0 46px -4px var(--fp-glow),inset 0 0 40px -24px var(--fp-glow)}}
+@keyframes fpromo-scan{0%{transform:translateX(-120%)}100%{transform:translateX(220%)}}
+@keyframes fpromo-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+@keyframes fpromo-spin{to{transform:rotate(360deg)}}
+
+.fpromo-hero{--fp-glow:rgba(245,200,66,.55);position:relative;overflow:hidden;border-radius:22px;padding:34px 24px;text-align:center;margin-bottom:20px;
+  background:radial-gradient(120% 140% at 15% -10%,rgba(245,200,66,.16),transparent 55%),radial-gradient(120% 140% at 100% 120%,rgba(230,48,39,.18),transparent 55%),linear-gradient(155deg,#0c0c10,#17121a);
+  border:1px solid var(--fp-glow);animation:fpromo-pulse 3.2s ease-in-out infinite}
+.fpromo-hero::before{content:'';position:absolute;top:0;bottom:0;width:35%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.09),transparent);animation:fpromo-scan 5s ease-in-out infinite;pointer-events:none}
+.fpromo-hero-badge{display:inline-flex;align-items:center;gap:6px;background:rgba(245,200,66,.14);border:1px solid rgba(245,200,66,.4);color:var(--gold);font-size:.68rem;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;padding:5px 14px;border-radius:20px;margin-bottom:14px}
+.fpromo-hero-value{font-family:'Bebas Neue',sans-serif;font-size:3.4rem;line-height:1;color:#fff;text-shadow:0 0 24px rgba(245,200,66,.5);letter-spacing:.5px}
+.fpromo-hero-value .accent{background:linear-gradient(90deg,var(--gold),#ffe08a,var(--gold));background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;animation:fpromo-shimmer 3s linear infinite}
+.fpromo-hero-sub{color:rgba(255,255,255,.72);font-size:.88rem;margin-top:6px}
+.fpromo-hero-terms{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin:18px 0 4px}
+.fpromo-pill{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);color:rgba(255,255,255,.85);font-size:.72rem;font-weight:600;padding:6px 12px;border-radius:20px}
+.fpromo-cta{margin-top:18px;background:linear-gradient(135deg,var(--gold),#e6a020);color:#1a1200;border:none;padding:13px 34px;border-radius:12px;font-weight:800;font-size:.92rem;letter-spacing:.3px;cursor:pointer;box-shadow:0 0 22px -4px rgba(245,200,66,.7)}
+.fpromo-cta:hover{filter:brightness(1.06)}
+
+.fpromo-section-title{font-family:'Bebas Neue',sans-serif;font-size:1.25rem;letter-spacing:.5px;margin:22px 0 12px;display:flex;align-items:center;gap:8px}
+
+.fpromo-active{--fp-glow:rgba(80,180,255,.5);position:relative;overflow:hidden;border-radius:18px;padding:20px;margin-bottom:18px;
+  background:linear-gradient(155deg,var(--surface),var(--surface2));border:1px solid var(--fp-glow);box-shadow:0 0 26px -8px var(--fp-glow)}
+.fpromo-active-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+.fpromo-active-name{font-weight:800;font-size:1rem}
+.fpromo-active-ring{position:relative;width:100%;height:14px;border-radius:8px;background:var(--border);overflow:hidden;margin:10px 0}
+.fpromo-active-fill{height:100%;border-radius:8px;background:linear-gradient(90deg,#3b9ceb,#80d4ff,#3b9ceb);background-size:200% auto;animation:fpromo-shimmer 2.4s linear infinite;transition:width .4s}
+.fpromo-active-label{display:flex;justify-content:space-between;font-size:.76rem;color:var(--muted)}
+.fpromo-active-figures{display:flex;gap:22px;margin-top:12px;flex-wrap:wrap}
+.fpromo-active-figures div{font-size:.72rem;color:var(--muted)}
+.fpromo-active-figures b{display:block;font-size:1rem;color:var(--text);margin-top:2px}
+
+.fpromo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+.fpromo-tile{--fp-glow:rgba(245,200,66,.4);position:relative;border-radius:16px;padding:18px;background:linear-gradient(160deg,var(--surface),var(--surface2));border:1px solid var(--fp-glow);box-shadow:0 0 18px -10px var(--fp-glow);transition:transform .18s}
+.fpromo-tile:hover{transform:translateY(-3px)}
+.fpromo-tile.type-cashback{--fp-glow:rgba(60,200,120,.45)}
+.fpromo-tile.type-deposit{--fp-glow:rgba(80,180,255,.45)}
+.fpromo-tile.type-freebet{--fp-glow:rgba(190,120,255,.45)}
+.fpromo-tile-icon{font-size:1.5rem;margin-bottom:8px}
+.fpromo-tile-name{font-weight:800;font-size:.94rem;margin-bottom:4px}
+.fpromo-tile-value{font-size:1.4rem;font-weight:800;color:var(--gold);margin-bottom:10px}
+.fpromo-tile.type-cashback .fpromo-tile-value{color:var(--green)}
+.fpromo-tile.type-deposit .fpromo-tile-value{color:#3b9ceb}
+.fpromo-tile.type-freebet .fpromo-tile-value{color:#b478ff}
+.fpromo-tile-terms{display:flex;flex-direction:column;gap:5px;font-size:.76rem;color:var(--muted);border-top:1px dashed var(--border);padding-top:10px}
+.fpromo-tile-terms b{color:var(--text)}
+.fpromo-empty{text-align:center;color:var(--muted);padding:30px 0}
 .section-title{font-family:'Bebas Neue',sans-serif;font-size:1.3rem;margin-bottom:12px;letter-spacing:.5px}
 .auth-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:300;align-items:center;justify-content:center;padding:16px}
 .auth-overlay.open{display:flex}
@@ -909,22 +957,12 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 </div>
 
 <!-- ========== PROMOÇÃO ========== -->
+<!-- Conteúdo 100% dinâmico (ver loadPromocaoPage() em app.js) — nada de valores hardcoded, o
+     hero e a grelha de promoções vêm de /api/promotions/active e (se autenticado) o cartão de
+     progresso vem de /api/promotions/mine, refletindo sempre a configuração real do admin. -->
 <div id="page-promocao" class="page hidden">
-    <div class="promo-banner">
-        <div style="font-size:.8rem;color:var(--muted);margin-bottom:6px">BÓNUS DE BOAS-VINDAS</div>
-        <h2><span class="pct">100%</span> ATÉ 200€</h2>
-        <button style="margin-top:16px;background:var(--red);color:#fff;border:none;padding:12px 28px;border-radius:10px;font-weight:700;cursor:pointer" onclick="openAuth('register')">REGISTE-SE AGORA</button>
-    </div>
-    <div class="section-title">TODAS AS PROMOÇÕES</div>
-    <div class="menu-list">
-        <div class="menu-item" style="padding:18px">
-            <div style="font-weight:700;margin-bottom:6px">🎁 Bónus de Boas-Vindas — 100% até 200€</div>
-            <div style="font-size:.85rem;color:var(--muted)">Válido no primeiro depósito. Termos e condições aplicáveis.</div>
-        </div>
-        <div class="menu-item" style="padding:18px">
-            <div style="font-weight:700;margin-bottom:6px">⚽ Cashback Desportivo Semanal</div>
-            <div style="font-size:.85rem;color:var(--muted)">Em breve — detalhes a anunciar.</div>
-        </div>
+    <div id="promocao-content">
+        <div class="fpromo-empty">A carregar promoções…</div>
     </div>
 </div>
 
