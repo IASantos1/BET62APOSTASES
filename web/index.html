@@ -46,6 +46,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 .header-right{display:flex;align-items:center;gap:10px}
 .balance-pill{background:var(--surface2);border:1px solid var(--border);padding:6px 12px;border-radius:20px;font-size:.85rem;font-weight:700;color:var(--gold);font-variant-numeric:tabular-nums}
 .add-btn{width:34px;height:34px;border-radius:50%;background:var(--green);border:none;color:#fff;font-size:1.2rem;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.mybets-btn{width:34px;height:34px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:1rem;display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative}
+.mybets-btn:hover{border-color:var(--gold)}
 .avatar-btn{width:34px;height:34px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:1.1rem;cursor:pointer;color:var(--text)}
 .login-btn{background:var(--red);color:#fff;border:none;padding:8px 18px;border-radius:20px;font-size:.85rem;font-weight:700;cursor:pointer}
 .top-nav{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;flex:1;justify-content:center}
@@ -403,6 +405,63 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 @keyframes spin{to{transform:rotate(360deg)}}
 .casino-game-loader-text{font-size:.95rem;color:#bbb;text-align:center;max-width:420px;padding:0 20px}
 .casino-game-loader-sub{font-size:.8rem;color:#666}
+
+/* ====================== MINHAS APOSTAS: modal + bilhetes ====================== */
+.mybets-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:400;align-items:flex-start;justify-content:center;padding:0}
+.mybets-overlay.hidden{display:none}
+.mybets-overlay:not(.hidden){display:flex}
+.mybets-panel{width:100%;max-width:640px;height:100%;background:var(--bg);display:flex;flex-direction:column;box-shadow:-10px 0 40px rgba(0,0,0,.4)}
+@media(min-width:700px){.mybets-panel{height:92vh;margin-top:4vh;border-radius:18px;overflow:hidden;border:1px solid var(--border)}}
+.mybets-header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--border);flex-shrink:0;background:linear-gradient(135deg,#0c0c0e,#1a1420)}
+.mybets-title{font-family:'Bebas Neue',sans-serif;font-size:1.3rem;letter-spacing:.5px;color:#fff;display:flex;align-items:center;gap:10px}
+.mybets-title i{color:var(--gold)}
+.mybets-close{background:transparent;border:1px solid var(--border);color:var(--muted);width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:.9rem;flex-shrink:0}
+.mybets-close:hover{border-color:var(--red);color:#fff}
+.mybets-tabs{display:flex;gap:6px;padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto;scrollbar-width:none}
+.mybets-tabs::-webkit-scrollbar{display:none}
+.mybets-tab{padding:8px 14px;border-radius:20px;font-size:.78rem;font-weight:700;color:var(--muted);white-space:nowrap;cursor:pointer;border:1px solid transparent;letter-spacing:.3px}
+.mybets-tab.active{background:linear-gradient(135deg,rgba(245,200,66,.15),rgba(230,48,39,.1));border-color:var(--gold);color:var(--gold)}
+.mybets-body{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:16px;-webkit-overflow-scrolling:touch}
+
+/* Bilhete futurista: fundo em gradiente escuro, borda com brilho consoante o estado, "corte" de
+   bilhete de bilheteira (dois semicírculos + linha tracejada) entre o corpo e o rodapé, tira tipo
+   código de barras no fundo — puramente decorativo, reforça a metáfora de "bilhete" físico. */
+.bet-ticket{--ticket-glow:rgba(245,200,66,.5);position:relative;border-radius:16px;background:linear-gradient(155deg,#181420 0%,#0f0d12 60%,#150e13 100%);border:1px solid var(--ticket-glow);box-shadow:0 0 18px -9px var(--ticket-glow),inset 0 0 24px -18px var(--ticket-glow);overflow:hidden;animation:ticket-in .25s ease}
+@keyframes ticket-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.bet-ticket.is-live{--ticket-glow:rgba(230,48,39,.65)}
+.bet-ticket.is-won{--ticket-glow:rgba(60,200,120,.6)}
+.bet-ticket.is-lost{--ticket-glow:rgba(140,140,150,.35)}
+.bet-ticket.is-cashout{--ticket-glow:rgba(80,180,255,.6)}
+.bet-ticket.is-void{--ticket-glow:rgba(140,140,150,.3)}
+.bet-ticket-top{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;gap:10px}
+.bet-ticket-mode{font-size:.68rem;font-weight:800;letter-spacing:1.2px;color:#9a94a8;text-transform:uppercase}
+.bet-ticket-status{font-size:.68rem;font-weight:800;letter-spacing:.6px;padding:4px 10px;border-radius:12px;text-transform:uppercase}
+.bet-ticket-status.st-pending{background:rgba(245,200,66,.15);color:var(--gold)}
+.bet-ticket-status.st-live{background:rgba(230,48,39,.18);color:#ff6b5f}
+.bet-ticket-status.st-won{background:rgba(60,200,120,.16);color:#3ddb8a}
+.bet-ticket-status.st-lost{background:rgba(255,255,255,.06);color:var(--muted)}
+.bet-ticket-status.st-cashout{background:rgba(80,180,255,.16);color:#6ec3ff}
+.bet-ticket-status.st-void{background:rgba(255,255,255,.06);color:var(--muted)}
+.bet-ticket-legs{display:flex;flex-direction:column;gap:10px;padding:0 16px 14px}
+.bet-ticket-leg{border-left:2px solid rgba(255,255,255,.08);padding-left:10px}
+.bet-ticket-leg-teams{font-size:.86rem;font-weight:700;color:#fff}
+.bet-ticket-leg-market{font-size:.74rem;color:#9a94a8;margin-top:2px}
+.bet-ticket-leg-market b{color:#e8e6ee}
+.bet-ticket-leg-odd{font-variant-numeric:tabular-nums;font-weight:700;color:#f5c842;font-size:.78rem}
+.bet-ticket-live{display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:4px 9px;border-radius:10px;background:rgba(230,48,39,.12);font-size:.72rem;font-weight:700;color:#ff6b5f;font-variant-numeric:tabular-nums}
+.bet-ticket-live .live-dot{width:6px;height:6px;border-radius:50%;background:#ff3b30;animation:pulse-dot 1.4s ease-in-out infinite}
+@keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.7)}}
+.bet-ticket-punch{position:relative;height:0;border-top:2px dashed rgba(255,255,255,.14);margin:0 -1px}
+.bet-ticket-punch::before,.bet-ticket-punch::after{content:"";position:absolute;top:50%;transform:translateY(-50%);width:20px;height:20px;border-radius:50%;background:var(--bg)}
+.bet-ticket-punch::before{left:-11px}
+.bet-ticket-punch::after{right:-11px}
+.bet-ticket-bottom{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;gap:10px;flex-wrap:wrap}
+.bet-ticket-figures{display:flex;gap:18px;font-size:.75rem;color:#9a94a8}
+.bet-ticket-figures b{display:block;font-size:.95rem;color:#fff;font-variant-numeric:tabular-nums;margin-top:2px}
+.bet-ticket-cashout-btn{background:linear-gradient(135deg,#1fa9ff,#0f6fd6);color:#fff;border:none;padding:9px 16px;border-radius:12px;font-weight:800;font-size:.78rem;cursor:pointer;letter-spacing:.3px;box-shadow:0 0 16px -4px rgba(31,169,255,.7);animation:cashout-pulse 2.4s ease-in-out infinite}
+@keyframes cashout-pulse{0%,100%{box-shadow:0 0 12px -4px rgba(31,169,255,.55)}50%{box-shadow:0 0 20px -2px rgba(31,169,255,.9)}}
+.bet-ticket-cashout-btn:disabled{opacity:.5;cursor:default;animation:none;box-shadow:none}
+.bet-ticket-barcode{height:22px;margin:0 16px 14px;border-radius:4px;background:repeating-linear-gradient(90deg,rgba(255,255,255,.35) 0 2px,transparent 2px 5px,rgba(255,255,255,.2) 5px 6px,transparent 6px 9px);opacity:.5}
 </style>
 </head>
 <body>
@@ -437,6 +496,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
     <div class="header-right">
         <button class="login-btn hidden" id="btn-header-login" onclick="openAuth('login')">Entrar</button>
         <div class="balance-pill hidden" id="balance-display">€ 0.00</div>
+        <button class="mybets-btn hidden" id="btn-header-mybets" onclick="openMyBetsModal()" title="Minhas Apostas" aria-label="Minhas Apostas">📋</button>
         <button class="add-btn hidden" id="btn-header-deposit" onclick="openDeposit()" title="Depositar">+</button>
         <button class="avatar-btn hidden" id="btn-avatar" onclick="showPage('profile')">👤</button>
     </div>
@@ -640,19 +700,15 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
             </div>
         </div>
 
-        <!-- As Minhas Apostas -->
+        <!-- As Minhas Apostas: abre o modal de bilhetes (ver #mybets-modal), já não expande
+             inline — o mesmo modal está também acessível pelo ícone 📋 no cabeçalho. -->
         <div class="menu-item">
-            <div class="menu-header" onclick="toggleAccordion(this)">
+            <div class="menu-header" onclick="openMyBetsModal()">
                 <div class="menu-header-left">
                     <div class="menu-icon"><i class="fas fa-receipt"></i></div>
                     <div class="menu-title">As Minhas Apostas</div>
                 </div>
-                <i class="fas fa-chevron-down menu-arrow"></i>
-            </div>
-            <div class="menu-body">
-                <div class="menu-body-inner">
-                    <div id="my-bets-list"></div>
-                </div>
+                <i class="fas fa-chevron-right menu-arrow"></i>
             </div>
         </div>
 
@@ -980,6 +1036,24 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
       </div>
     </div>
     <iframe id="cg-frame" title="Jogo de cassino" allow="fullscreen; autoplay; clipboard-read; clipboard-write; gamepad; microphone; camera" sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-top-navigation-by-user-activation allow-modals allow-presentation"></iframe>
+  </div>
+</div>
+
+<!-- MINHAS APOSTAS: modal com os bilhetes, separado em Em Aberto/Resolvido/Cash Out/Anulada.
+     Aberto pelo ícone 📋 junto ao saldo no cabeçalho — ver openMyBetsModal() em app.js. -->
+<div id="mybets-modal" class="mybets-overlay hidden" role="dialog" aria-modal="true" aria-label="Minhas Apostas">
+  <div class="mybets-panel">
+    <div class="mybets-header">
+      <div class="mybets-title"><i class="fas fa-receipt"></i> Minhas Apostas</div>
+      <button class="mybets-close" onclick="closeMyBetsModal()" aria-label="Fechar">✕</button>
+    </div>
+    <div class="mybets-tabs" id="mybets-tabs">
+      <div class="mybets-tab active" data-tab="open" onclick="selectMyBetsTab('open')">Em Aberto</div>
+      <div class="mybets-tab" data-tab="resolved" onclick="selectMyBetsTab('resolved')">Resolvido</div>
+      <div class="mybets-tab" data-tab="cashout" onclick="selectMyBetsTab('cashout')">Cash Out</div>
+      <div class="mybets-tab" data-tab="void" onclick="selectMyBetsTab('void')">Anulada</div>
+    </div>
+    <div class="mybets-body" id="mybets-body"></div>
   </div>
 </div>
 

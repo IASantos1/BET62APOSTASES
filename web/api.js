@@ -325,6 +325,10 @@ const Bet62Api = (() => {
     /** @param {string} [cursor] */
     listMyBets: (cursor) =>
       request(`/bets${cursor ? `?cursor=${cursor}` : ""}`),
+    /** @param {string} betId */
+    getCashOutOffer: (betId) => request(`/bets/${betId}/cashout`),
+    /** @param {string} betId */
+    cashOutBet: (betId) => request(`/bets/${betId}/cashout`, { method: "POST" }),
 
     // Sports
     /** @param {string} [sport] */
