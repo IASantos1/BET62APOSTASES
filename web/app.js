@@ -1092,14 +1092,26 @@ function fpromoValueLabel(p) {
 async function loadPromocaoPage() {
   const el = document.getElementById("promocao-content");
   if (!el) return;
+  el.innerHTML = `<div class="fpromo-empty">A carregar promoções…</div>`;
+  // Timeout defensivo: se o servidor nunca responder (deploy a decorrer, rede instável, etc.),
+  // isto garante que a página nunca fica presa em "A carregar" para sempre — passados 12s mostra
+  // sempre um erro com botão para tentar de novo.
+  const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error("O servidor demorou demasiado a responder")), ms));
   try {
-    const [promotions, myPromotions] = await Promise.all([
-      Bet62Api.getActivePromotionsPublic().then((d) => d.promotions),
-      Bet62Api.isAuthenticated() ? Bet62Api.getMyPromotions().then((d) => d.promotions).catch(() => []) : Promise.resolve([]),
+    const [promotions, myPromotions] = await Promise.race([
+      Promise.all([
+        Bet62Api.getActivePromotionsPublic().then((d) => d.promotions),
+        Bet62Api.isAuthenticated() ? Bet62Api.getMyPromotions().then((d) => d.promotions).catch(() => []) : Promise.resolve([]),
+      ]),
+      timeout(12000),
     ]);
     renderPromocaoPage(promotions, myPromotions);
   } catch (err) {
-    el.innerHTML = `<div class="fpromo-empty">Não foi possível carregar as promoções (${escHtml(err.message || "erro")})</div>`;
+    el.innerHTML = `
+      <div class="fpromo-empty">
+        Não foi possível carregar as promoções (${escHtml(err.message || "erro")})
+        <div><button class="fpromo-cta" style="margin-top:14px" onclick="loadPromocaoPage()">Tentar novamente</button></div>
+      </div>`;
   }
 }
 
