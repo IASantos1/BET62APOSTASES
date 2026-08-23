@@ -1,9 +1,10 @@
 import { Prisma, type Bet, type BetSelection, type BetSelectionStatus, type BetStatus } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { logger } from "../../lib/logger";
-import { applyLedgerMovement } from "../wallet/service";
+import { applyLedgerMovement, applyBonusLedgerMovement } from "../wallet/service";
 import type { LiveEvent } from "../sports/types";
 import { resolveBetSelectionOutcome, SCORE_SETTLEABLE_SPORTS, type SettlementOutcome } from "./settlementRules";
+import { reverseRolloverContribution } from "../promotions/service";
 
 /**
  * Liquidação de apostas — ver docs/BETTING.md. Disparada quando um evento desaparece do feed
@@ -131,24 +132,66 @@ export async function applyFinalOutcome(tx: Prisma.TransactionClient, bet: Bet, 
   const result = calculateBetResult({ stake: bet.stake, selections });
   const status = result.status;
   const payout = result.payout;
-  let ledgerType: "BET_WON" | "BET_REFUND" | null =
-    status === "WON" ? "BET_WON" : status === "VOID" ? "BET_REFUND" : null;
+  const usedBonus = bet.bonusStakeAmount.greaterThan(0);
 
   await tx.bet.update({ where: { id: bet.id }, data: { status, payout, settledAt: new Date() } });
 
-  if (ledgerType) {
-    await applyLedgerMovement({
-      walletId: bet.walletId,
-      type: ledgerType,
-      amount: payout,
-      referenceType: "bet",
-      referenceId: bet.id,
-      metadata: { betType: bet.type, stake: bet.stake.toString() },
-      tx,
-    });
+  if (status === "WON") {
+    // Ganho de uma aposta financiada (mesmo que parcialmente) por saldo promocional volta
+    // INTEIRO para o saldo promocional ("sticky bonus", decisão de produto #2 — ver
+    // promotions/service.ts), não para o real, até o rollover estar completo.
+    if (usedBonus) {
+      await applyBonusLedgerMovement({
+        walletId: bet.walletId,
+        type: "BONUS_WON",
+        amount: payout,
+        referenceType: "bet",
+        referenceId: bet.id,
+        metadata: { betType: bet.type, stake: bet.stake.toString() },
+        tx,
+      });
+    } else {
+      await applyLedgerMovement({
+        walletId: bet.walletId,
+        type: "BET_WON",
+        amount: payout,
+        referenceType: "bet",
+        referenceId: bet.id,
+        metadata: { betType: bet.type, stake: bet.stake.toString() },
+        tx,
+      });
+    }
+  } else if (status === "VOID") {
+    // Devolve o stake na mesma proporção em que foi debitado — a parte promocional volta para o
+    // saldo promocional (não é dinheiro real), a parte real volta para o saldo real.
+    const bonusPortion = usedBonus ? Prisma.Decimal.min(bet.bonusStakeAmount, payout) : new Prisma.Decimal(0);
+    const realPortion = payout.sub(bonusPortion);
+    if (realPortion.greaterThan(0)) {
+      await applyLedgerMovement({
+        walletId: bet.walletId,
+        type: "BET_REFUND",
+        amount: realPortion,
+        referenceType: "bet",
+        referenceId: bet.id,
+        metadata: { betType: bet.type, stake: bet.stake.toString() },
+        tx,
+      });
+    }
+    if (bonusPortion.greaterThan(0)) {
+      await applyBonusLedgerMovement({
+        walletId: bet.walletId,
+        type: "BONUS_STAKE",
+        amount: bonusPortion,
+        referenceType: "bet",
+        referenceId: bet.id,
+        metadata: { betType: bet.type, reason: "void_refund" },
+        tx,
+      });
+    }
+    if (bet.userPromotionId) await reverseRolloverContribution(bet, tx);
   }
 
-  logger.info({ betId: bet.id, userId: bet.userId, status, payout: payout.toString() }, "[BETTING] aposta liquidada");
+  logger.info({ betId: bet.id, userId: bet.userId, status, payout: payout.toString(), usedBonus }, "[BETTING] aposta liquidada");
 }
 
 /**

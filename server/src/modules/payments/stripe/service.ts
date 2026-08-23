@@ -6,6 +6,7 @@ import { getStripeClient } from "./client";
 import { getWalletByUserId } from "../../wallet/service";
 import { applyLedgerMovement } from "../../wallet/service";
 import { isSelfExcluded } from "../../users/service";
+import { grantWelcomeBonusIfEligible } from "../../promotions/service";
 import { logger } from "../../../lib/logger";
 
 /**
@@ -258,5 +259,6 @@ async function creditDepositFromIntent(intent: Stripe.PaymentIntent) {
       metadata: { provider: deposit.provider, stripePaymentIntentId: intent.id },
       tx,
     });
+    await grantWelcomeBonusIfEligible(deposit.userId, deposit.walletId, deposit.amount, tx);
   });
 }

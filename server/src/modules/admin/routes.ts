@@ -7,6 +7,7 @@ import { Errors } from "../../lib/errors";
 import { userRateLimit } from "../../lib/userRateLimit";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
+import { adminListPromotions, adminCreatePromotion, adminUpdatePromotion } from "../promotions/service";
 import { getKycDocumentFile } from "../users/kycDocuments";
 import {
   getAgentInfo,
@@ -223,6 +224,47 @@ router.post(
   asyncHandler(async (req: AuthedRequest, res) => {
     await manualSettleSelection(requireParamId(req.params.id), req.body.outcome, req.user!.id, req.body.reviewNotes);
     res.json({ ok: true });
+  })
+);
+
+// --- Promoções (Bónus/Rollover) — configurável sem tocar código, ver promotions/service.ts ---
+
+const promotionInputSchema = z.object({
+  type: z.enum(["WELCOME_BONUS", "DEPOSIT_BONUS", "CASHBACK", "FREEBET"]),
+  name: z.string().min(1).max(120),
+  active: z.boolean().optional(),
+  bonusPercent: z.number().positive().max(1000).nullable().optional(),
+  bonusFixedAmount: z.number().positive().nullable().optional(),
+  bonusMaxAmount: z.number().positive().nullable().optional(),
+  minDepositAmount: z.number().positive().nullable().optional(),
+  rolloverMultiplier: z.number().min(1).max(20).optional(),
+  minOdd: z.number().min(1).max(50).optional(),
+  validityDays: z.number().int().min(1).max(365).optional(),
+  eligibleSports: z.array(z.string()).optional(),
+});
+
+router.get(
+  "/promotions",
+  asyncHandler(async (_req: AuthedRequest, res) => {
+    res.json({ promotions: await adminListPromotions() });
+  })
+);
+
+router.post(
+  "/promotions",
+  validateBody(promotionInputSchema),
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const promotion = await adminCreatePromotion(req.body);
+    res.status(201).json({ promotion });
+  })
+);
+
+router.patch(
+  "/promotions/:id",
+  validateBody(promotionInputSchema.partial()),
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const promotion = await adminUpdatePromotion(requireParamId(req.params.id), req.body);
+    res.json({ promotion });
   })
 );
 

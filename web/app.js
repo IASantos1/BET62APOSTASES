@@ -971,6 +971,7 @@ async function loadProfile() {
     currentProfile = await Bet62Api.getProfile();
     await loadBalance();
     renderProfile();
+    loadPromotionsPanel();
   } catch (err) {
     if (err.status === 401) {
       currentProfile = null;
@@ -989,6 +990,85 @@ async function loadBalance() {
   } catch {
     /* silencioso: o saldo será atualizado na próxima ação bem-sucedida */
   }
+}
+
+// ====================== BÓNUS E PROMOÇÕES ======================
+// Carteira segmentada (Saldo Real/Promocional/Levantável) + progresso de rollover da promoção
+// ativa — ver server/src/modules/promotions/service.ts. bonusBalance NUNCA é levantável
+// diretamente (só depois de convertido para saldo real ao completar o rollover).
+const PROMO_STATUS_LABEL = { ACTIVE: "Ativa", COMPLETED: "Concluída", EXPIRED: "Expirada", CANCELLED: "Anulada" };
+const PROMO_TYPE_LABEL_PT = { WELCOME_BONUS: "Bónus de Boas-Vindas", DEPOSIT_BONUS: "Bónus de Depósito", CASHBACK: "Cashback", FREEBET: "Freebet" };
+
+async function loadPromotionsPanel() {
+  const el = document.getElementById("promotions-content");
+  if (!el || !Bet62Api.isAuthenticated()) return;
+  try {
+    const [balance, data] = await Promise.all([Bet62Api.getBalance(), Bet62Api.getMyPromotions()]);
+    renderPromotionsPanel(balance, data.promotions);
+  } catch (err) {
+    el.innerHTML = `<div style="color:var(--muted);text-align:center;padding:20px 0">Não foi possível carregar as promoções (${escHtml(err.message || "erro")})</div>`;
+  }
+}
+
+function fmtExpiryCountdown(iso) {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return { text: "Expira a qualquer momento", soon: true };
+  const days = Math.floor(ms / 86400000);
+  const hours = Math.floor((ms % 86400000) / 3600000);
+  const soon = days < 1;
+  if (days >= 1) return { text: `Expira em ${days}d ${hours}h`, soon };
+  const minutes = Math.floor((ms % 3600000) / 60000);
+  return { text: `Expira em ${hours}h ${minutes}m`, soon };
+}
+
+function renderPromotionsPanel(balance, promotions) {
+  const el = document.getElementById("promotions-content");
+  const bonusBalance = Number(balance.bonusBalance || 0);
+  const active = promotions.find((p) => p.status === "ACTIVE");
+  const history = promotions.filter((p) => p.status !== "ACTIVE");
+
+  let html = `
+    <div class="wallet-split">
+      <div class="wallet-split-card"><div class="wallet-split-label">Saldo Real</div><div class="wallet-split-value">€ ${Number(balance.balance).toFixed(2)}</div></div>
+      <div class="wallet-split-card bonus"><div class="wallet-split-label">Saldo Promocional</div><div class="wallet-split-value">€ ${bonusBalance.toFixed(2)}</div></div>
+      <div class="wallet-split-card withdrawable full"><div class="wallet-split-label">Saldo Levantável</div><div class="wallet-split-value">€ ${Number(balance.available).toFixed(2)}</div></div>
+    </div>`;
+
+  if (active) {
+    const required = Number(active.rolloverRequired);
+    const progress = Number(active.rolloverProgress);
+    const pct = required > 0 ? Math.min(100, (progress / required) * 100) : 100;
+    const expiry = fmtExpiryCountdown(active.expiresAt);
+    html += `
+      <div class="promo-card">
+        <div class="promo-card-head">
+          <span class="promo-card-name">🎁 ${escHtml(PROMO_TYPE_LABEL_PT[active.promotion?.type] || active.promotion?.name || "Promoção")}</span>
+          <span class="status-badge status-ok">${PROMO_STATUS_LABEL.ACTIVE}</span>
+        </div>
+        <div style="font-size:.82rem;color:var(--muted)">Bónus concedido: <b style="color:var(--text)">€ ${Number(active.bonusAmount).toFixed(2)}</b></div>
+        <div class="promo-progress-track"><div class="promo-progress-fill" style="width:${pct.toFixed(1)}%"></div></div>
+        <div class="promo-progress-label"><span>€ ${progress.toFixed(2)} apostado</span><span>${pct.toFixed(0)}% de € ${required.toFixed(2)} necessários</span></div>
+        <div class="promo-expiry ${expiry.soon ? "soon" : ""}">${expiry.text} · odd mínima ${Number(active.minOdd).toFixed(2)}</div>
+      </div>`;
+  }
+
+  if (history.length) {
+    html += `<div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin:14px 0 8px">Histórico</div>`;
+    html += history
+      .map(
+        (p) => `<div class="promo-history-item">
+          <span>${escHtml(PROMO_TYPE_LABEL_PT[p.promotion?.type] || p.promotion?.name || "Promoção")}</span>
+          <span class="status-badge ${p.status === "COMPLETED" ? "status-ok" : p.status === "EXPIRED" ? "status-bad" : "status-pending"}">${PROMO_STATUS_LABEL[p.status] || p.status}</span>
+        </div>`
+      )
+      .join("");
+  }
+
+  if (!active && !history.length) {
+    html += `<div style="color:var(--muted);text-align:center;padding:12px 0">Ainda sem promoções — faça o primeiro depósito para ativar o Bónus de Boas-Vindas.</div>`;
+  }
+
+  el.innerHTML = html;
 }
 
 function renderGuestProfile() {

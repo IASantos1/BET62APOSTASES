@@ -102,6 +102,26 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 .toggle{width:46px;height:26px;background:var(--border);border-radius:20px;position:relative;cursor:pointer;flex-shrink:0}
 .toggle.on{background:var(--green)}
 .toggle::after{content:'';position:absolute;width:20px;height:20px;background:#fff;border-radius:50%;top:3px;left:3px;transition:.2s}
+
+/* Carteira segmentada (Saldo Real/Promocional/Levantável) + progresso de rollover — ver
+   promotions/service.ts no backend e a secção "Bónus e Promoções" do perfil. */
+.wallet-split{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.wallet-split-card{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:12px}
+.wallet-split-card.full{grid-column:1/-1}
+.wallet-split-label{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px}
+.wallet-split-value{font-size:1.15rem;font-weight:700}
+.wallet-split-card.bonus .wallet-split-value{color:var(--gold)}
+.wallet-split-card.withdrawable .wallet-split-value{color:var(--green)}
+.promo-card{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
+.promo-card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px}
+.promo-card-name{font-weight:700;font-size:.92rem}
+.promo-progress-track{width:100%;height:10px;border-radius:6px;background:var(--border);overflow:hidden;margin:8px 0}
+.promo-progress-fill{height:100%;background:linear-gradient(90deg,var(--gold),var(--red));border-radius:6px;transition:width .3s}
+.promo-progress-label{display:flex;justify-content:space-between;font-size:.74rem;color:var(--muted)}
+.promo-expiry{font-size:.74rem;color:var(--muted);margin-top:8px}
+.promo-expiry.soon{color:var(--red);font-weight:600}
+.promo-history-item{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:.82rem}
+.promo-history-item:last-child{border-bottom:none}
 .toggle.on::after{left:23px}
 .promo-banner{background:linear-gradient(135deg,#1a0a0a,#2d0f0f);border:1px solid rgba(230,48,39,.3);border-radius:18px;padding:28px 20px;text-align:center;margin-bottom:24px}
 :root[data-theme="light"] .promo-banner{background:linear-gradient(135deg,#fff0ef,#ffe1df)}
@@ -721,6 +741,23 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
                     <div class="menu-title">As Minhas Apostas</div>
                 </div>
                 <i class="fas fa-chevron-right menu-arrow"></i>
+            </div>
+        </div>
+
+        <!-- Bónus e Promoções: carteira segmentada (Saldo Real/Promocional/Levantável) +
+             progresso de rollover da promoção ativa — ver promotions/service.ts no backend. -->
+        <div class="menu-item">
+            <div class="menu-header" onclick="toggleAccordion(this)">
+                <div class="menu-header-left">
+                    <div class="menu-icon"><i class="fas fa-gift"></i></div>
+                    <div class="menu-title">Bónus e Promoções</div>
+                </div>
+                <i class="fas fa-chevron-down menu-arrow"></i>
+            </div>
+            <div class="menu-body">
+                <div class="menu-body-inner" id="promotions-content">
+                    <div style="color:var(--muted);text-align:center;padding:20px 0">A carregar…</div>
+                </div>
             </div>
         </div>
 

@@ -285,6 +285,9 @@ const Bet62Api = (() => {
     getTransactions: (cursor) =>
       request(`/wallet/transactions${cursor ? `?cursor=${cursor}` : ""}`),
 
+    // Promoções (Bónus/Rollover — ver docs de promoções)
+    getMyPromotions: () => request("/promotions/mine"),
+
     // Payments
     /**
      * @param {unknown} provider

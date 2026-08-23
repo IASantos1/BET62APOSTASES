@@ -6,6 +6,7 @@ import { attachSportsWebsocketGateway } from "./modules/sports/websocket/gateway
 import { hybridSportsService } from "./modules/sports/hybridService";
 import { seedDefaultAliases } from "./modules/sports/mapping/aliasStore";
 import { settleEventFinished, sweepStaleBets } from "./modules/betting/settlement";
+import { sweepExpiredPromotions } from "./modules/promotions/service";
 import type { LiveEvent } from "./modules/sports/types";
 
 const app = createApp();
@@ -28,6 +29,12 @@ hybridSportsService.on("remove", (_id: string, lastKnownEvent?: LiveEvent) => {
 setInterval(() => {
   sweepStaleBets().catch((err) => logger.error({ err }, "[BETTING] falha na vassoura de apostas presas"));
 }, 30 * 60_000);
+// Vassoura de promoções expiradas (ver promotions/service.ts) — mesmo padrão, intervalo mais
+// curto porque o prazo de uma promoção (ex: 7 dias) é uma janela fina que vale a pena fechar
+// com alguma prontidão assim que passa.
+setInterval(() => {
+  sweepExpiredPromotions().catch((err) => logger.error({ err }, "[PROMOTIONS] falha na vassoura de promoções expiradas"));
+}, 10 * 60_000);
 
 server.listen(env.PORT, () => {
   logger.info(`Bet62 API a correr em http://localhost:${env.PORT} (${env.NODE_ENV})`);

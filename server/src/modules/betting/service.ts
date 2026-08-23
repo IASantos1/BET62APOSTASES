@@ -1,13 +1,16 @@
-import { Prisma, type Bet } from "@prisma/client";
+import { Prisma, type Bet, type UserPromotion } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { Errors } from "../../lib/errors";
-import { getWalletByUserId, applyLedgerMovement } from "../wallet/service";
+import { getWalletByUserId, applyLedgerMovement, applyBonusLedgerMovement } from "../wallet/service";
 import { isSelfExcluded } from "../users/service";
 import { hybridSportsService } from "../sports/hybridService";
 import { getPrematchEvents } from "../sports/prematch/service";
 import { ALL_SPORTS, type LiveEvent, type Sport } from "../sports/types";
 import { applyFinalOutcome } from "./settlement";
 import { classifyForBetBuilder } from "./settlementRules";
+import { getActiveUserPromotion, splitStakeForBonus, betQualifiesForRollover, applyRolloverContribution } from "../promotions/service";
+
+type Tx = Prisma.TransactionClient;
 
 const MIN_STAKE_EUR = 0.5;
 
@@ -58,6 +61,67 @@ async function validateSelection(input: SelectionInput): Promise<ValidatedSelect
   return { input, event, odd: sel.odd };
 }
 
+/** Decide ANTES de criar o Bet quanto do stake vem do saldo promocional (primeiro) e quanto vem
+ * do saldo real (o resto) — ver decisão de produto #1 em promotions/service.ts. Só lê, não debita
+ * nada (o Bet precisa de saber bonusStakeAmount/userPromotionId no momento da própria criação). */
+async function planBonusSplit(
+  tx: Tx,
+  userId: string,
+  walletId: string,
+  stake: Prisma.Decimal
+): Promise<{ bonusPortion: Prisma.Decimal; realPortion: Prisma.Decimal; userPromotion: UserPromotion | null }> {
+  const userPromotion = await getActiveUserPromotion(userId, tx);
+  if (!userPromotion) return { bonusPortion: new Prisma.Decimal(0), realPortion: stake, userPromotion: null };
+  const wallet = await tx.wallet.findUniqueOrThrow({ where: { id: walletId } });
+  const { bonusPortion, realPortion } = splitStakeForBonus(stake, wallet.bonusBalance);
+  return { bonusPortion, realPortion, userPromotion };
+}
+
+/** Debita o stake de uma aposta JÁ CRIADA (real + promocional, conforme planBonusSplit) e regista
+ * o volume na promoção ativa se a aposta qualificar para rollover (odd mínima + desporto
+ * elegível) — chamado logo a seguir a tx.bet.create dentro da MESMA transação. */
+async function settleStakeDebits(
+  tx: Tx,
+  walletId: string,
+  betId: string,
+  betType: "SIMPLES" | "MULTIPLA" | "BET_BUILDER",
+  stake: Prisma.Decimal,
+  totalOdd: Prisma.Decimal,
+  sports: string[],
+  split: { bonusPortion: Prisma.Decimal; realPortion: Prisma.Decimal; userPromotion: UserPromotion | null }
+): Promise<void> {
+  const { bonusPortion, realPortion, userPromotion } = split;
+
+  if (realPortion.greaterThan(0)) {
+    await applyLedgerMovement({
+      walletId,
+      type: "BET_PLACED",
+      amount: realPortion.neg(),
+      referenceType: "bet",
+      referenceId: betId,
+      metadata: { mode: betType },
+      tx,
+    });
+  }
+
+  if (bonusPortion.greaterThan(0) && userPromotion) {
+    await applyBonusLedgerMovement({
+      walletId,
+      type: "BONUS_STAKE",
+      amount: bonusPortion.neg(),
+      referenceType: "bet",
+      referenceId: betId,
+      metadata: { mode: betType },
+      tx,
+    });
+
+    const promo = await tx.promotion.findUnique({ where: { id: userPromotion.promotionId } });
+    if (promo && betQualifiesForRollover(userPromotion, promo, totalOdd, sports)) {
+      await applyRolloverContribution(userPromotion.id, stake, tx);
+    }
+  }
+}
+
 function betSelectionCreateData(v: ValidatedSelection) {
   return {
     eventId: v.input.eventId,
@@ -97,8 +161,10 @@ async function createCombinedBet(
 ): Promise<Bet> {
   const totalOdd = validated.reduce((acc, v) => acc.mul(v.odd), new Prisma.Decimal(1));
   const stakeDecimal = new Prisma.Decimal(stake);
+  const sports = validated.map((v) => v.input.sport);
 
   return prisma.$transaction(async (tx) => {
+    const split = await planBonusSplit(tx, userId, walletId, stakeDecimal);
     const created = await tx.bet.create({
       data: {
         userId,
@@ -108,19 +174,13 @@ async function createCombinedBet(
         totalOdd,
         potentialReturn: stakeDecimal.mul(totalOdd),
         status: "PENDING",
+        bonusStakeAmount: split.bonusPortion,
+        userPromotionId: split.bonusPortion.greaterThan(0) ? split.userPromotion?.id : null,
         selections: { create: validated.map(betSelectionCreateData) },
       },
       include: { selections: true },
     });
-    await applyLedgerMovement({
-      walletId,
-      type: "BET_PLACED",
-      amount: stakeDecimal.neg(),
-      referenceType: "bet",
-      referenceId: created.id,
-      metadata: { mode: type, selections: validated.length },
-      tx,
-    });
+    await settleStakeDebits(tx, walletId, created.id, type, stakeDecimal, totalOdd, sports, split);
     return created;
   });
 }
@@ -214,6 +274,8 @@ export async function placeBets(params: PlaceBetsParams): Promise<PlaceBetsResul
   const bets = await prisma.$transaction(async (tx) => {
     const created: Bet[] = [];
     for (const { v, stake } of toPlace) {
+      const oddDecimal = new Prisma.Decimal(v.odd);
+      const split = await planBonusSplit(tx, params.userId, wallet.id, stake);
       const bet = await tx.bet.create({
         data: {
           userId: params.userId,
@@ -223,18 +285,12 @@ export async function placeBets(params: PlaceBetsParams): Promise<PlaceBetsResul
           totalOdd: v.odd,
           potentialReturn: stake.mul(v.odd),
           status: "PENDING",
+          bonusStakeAmount: split.bonusPortion,
+          userPromotionId: split.bonusPortion.greaterThan(0) ? split.userPromotion?.id : null,
           selections: { create: [betSelectionCreateData(v)] },
         },
       });
-      await applyLedgerMovement({
-        walletId: wallet.id,
-        type: "BET_PLACED",
-        amount: stake.neg(),
-        referenceType: "bet",
-        referenceId: bet.id,
-        metadata: { mode: "SIMPLES" },
-        tx,
-      });
+      await settleStakeDebits(tx, wallet.id, bet.id, "SIMPLES", stake, oddDecimal, [v.input.sport], split);
       created.push(bet);
     }
     return created;
