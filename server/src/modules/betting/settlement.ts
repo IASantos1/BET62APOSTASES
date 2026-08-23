@@ -3,49 +3,110 @@ import { prisma } from "../../lib/prisma";
 import { logger } from "../../lib/logger";
 import { applyLedgerMovement, applyBonusLedgerMovement } from "../wallet/service";
 import type { LiveEvent } from "../sports/types";
-import { resolveBetSelectionOutcome, SCORE_SETTLEABLE_SPORTS, type SettlementOutcome } from "./settlementRules";
 import { reverseRolloverContribution } from "../promotions/service";
+import { getSettlementAdapter, evaluateSelection, type MatchState, type SettlementVerdict } from "../settlement";
 
 /**
- * Liquidação de apostas — ver docs/BETTING.md. Disparada quando um evento desaparece do feed
- * ao vivo (hybridSportsService "remove", único momento em que o placar final ainda está
- * disponível — a Pulsescore nunca reporta um estado "finished" explícito) e por uma vassoura
- * periódica de segurança (sweepStaleBets) para o caso raro de o processo reiniciar a meio de um
- * jogo e nunca chegar a ver o "remove" desse evento em particular.
+ * Liquidação de apostas — ver docs/BETTING.md e server/src/modules/settlement/ (Settlement
+ * Engine, Fase 1). Dois caminhos, o mesmo motor por baixo (evaluateSelection):
+ *
+ * 1. checkEarlySettlement — chamado a CADA snapshot ao vivo (hybridSportsService "event"), com
+ *    o jogo ainda a decorrer. Só liquida os mercados que o adaptador do desporto marcar como
+ *    canSettleEarly E cujo resultado já seja matematicamente irreversível (ex: BTTS Sim depois
+ *    de ambas equipas marcarem) — a esmagadora maioria das seleções continua "OPEN" e não é
+ *    tocada. Nunca marca nada como NEEDS_REVIEW aqui (um mercado ainda por decidir não é o mesmo
+ *    que um mercado que o motor não sabe resolver — só o "remove" abaixo tem essa palavra final).
+ * 2. settleEventFinished — disparado quando um evento desaparece do feed ao vivo
+ *    (hybridSportsService "remove", único momento em que o placar final ainda está disponível —
+ *    a Pulsescore nunca reporta um estado "finished" explícito) e por uma vassoura periódica de
+ *    segurança (sweepStaleBets) para o caso raro de o processo reiniciar a meio de um jogo e
+ *    nunca chegar a ver o "remove" desse evento em particular. Liquida tudo o que ainda está
+ *    PENDING (a maioria dos mercados, que não são early-settleable) e manda para NEEDS_REVIEW o
+ *    que o motor não souber decidir com segurança.
  */
+
+function buildMatchState(event: LiveEvent, finished: boolean): MatchState {
+  const homeScore = typeof event.homeScore === "number" ? event.homeScore : Number(event.homeScore);
+  const awayScore = typeof event.awayScore === "number" ? event.awayScore : Number(event.awayScore);
+  const hasValidScore = Number.isFinite(homeScore) && Number.isFinite(awayScore);
+  return {
+    finished,
+    home: event.home,
+    away: event.away,
+    homeScore: hasValidScore ? homeScore : null,
+    awayScore: hasValidScore ? awayScore : null,
+    homeCorners: event.statistics?.home.corners,
+    awayCorners: event.statistics?.away.corners,
+    homeCards: event.statistics ? (event.statistics.home.yellowCards ?? 0) + (event.statistics.home.redCards ?? 0) : undefined,
+    awayCards: event.statistics ? (event.statistics.away.yellowCards ?? 0) + (event.statistics.away.redCards ?? 0) : undefined,
+  };
+}
+
+function verdictToSelectionStatus(verdict: SettlementVerdict): BetSelectionStatus {
+  if (verdict === "OPEN" || verdict === "UNRESOLVABLE") return "NEEDS_REVIEW";
+  return verdict;
+}
+
+/** Liquidação antecipada — ver cabeçalho do ficheiro. Chamado a cada snapshot ao vivo, para
+ * TODOS os desportos (o adaptador de cada um decide se sabe fazer alguma coisa — os desportos
+ * "adiados", ver settlement/adapters/deferred.ts, nunca liquidam nada aqui). */
+export async function checkEarlySettlement(event: LiveEvent) {
+  const pendingSelections = await prisma.betSelection.findMany({
+    where: { eventId: event.id, status: "PENDING" },
+  });
+  if (!pendingSelections.length) return;
+
+  const adapter = getSettlementAdapter(event.sport);
+  const state = buildMatchState(event, false);
+  const affectedBetIds = new Set<string>();
+
+  for (const sel of pendingSelections) {
+    const { verdict, reason } = evaluateSelection(adapter, sel.market, sel.selection, state);
+    if (verdict === "OPEN" || verdict === "UNRESOLVABLE") continue; // a maioria — nada a fazer ainda
+
+    // Idempotência: só atualiza se a seleção AINDA estiver PENDING — protege contra corrida com
+    // outra chamada concorrente (o próximo snapshot, ou settleEventFinished a decorrer ao mesmo
+    // tempo se o jogo terminar entre dois polls). updateMany devolve count 0 se já não estiver.
+    const updated = await prisma.betSelection.updateMany({
+      where: { id: sel.id, status: "PENDING" },
+      data: {
+        status: verdictToSelectionStatus(verdict),
+        settlementReason: reason,
+        finalHomeScore: state.homeScore !== null ? Math.trunc(state.homeScore) : null,
+        finalAwayScore: state.awayScore !== null ? Math.trunc(state.awayScore) : null,
+        settledAt: new Date(),
+      },
+    });
+    if (updated.count > 0) {
+      affectedBetIds.add(sel.betId);
+      logger.info({ selectionId: sel.id, eventId: event.id, verdict, reason }, "[BETTING] liquidação antecipada");
+    }
+  }
+
+  for (const betId of affectedBetIds) {
+    await finalizeBetIfComplete(betId);
+  }
+}
+
 export async function settleEventFinished(event: LiveEvent) {
   const pendingSelections = await prisma.betSelection.findMany({
     where: { eventId: event.id, status: "PENDING" },
   });
   if (!pendingSelections.length) return;
 
-  const scoreSettleable = SCORE_SETTLEABLE_SPORTS.has(event.sport);
-  const homeScore = typeof event.homeScore === "number" ? event.homeScore : Number(event.homeScore);
-  const awayScore = typeof event.awayScore === "number" ? event.awayScore : Number(event.awayScore);
-  const hasValidScore = scoreSettleable && Number.isFinite(homeScore) && Number.isFinite(awayScore);
-
-  const stats = {
-    homeScore,
-    awayScore,
-    homeCorners: event.statistics?.home.corners,
-    awayCorners: event.statistics?.away.corners,
-    homeCards: event.statistics ? (event.statistics.home.yellowCards ?? 0) + (event.statistics.home.redCards ?? 0) : undefined,
-    awayCards: event.statistics ? (event.statistics.away.yellowCards ?? 0) + (event.statistics.away.redCards ?? 0) : undefined,
-  };
-
+  const adapter = getSettlementAdapter(event.sport);
+  const state = buildMatchState(event, true);
   const affectedBetIds = new Set<string>();
 
   for (const sel of pendingSelections) {
-    const outcome: SettlementOutcome = hasValidScore
-      ? resolveBetSelectionOutcome({ market: sel.market, selection: sel.selection, home: sel.home, away: sel.away }, stats)
-      : "UNRESOLVABLE";
-
+    const { verdict, reason } = evaluateSelection(adapter, sel.market, sel.selection, state);
     await prisma.betSelection.update({
       where: { id: sel.id },
       data: {
-        status: outcomeToSelectionStatus(outcome),
-        finalHomeScore: hasValidScore ? Math.trunc(homeScore) : null,
-        finalAwayScore: hasValidScore ? Math.trunc(awayScore) : null,
+        status: verdictToSelectionStatus(verdict),
+        settlementReason: reason,
+        finalHomeScore: state.homeScore !== null ? Math.trunc(state.homeScore) : null,
+        finalAwayScore: state.awayScore !== null ? Math.trunc(state.awayScore) : null,
         settledAt: new Date(),
       },
     });
@@ -53,18 +114,13 @@ export async function settleEventFinished(event: LiveEvent) {
   }
 
   logger.info(
-    { eventId: event.id, sport: event.sport, selectionsSettled: pendingSelections.length, hasValidScore },
+    { eventId: event.id, sport: event.sport, selectionsSettled: pendingSelections.length, hasValidScore: state.homeScore !== null },
     "[BETTING] seleções liquidadas para o evento terminado"
   );
 
   for (const betId of affectedBetIds) {
     await finalizeBetIfComplete(betId);
   }
-}
-
-function outcomeToSelectionStatus(outcome: SettlementOutcome): BetSelectionStatus {
-  if (outcome === "UNRESOLVABLE") return "NEEDS_REVIEW";
-  return outcome;
 }
 
 /** Reavalia um Bet depois de uma ou mais das suas seleções terem sido liquidadas — só decide
@@ -88,9 +144,39 @@ async function finalizeBetIfComplete(betId: string) {
   });
 }
 
-/** Calcula o resultado final de um Bet cujas seleções estão TODAS decididas (WON/LOST/VOID,
- * nenhuma PENDING/NEEDS_REVIEW). Função pura sem efeitos secundários — extraída para testes
- * unitários sem tocar em DB. */
+/** Fator de payout de UMA seleção decidida — o quanto o stake "vale" depois desta seleção,
+ * multiplicado no produto de todas as seleções do Bet (ver calculateBetResult). WON usa a odd
+ * inteira, LOST anula tudo (fator 0 — zera o produto do Bet inteiro, como uma Múltipla exige),
+ * VOID/PUSH devolvem o stake sem alterar (fator 1, financeiramente idênticos — só o rótulo
+ * difere, ver secção 15/79 da spec do Settlement Engine), HALF_WIN/HALF_LOSS dividem a aposta ao
+ * meio (Handicap Asiático fracionado — ainda não emitido por nenhum adaptador, ver
+ * settlement/adapters/scoreBased.ts, mas o cálculo já está pronto para quando estiver). */
+function outcomeFactor(status: BetSelectionStatus, odd: Prisma.Decimal): Prisma.Decimal {
+  switch (status) {
+    case "WON":
+      return odd;
+    case "LOST":
+      return new Prisma.Decimal(0);
+    case "VOID":
+    case "PUSH":
+      return new Prisma.Decimal(1);
+    case "HALF_WIN":
+      return odd.add(1).div(2);
+    case "HALF_LOSS":
+      return new Prisma.Decimal(0.5);
+    default:
+      // PENDING/NEEDS_REVIEW nunca deviam chegar aqui — o chamador só invoca isto depois de
+      // confirmar que TODAS as seleções do Bet já saíram desses dois estados.
+      throw new Error(`calculateBetResult: seleção com estado inesperado "${status}" (devia estar decidida)`);
+  }
+}
+
+/** Calcula o resultado final de um Bet cujas seleções estão TODAS decididas (nenhuma PENDING/
+ * NEEDS_REVIEW). Função pura sem efeitos secundários — extraída para testes unitários sem tocar
+ * em DB. O payout é sempre o produto dos fatores de cada seleção (ver outcomeFactor) vezes o
+ * stake — generaliza a fórmula antiga (que só sabia WON/LOST/VOID) para também suportar PUSH/
+ * HALF_WIN/HALF_LOSS, produzindo exatamente o mesmo resultado que antes para os três estados
+ * originais (uma seleção LOST zera tudo, VOID não muda nada, só WON multiplica a odd). */
 export function calculateBetResult(params: {
   stake: Prisma.Decimal | number | string;
   selections: Array<{ status: BetSelectionStatus; odd: Prisma.Decimal | number | string }>;
@@ -101,25 +187,13 @@ export function calculateBetResult(params: {
     odd: new Prisma.Decimal(s.odd),
   }));
 
-  const anyLost = selections.some((s) => s.status === "LOST");
-  const allVoid = selections.every((s) => s.status === "VOID");
+  const effectiveOdd = selections.reduce((acc, s) => acc.mul(outcomeFactor(s.status, s.odd)), new Prisma.Decimal(1));
+  const payout = stake.mul(effectiveOdd);
 
   let status: BetStatus;
-  let payout: Prisma.Decimal;
-
-  if (anyLost) {
-    status = "LOST";
-    payout = new Prisma.Decimal(0);
-  } else if (allVoid) {
-    status = "VOID";
-    payout = stake;
-  } else {
-    status = "WON";
-    const effectiveOdd = selections
-      .filter((s) => s.status === "WON")
-      .reduce((acc, s) => acc.mul(s.odd), new Prisma.Decimal(1));
-    payout = stake.mul(effectiveOdd);
-  }
+  if (payout.isZero()) status = "LOST";
+  else if (payout.equals(stake)) status = "VOID";
+  else status = "WON";
 
   const netResult = payout.sub(stake);
   return { status, payout, netResult, stake };

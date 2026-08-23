@@ -5,7 +5,7 @@ import { logger } from "./lib/logger";
 import { attachSportsWebsocketGateway } from "./modules/sports/websocket/gateway";
 import { hybridSportsService } from "./modules/sports/hybridService";
 import { seedDefaultAliases } from "./modules/sports/mapping/aliasStore";
-import { settleEventFinished, sweepStaleBets } from "./modules/betting/settlement";
+import { settleEventFinished, checkEarlySettlement, sweepStaleBets } from "./modules/betting/settlement";
 import { sweepExpiredPromotions } from "./modules/promotions/service";
 import type { LiveEvent } from "./modules/sports/types";
 
@@ -22,6 +22,12 @@ seedDefaultAliases().catch((err) => logger.warn({ err }, "Mapping: falha ao seme
 hybridSportsService.on("remove", (_id: string, lastKnownEvent?: LiveEvent) => {
   if (!lastKnownEvent) return; // defensivo — nunca deveria faltar, ver hybridService.ts
   settleEventFinished(lastKnownEvent).catch((err) => logger.error({ err, eventId: lastKnownEvent.id }, "[BETTING] falha ao liquidar apostas deste evento"));
+});
+// Liquidação antecipada (Settlement Engine, ver betting/settlement.ts) — corre a CADA snapshot
+// ao vivo, ainda com o jogo a decorrer, para os poucos mercados cujo resultado já pode estar
+// matematicamente decidido antes do apito final (ex: BTTS Sim, Over já ultrapassado).
+hybridSportsService.on("event", (evt: LiveEvent) => {
+  checkEarlySettlement(evt).catch((err) => logger.error({ err, eventId: evt.id }, "[BETTING] falha na liquidação antecipada deste evento"));
 });
 // Vassoura de segurança para o caso raro de o processo reiniciar a meio de um jogo e nunca ver
 // o "remove" desse evento específico (o mapa em memória do hybridSportsService reconstrói-se

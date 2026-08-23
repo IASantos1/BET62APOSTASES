@@ -270,6 +270,15 @@ enum BetSelectionStatus {
   WON
   LOST
   VOID
+  // PUSH/HALF_WIN/HALF_LOSS — ver server/src/modules/settlement/ (Settlement Engine). PUSH é o
+  // "empate" de um Over/Under de linha inteira (ex: Over/Under 2.0 com total=2) — financeiramente
+  // igual a VOID (devolve o stake), mas rotulado à parte para auditoria/relatório (secções 15/79
+  // da spec do utilizador). HALF_WIN/HALF_LOSS são para Handicap Asiático fracionado — ainda não
+  // implementado (formato da seleção não confirmado contra amostra real), mas o vocabulário já
+  // existe para quando estiver.
+  PUSH
+  HALF_WIN
+  HALF_LOSS
   NEEDS_REVIEW
 }
 
@@ -321,6 +330,9 @@ model BetSelection {
   reviewNotes      String?
   reviewedByUserId String?
   reviewedAt       DateTime?
+  // Motivo do settlement (Settlement Engine, secção 79 da spec) — UNAMBIGUOUS_OUTCOME (liquidação
+  // antecipada), EVENT_FINISHED, VOID_EVENT, MANUAL_CORRECTION. Null enquanto PENDING/NEEDS_REVIEW.
+  settlementReason String?
 
   @@index([betId])
   @@index([eventId])

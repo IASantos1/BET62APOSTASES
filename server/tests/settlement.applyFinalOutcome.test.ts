@@ -121,6 +121,63 @@ describe("calculateBetResult — BET_BUILDER (3 seleções mesmo evento)", () =>
   });
 });
 
+describe("calculateBetResult — PUSH (Settlement Engine, Over/Under linha inteira)", () => {
+  it("aposta individual PUSH: devolução total, igual a VOID financeiramente", () => {
+    const result = calculateBetResult({
+      stake: "10.00",
+      selections: [{ status: "PUSH", odd: "1.90" }],
+    });
+    expect(result.status).toBe("VOID");
+    expect(result.payout.toNumber()).toBeCloseTo(10);
+    expect(result.netResult.toNumber()).toBeCloseTo(0);
+  });
+
+  it("múltipla com uma WON e uma PUSH: PUSH não altera a odd efetiva", () => {
+    const result = calculateBetResult({
+      stake: "10.00",
+      selections: [
+        { status: "WON", odd: "2.00" },
+        { status: "PUSH", odd: "1.80" },
+      ],
+    });
+    expect(result.status).toBe("WON");
+    expect(result.payout.toNumber()).toBeCloseTo(20);
+  });
+
+  it("múltipla com uma LOST e uma PUSH: continua LOST (PUSH não salva a aposta)", () => {
+    const result = calculateBetResult({
+      stake: "10.00",
+      selections: [
+        { status: "LOST", odd: "2.00" },
+        { status: "PUSH", odd: "1.80" },
+      ],
+    });
+    expect(result.status).toBe("LOST");
+    expect(result.payout.toNumber()).toBe(0);
+  });
+});
+
+describe("calculateBetResult — HALF_WIN / HALF_LOSS (Handicap Asiático fracionado)", () => {
+  it("HALF_WIN: paga metade à odd, metade devolvida (fator (1+odd)/2)", () => {
+    const result = calculateBetResult({
+      stake: "10.00",
+      selections: [{ status: "HALF_WIN", odd: "2.00" }],
+    });
+    // fator = (1+2)/2 = 1.5 → payout = 15 (5 devolvidos + 5 de lucro, metade do lucro pleno de 10)
+    expect(result.payout.toNumber()).toBeCloseTo(15);
+    expect(result.status).toBe("WON");
+  });
+
+  it("HALF_LOSS: perde metade do stake, devolve a outra metade (fator 0.5)", () => {
+    const result = calculateBetResult({
+      stake: "10.00",
+      selections: [{ status: "HALF_LOSS", odd: "2.00" }],
+    });
+    expect(result.payout.toNumber()).toBeCloseTo(5);
+    expect(result.netResult.toNumber()).toBeCloseTo(-5);
+  });
+});
+
 describe("calculateBetResult — odd corrigida se divergir do original", () => {
   it("usa odd passada no parametro (do feed final) independentemente da odd no bet", () => {
     const result = calculateBetResult({

@@ -45,7 +45,7 @@ export function classifyMarket(market: string): MarketCategory {
   return "UNKNOWN";
 }
 
-function extractLine(...texts: string[]): number | null {
+export function extractLine(...texts: string[]): number | null {
   for (const t of texts) {
     const m = t.match(/(\d+(?:\.\d+)?)/);
     if (m?.[1]) return parseFloat(m[1]);
@@ -53,7 +53,7 @@ function extractLine(...texts: string[]): number | null {
   return null;
 }
 
-function resolveMatchResult(selection: string, home: string, away: string, hs: number, as: number): SettlementOutcome {
+export function resolveMatchResult(selection: string, home: string, away: string, hs: number, as: number): SettlementOutcome {
   const s = selection.trim().toLowerCase();
   const isHome = s === "1" || s === "home" || s === home.trim().toLowerCase();
   const isAway = s === "2" || s === "away" || s === away.trim().toLowerCase();
@@ -64,7 +64,7 @@ function resolveMatchResult(selection: string, home: string, away: string, hs: n
   return (isHome && homeWon) || (isAway && !homeWon) ? "WON" : "LOST";
 }
 
-function resolveDoubleChance(selection: string, home: string, away: string, hs: number, as: number): SettlementOutcome {
+export function resolveDoubleChance(selection: string, home: string, away: string, hs: number, as: number): SettlementOutcome {
   const draw = hs === as;
   const homeWon = hs > as;
   const awayWon = as > hs;
@@ -94,12 +94,12 @@ function resolveDoubleChance(selection: string, home: string, away: string, hs: 
   return "UNRESOLVABLE";
 }
 
-function resolveDrawNoBet(selection: string, home: string, away: string, hs: number, as: number): SettlementOutcome {
+export function resolveDrawNoBet(selection: string, home: string, away: string, hs: number, as: number): SettlementOutcome {
   if (hs === as) return "VOID"; // empate devolve o stake, não conta como ganho nem perda
   return resolveMatchResult(selection, home, away, hs, as);
 }
 
-function resolveOverUnder(market: string, selection: string, total: number): SettlementOutcome {
+export function resolveOverUnder(market: string, selection: string, total: number): SettlementOutcome {
   const line = extractLine(selection, market);
   if (line === null) return "UNRESOLVABLE";
   const s = selection.trim().toLowerCase();
@@ -111,7 +111,7 @@ function resolveOverUnder(market: string, selection: string, total: number): Set
   return total < line ? "WON" : "LOST";
 }
 
-function resolveBTTS(selection: string, hs: number, as: number): SettlementOutcome {
+export function resolveBTTS(selection: string, hs: number, as: number): SettlementOutcome {
   const s = selection.trim().toLowerCase();
   const yes = /^(yes|sim)$/.test(s);
   const no = /^(no|não|nao)$/.test(s);
@@ -120,7 +120,7 @@ function resolveBTTS(selection: string, hs: number, as: number): SettlementOutco
   return yes === bothScored ? "WON" : "LOST";
 }
 
-function resolveCorrectScore(selection: string, hs: number, as: number): SettlementOutcome {
+export function resolveCorrectScore(selection: string, hs: number, as: number): SettlementOutcome {
   // Aceita hífen normal, travessão/en-dash e dois pontos como separador — uma amostra real
   // mostrou "2 – 1" (en-dash, não hífen ASCII) no rótulo da seleção.
   const m = selection.replace(/\s+/g, "").match(/^(\d+)[-–—:](\d+)$/);
