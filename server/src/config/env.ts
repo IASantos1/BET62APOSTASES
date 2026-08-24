@@ -50,6 +50,11 @@ const envSchema = z.object({
   // --- API-Football (statistics) ---
   API_FOOTBALL_KEY: z.string().default(""),
   API_FOOTBALL_BASE_URL: z.string().default("https://v3.football.api-sports.io"),
+  // "direct" = subscrição direta em api-football.com (header x-apisports-key, host
+  // v3.football.api-sports.io). "rapidapi" = subscrição via RapidAPI (dois headers diferentes —
+  // x-rapidapi-key + x-rapidapi-host — e outro host); ver apifootball/client.ts::apiFootballFetch.
+  API_FOOTBALL_PROVIDER: z.enum(["direct", "rapidapi"]).default("direct"),
+  API_FOOTBALL_RAPIDAPI_HOST: z.string().default("api-football-v1.p.rapidapi.com"),
 
   // --- Documentos KYC (upload de documento pessoal + extrato bancário) ---
   // Caminho local (relativo à raiz do processo) onde os ficheiros ficam guardados — NEEDS

@@ -535,9 +535,19 @@ Ficheiros:
 
 ## API-Football — o que ainda precisa de confirmação
 
-- Autenticação assumida via header `x-apisports-key` (ligação direta a
-  `v3.football.api-sports.io`). Se a subscrição for feita via RapidAPI, trocar para
-  `x-rapidapi-key` + `x-rapidapi-host` e a base URL da RapidAPI.
+- **Confirmado e configurável (2026-08-24)**: autenticação via header `x-apisports-key` (ligação
+  direta a `v3.football.api-sports.io`) para subscrição direta em api-football.com — é o
+  `API_FOOTBALL_PROVIDER=direct` por omissão, e é o que este projeto usa hoje. Já existe também
+  `API_FOOTBALL_PROVIDER=rapidapi` para quem subscreve via RapidAPI (troca automaticamente para
+  `x-rapidapi-key` + `x-rapidapi-host` e a base URL da RapidAPI, ver `apifootball/client.ts`) —
+  usar o provider errado para a subscrição real faz TODOS os pedidos falharem com 401/403, o que
+  parece "nenhuma estatística chega nunca" em vez de um erro pontual (foi exatamente o sintoma
+  reportado que levou a esta opção ser adicionada — confirmado nesse caso que a subscrição era
+  mesmo direta, por isso a causa real de "zero estatísticas/classificação" com o provider correto
+  ainda está por diagnosticar: ver logger `"Erro na API-Football"` em produção, que agora inclui
+  o `status` HTTP real devolvido, e o painel `/admin` → "Mapeamento" para ver se as equipas estão
+  a ficar com `apiFootballTeamId` nulo — pesquisa sem resultados — ou com confiança só
+  ligeiramente abaixo dos 70% exigidos).
 - Limites de taxa dependem do plano — respeitar os headers `x-ratelimit-*` da resposta.
 - Usado apenas sob pedido (`GET /api/sports/events/:id/stats`), não em polling constante,
   para poupar quota — só faz sentido para eventos de futebol com

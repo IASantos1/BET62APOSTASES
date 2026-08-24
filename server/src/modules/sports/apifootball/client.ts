@@ -25,18 +25,43 @@ import { TtlCache, cached } from "../../../lib/ttlCache";
  * API-Football: pesquisa (candidatos em bruto, sem filtrar) e os endpoints já indexados por id.
  */
 
+// Host oficial por omissão da subscrição direta — usado para saber se API_FOOTBALL_BASE_URL
+// ainda está no valor por omissão (nesse caso, o provider "rapidapi" troca-o automaticamente
+// para o host da RapidAPI abaixo) ou se foi definido explicitamente pelo utilizador (nesse caso
+// essa escolha explícita vence sempre, mesmo com provider="rapidapi").
+const DIRECT_BASE_URL = "https://v3.football.api-sports.io";
+const RAPIDAPI_BASE_URL = "https://api-football-v1.p.rapidapi.com/v3";
+
+function resolveApiFootballBaseUrl(): string {
+  if (env.API_FOOTBALL_BASE_URL !== DIRECT_BASE_URL) return env.API_FOOTBALL_BASE_URL;
+  return env.API_FOOTBALL_PROVIDER === "rapidapi" ? RAPIDAPI_BASE_URL : DIRECT_BASE_URL;
+}
+
+// Duas formas de autenticação, dependendo de onde a chave foi obtida (spec explicada em
+// docs/SPORTS_DATA.md): subscrição direta em api-football.com usa um único header
+// "x-apisports-key"; subscrição via marketplace da RapidAPI usa dois headers diferentes
+// ("x-rapidapi-key" + "x-rapidapi-host") e nunca aceita o formato direto — usar o header errado
+// devolve sempre 401/403, para TODOS os pedidos, o que parece "nada de estatísticas chega nunca"
+// em vez de um erro pontual.
+function apiFootballHeaders(): Record<string, string> {
+  if (env.API_FOOTBALL_PROVIDER === "rapidapi") {
+    return { "x-rapidapi-key": env.API_FOOTBALL_KEY, "x-rapidapi-host": env.API_FOOTBALL_RAPIDAPI_HOST };
+  }
+  return { "x-apisports-key": env.API_FOOTBALL_KEY };
+}
+
 async function apiFootballFetch<T>(path: string, params: Record<string, string | number>): Promise<T> {
   if (!env.API_FOOTBALL_KEY) {
     throw Errors.badRequest("Estatísticas indisponíveis: API_FOOTBALL_KEY não configurada neste ambiente.");
   }
 
-  const url = new URL(`${env.API_FOOTBALL_BASE_URL}${path}`);
+  const url = new URL(`${resolveApiFootballBaseUrl()}${path}`);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
 
-  const res = await fetch(url, { headers: { "x-apisports-key": env.API_FOOTBALL_KEY } });
+  const res = await fetch(url, { headers: apiFootballHeaders() });
   if (!res.ok) {
     const body = await res.text();
-    logger.error({ status: res.status, body, path }, "Erro na API-Football");
+    logger.error({ status: res.status, body, path, provider: env.API_FOOTBALL_PROVIDER }, "Erro na API-Football");
     throw Errors.internal("Falha ao obter estatísticas da API-Football");
   }
   return res.json() as Promise<T>;
