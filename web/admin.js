@@ -142,6 +142,8 @@ const AdminApi = (() => {
     correctFixtureMapping: (id, apiFootballFixtureId) => request(`/admin/mapping/fixtures/${id}`, { method: "PATCH", body: { apiFootballFixtureId } }),
     resetFixtureMapping: (id) => request(`/admin/mapping/fixtures/${id}`, { method: "DELETE" }),
 
+    getApiFootballStatus: () => request("/admin/apifootball/status"),
+
     listMappingAliases: () => request("/admin/mapping/aliases"),
     createMappingAlias: (alias, canonicalName, sport) => request("/admin/mapping/aliases", { method: "POST", body: { alias, canonicalName, sport } }),
     deleteMappingAlias: (id) => request(`/admin/mapping/aliases/${id}`, { method: "DELETE" }),
@@ -1130,16 +1132,46 @@ const AdminApp = (() => {
   }
 
   function mappingTabsHtml() {
-    return `<div class="toolbar">
-      ${["teams", "leagues", "fixtures", "aliases"]
-        .map(
-          (t) =>
-            `<button class="btn small ${mappingTab === t ? "" : "outline"}" onclick="AdminApp.setMappingTab('${t}')">${
-              { teams: "Equipas", leagues: "Ligas", fixtures: "Fixtures", aliases: "Aliases" }[t]
-            }</button>`
-        )
-        .join("")}
+    return `<div class="toolbar" style="justify-content:space-between;flex-wrap:wrap;gap:10px">
+      <div class="toolbar" style="gap:8px">
+        ${["teams", "leagues", "fixtures", "aliases"]
+          .map(
+            (t) =>
+              `<button class="btn small ${mappingTab === t ? "" : "outline"}" onclick="AdminApp.setMappingTab('${t}')">${
+                { teams: "Equipas", leagues: "Ligas", fixtures: "Fixtures", aliases: "Aliases" }[t]
+              }</button>`
+          )
+          .join("")}
+      </div>
+      <div id="apifootball-status-box">
+        <button class="btn small outline" onclick="AdminApp.testApiFootballStatus()">Testar ligação API-Football</button>
+      </div>
     </div>`;
+  }
+
+  // GET /status da API-Football não conta para a quota diária (documentação oficial) — este
+  // botão pode ser clicado à vontade. "reachedNetwork:false" nos details = API_FOOTBALL_KEY
+  // vazia no servidor (nunca chegou a tentar); upstreamStatus/upstreamBody = o que a
+  // API-Football respondeu de facto (401 chave errada, 403 provider/plano errado, etc.).
+  async function testApiFootballStatus() {
+    const box = document.getElementById("apifootball-status-box");
+    if (!box) return;
+    box.innerHTML = `<span class="muted">A testar…</span>`;
+    try {
+      const data = await AdminApi.getApiFootballStatus();
+      if (data.ok) {
+        box.innerHTML = `<span class="badge ok">Ligado</span> <span class="muted">plano ${esc(data.subscription?.plan ?? "?")} · ${data.requests?.current ?? "?"}/${data.requests?.limit_day ?? "?"} pedidos hoje</span>`;
+      } else {
+        const d = data.details || {};
+        const reason =
+          d.reachedNetwork === false
+            ? "API_FOOTBALL_KEY não configurada no servidor (nunca chegou a tentar ligar)"
+            : `API-Football respondeu ${d.upstreamStatus ?? "?"}: ${esc((d.upstreamBody || data.message || "").slice(0, 200))}`;
+        box.innerHTML = `<span class="badge bad">Falhou</span> <span class="muted">${reason}</span>`;
+      }
+    } catch (err) {
+      box.innerHTML = `<span class="badge bad">Falhou</span> <span class="muted">${esc(err.message || "erro desconhecido")}</span>`;
+    }
   }
 
   async function loadMappingTeams(page) {
@@ -1555,7 +1587,7 @@ const AdminApp = (() => {
     loadPromotions, openPromotionForm, submitPromotionForm,
     loadDeposits,
     loadCasino, syncCasino, showCasinoAgentInfo,
-    setMappingTab, loadMappingTeams, openCorrectTeam, submitCorrectTeam,
+    setMappingTab, loadMappingTeams, openCorrectTeam, submitCorrectTeam, testApiFootballStatus,
     loadMappingLeagues, openCorrectLeague, submitCorrectLeague,
     loadMappingFixtures, openCorrectFixture, submitCorrectFixture, resetMapping,
     loadMappingAliases, submitCreateAlias, deleteAlias,
