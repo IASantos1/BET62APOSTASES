@@ -436,7 +436,7 @@ interface PulsescoreLiveSportsSummary {
  * @param silent404 If true, return [] instead of throwing when the bookmaker returns 404
  *   (some bookmaker+sport combinations simply don't exist on the Pulsescore side).
  */
-export async function fetchLiveSportsWithEvents(bookmaker?: string, silent404 = false): Promise<Sport[]> {
+async function fetchLiveSportsWithCounts(bookmaker?: string, silent404 = false): Promise<Array<{ sport: Sport; eventCount: number }>> {
   assertConfigured();
   const resolvedBookmaker = bookmaker ?? env.PULSESCORE_BOOKMAKER;
   const url = `${env.PULSESCORE_REST_URL}/${bookmakerPathSegment(resolvedBookmaker)}/live-events/sports`;
@@ -448,7 +448,23 @@ export async function fetchLiveSportsWithEvents(bookmaker?: string, silent404 = 
     throw Errors.internal(`Pulsescore devolveu ${res.status} para live-events/sports (${resolvedBookmaker})`);
   }
   const data = (await res.json()) as PulsescoreLiveSportsSummary;
-  return data.sports.filter((s) => s.eventCount > 0 && SLUG_TO_SPORT[s.name]).map((s) => SLUG_TO_SPORT[s.name]!);
+  return data.sports
+    .filter((s) => s.eventCount > 0 && SLUG_TO_SPORT[s.name])
+    .map((s) => ({ sport: SLUG_TO_SPORT[s.name]!, eventCount: s.eventCount }))
+    .sort((a, b) => b.eventCount - a.eventCount);
+}
+
+// BUG CORRIGIDO (2026-08-24): esta função devolvia os desportos pela ordem em que a Pulsescore
+// os lista em /live-events/sports — que NÃO é por eventCount, é uma ordem fixa/alfabética do
+// catálogo deles. wsClient.ts faz `.slice(0, maxConnections)` a este resultado a pensar que está
+// a escolher os desportos "mais movimentados agora", mas na prática escolhia sempre os mesmos 3
+// primeiros da ordem fixa da Pulsescore, independentemente de quantos jogos ao vivo cada um
+// tinha. Resultado: ténis/futebol/basquetebol podiam ficar permanentemente de fora das 3 vagas de
+// WebSocket e cair sempre no polling REST de 25s — o delay reportado. Agora ordena-se
+// explicitamente por eventCount (desc) antes de devolver.
+export async function fetchLiveSportsWithEvents(bookmaker?: string, silent404 = false): Promise<Sport[]> {
+  const withCounts = await fetchLiveSportsWithCounts(bookmaker, silent404);
+  return withCounts.map((s) => s.sport);
 }
 
 /**
@@ -469,24 +485,24 @@ export async function fetchLiveSportsUnionAllBookmakers(): Promise<Sport[]> {
 
   const results = await Promise.all(
     Array.from(uniqueBookmakers).map((book) =>
-      fetchLiveSportsWithEvents(book, true).catch((err): Sport[] => {
+      fetchLiveSportsWithCounts(book, true).catch((err): Array<{ sport: Sport; eventCount: number }> => {
         logger.warn({ bookmaker: book, err: String(err).slice(0, 200) }, "Pulsescore: live-events/sports falhou para esta bookmaker, a ignorar");
         return [];
       })
     )
   );
 
-  const seen = new Set<Sport>();
-  const union: Sport[] = [];
+  // Soma o eventCount de cada desporto em todas as bookmakers (não só o máximo) — dá uma
+  // medida mais fiel de "quão movimentado está este desporto agora" do que olhar só para uma
+  // bookmaker, e é o que wsClient.ts usa depois para escolher a que 3 desportos ligar o
+  // WebSocket real (ver comentário/fix em fetchLiveSportsWithEvents acima).
+  const totalCount = new Map<Sport, number>();
   for (const sports of results) {
-    for (const s of sports) {
-      if (!seen.has(s)) {
-        seen.add(s);
-        union.push(s);
-      }
+    for (const { sport, eventCount } of sports) {
+      totalCount.set(sport, (totalCount.get(sport) ?? 0) + eventCount);
     }
   }
-  return union;
+  return [...totalCount.entries()].sort((a, b) => b[1] - a[1]).map(([sport]) => sport);
 }
 
 async function fetchLiveEventsPage(sport: Sport, page: number, limit: number, bookmaker?: string): Promise<unknown> {

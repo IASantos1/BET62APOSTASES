@@ -22,9 +22,13 @@ const LOCK_REFRESH_MS = 30_000;
  * REST polling (hybridService.ts) as the only source — no functional loss, just no live score.
  *
  * With only `maxConnections` slots (3 on MAX) and 8 sports, connections are opened for the
- * busiest sports right now (by live event count) and re-evaluated periodically; REST polling in
- * hybridService.ts covers whichever sports aren't currently WS-connected, so nothing goes
- * unpolled — WS is a live-score/lower-latency upgrade for the top sports, not a replacement.
+ * busiest sports right now (by live event count, actually sorted by eventCount in
+ * fetchLiveSportsUnionAllBookmakers — ver correção de 2026-08-24 em client.ts, antes a ordem
+ * vinda da Pulsescore era usada tal e qual, o que podia deixar de fora desportos populares como
+ * ténis/futebol/basquetebol de forma consistente) e re-avaliado periodicamente; REST polling em
+ * hybridService.ts cobre os desportos que não estão ligados por WebSocket neste momento, por
+ * isso nada fica por sondar — o WS é um upgrade de latência para os desportos no topo, não um
+ * substituto.
  */
 const REFRESH_INTERVAL_MS = 60_000;
 const RECONNECT_DELAY_MS = 5_000;
