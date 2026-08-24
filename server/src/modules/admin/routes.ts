@@ -3,7 +3,8 @@ import { z } from "zod";
 import { asyncHandler } from "../../middleware/errorHandler";
 import { requireAuth, requireRole, type AuthedRequest } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
-import { Errors } from "../../lib/errors";
+import { Errors, AppError } from "../../lib/errors";
+import { getApiFootballStatus } from "../sports/apifootball/client";
 import { userRateLimit } from "../../lib/userRateLimit";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
@@ -527,6 +528,25 @@ router.patch(
 );
 
 // --- Mapeamento Pulsescore <-> API-Football (docs/TEAM_MAPPING.md) ---
+
+// Diagnóstico de ligação — GET /status da API-Football NÃO conta para a quota diária (confirmado
+// na documentação oficial), por isso pode ser chamado à vontade a partir do admin sem gastar
+// pedidos reais. Devolve sempre 200 (mesmo quando a ligação falha) para o frontend mostrar o
+// motivo exato em vez de só "erro 500" — `details.upstreamStatus`/`upstreamBody` vêm do que a
+// API-Football respondeu de facto (401 = chave errada, 403 = provider/plano errado, etc.);
+// `details.reachedNetwork === false` significa que nem chegou a tentar (API_FOOTBALL_KEY vazia).
+router.get(
+  "/apifootball/status",
+  asyncHandler(async (_req, res) => {
+    try {
+      const status = await getApiFootballStatus();
+      res.json({ ok: true, ...status.response });
+    } catch (err) {
+      const details = err instanceof AppError ? err.details : undefined;
+      res.json({ ok: false, message: err instanceof Error ? err.message : "Erro desconhecido", details });
+    }
+  })
+);
 
 router.get(
   "/mapping/teams",

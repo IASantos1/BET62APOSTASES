@@ -6,18 +6,25 @@ import { TtlCache, cached } from "../../../lib/ttlCache";
 /**
  * API-Football (v3.football.api-sports.io) REST client — statistics enrichment layer.
  *
- * Direct fetch of https://www.api-football.com/documentation-v3 is blocked from this build
- * environment (EGRESS_BLOCKED), but web search snippets of that same documentation (still
- * reachable) confirmed every endpoint/parameter this client actually calls: `x-apisports-key`
- * auth header on the direct host; `/fixtures` accepting `id`/`team`/`date` together;
- * `/fixtures/statistics?fixture=` (required int); `/fixtures/headtohead?h2h={home}-{away}`;
- * `/predictions?fixture=` (response has `winner.name`/`advice`/`percent.{home,draw,away}`, as
- * used below); `/standings?league=&season=`; `/teams?search=`. No mismatch found against what
- * this file sends/reads. If instead subscribed via RapidAPI, swap to "x-rapidapi-key" +
- * "x-rapidapi-host" headers and the RapidAPI base URL. Rate limits depend on plan
- * (requests/day + requests/minute) — respect the `x-ratelimit-requests-remaining` response
- * header and back off before going live (this specific header name NOT independently
- * re-confirmed by the search above — carried over from the original implementation).
+ * Documentação oficial completa colada pelo utilizador em 2026-08-24 (o fetch direto a
+ * www.api-football.com continua bloqueado neste ambiente de build — EGRESS_BLOCKED) — confirma
+ * exatamente o que este ficheiro já implementava: header `x-apisports-key` (subscrição direta),
+ * base `https://v3.football.api-sports.io`, todos os endpoints/parâmetros usados abaixo
+ * (`/fixtures`, `/fixtures/statistics?fixture=`, `/fixtures/headtohead?h2h=`, `/predictions?fixture=`,
+ * `/standings?league=&season=`, `/teams?search=`). Nenhuma discrepância encontrada.
+ *
+ * ⚠️ **Aviso da própria documentação, textual**: "A API está configurada para funcionar apenas
+ * com solicitações GET e permite somente os cabeçalhos listados abaixo: x-apisports-key. Se você
+ * fizer solicitações que não sejam do tipo GET ou adicionar cabeçalhos que não estejam na lista,
+ * você receberá um erro da API. **Algumas estruturas (especialmente em JS, nodeJS...) adicionam
+ * cabeçalhos extras automaticamente; você precisa removê-los para obter uma resposta da API.**"
+ * — é por isto que `apiFootballFetch()` abaixo nunca usa uma lib HTTP com defaults próprios
+ * (axios/superagent costumam injetar `Content-Type`/`Accept` automaticamente); usa sempre o
+ * `fetch()` nativo do Node com um objeto `headers` contendo só a chave, nada mais.
+ *
+ * `getApiFootballStatus()` (`GET /status`) **não conta para a quota diária** (confirmado na
+ * documentação) — é o diagnóstico ideal para confirmar chave/provider/ligação sem gastar pedidos
+ * reais, exposto no admin (`GET /admin/apifootball/status`, ver `admin/routes.ts`).
  *
  * A resolução de nomes (equipa/liga Pulsescore -> id API-Football) NÃO vive aqui — vive em
  * mapping/teamMatcher.ts e mapping/leagueMatcher.ts (aliases, semelhança, cache permanente,
@@ -52,7 +59,9 @@ function apiFootballHeaders(): Record<string, string> {
 
 async function apiFootballFetch<T>(path: string, params: Record<string, string | number>): Promise<T> {
   if (!env.API_FOOTBALL_KEY) {
-    throw Errors.badRequest("Estatísticas indisponíveis: API_FOOTBALL_KEY não configurada neste ambiente.");
+    throw Errors.badRequest("API-Football indisponível: API_FOOTBALL_KEY não configurada neste ambiente.", {
+      reachedNetwork: false,
+    });
   }
 
   const url = new URL(`${resolveApiFootballBaseUrl()}${path}`);
@@ -62,9 +71,32 @@ async function apiFootballFetch<T>(path: string, params: Record<string, string |
   if (!res.ok) {
     const body = await res.text();
     logger.error({ status: res.status, body, path, provider: env.API_FOOTBALL_PROVIDER }, "Erro na API-Football");
-    throw Errors.internal("Falha ao obter estatísticas da API-Football");
+    // upstreamStatus/upstreamBody aqui em baixo servem o diagnóstico do admin (getApiFootballStatus,
+    // GET /admin/apifootball/status) — sem isto o admin só via um 500 genérico, sem saber se a
+    // API-Football respondeu 401 (chave errada), 403 (provider/plano errado) ou outra coisa.
+    throw Errors.internal(`Falha ao contactar a API-Football (${path})`, {
+      reachedNetwork: true,
+      upstreamStatus: res.status,
+      upstreamBody: body.slice(0, 500),
+    });
   }
   return res.json() as Promise<T>;
+}
+
+export interface ApiFootballStatusResponse {
+  response: {
+    account: { firstname: string; lastname: string; email: string };
+    subscription: { plan: string; end: string; active: boolean };
+    requests: { current: number; limit_day: number };
+  };
+}
+
+/** GET /status — confirmado na documentação oficial que NÃO conta para a quota diária. Serve
+ * só para diagnóstico: se isto falhar, o problema é mesmo a chave/provider/rede — nenhuma
+ * pesquisa de equipa/liga/fixture chegou a acontecer ainda. Exposto no admin (ver
+ * `admin/routes.ts`, `GET /admin/apifootball/status`). */
+export async function getApiFootballStatus(): Promise<ApiFootballStatusResponse> {
+  return apiFootballFetch<ApiFootballStatusResponse>("/status", {});
 }
 
 export interface ApiFootballStatisticsResponse {
