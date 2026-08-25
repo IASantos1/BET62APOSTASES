@@ -423,6 +423,46 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .selection-btn{flex:1;min-width:80px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 6px;text-align:center;cursor:pointer;font-size:.8rem}
 .selection-btn .sel-label{display:block;color:var(--muted);font-size:.68rem;text-transform:uppercase;margin-bottom:3px}
 .selection-btn .sel-odd{display:block;font-weight:700;font-variant-numeric:tabular-nums}
+/* Lista de mercados ("Todos"/filtrado): cada mercado é uma linha expandir/fechar sem caixa
+   retangular própria — pedido explícito do utilizador ("quero que cada fique sem essa base
+   retangular... mercado expandido e fecha, os 5 primeiros ficam abertos"), ver
+   buildMarketDisplayGroups()/renderMarketGroups() em app.js. */
+.ml-accordion{border-bottom:1px solid var(--border)}
+.ml-accordion:first-child{border-top:1px solid var(--border)}
+.ml-accordion-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 2px;cursor:pointer;font-weight:700;font-size:.86rem}
+.ml-chevron{color:var(--muted);font-size:.7rem;transition:transform .18s;flex-shrink:0}
+.ml-accordion.open .ml-chevron{transform:rotate(180deg)}
+.ml-accordion-body{display:none;padding:0 2px 16px}
+.ml-accordion.open .ml-accordion-body{display:block}
+.ml-accordion-body .selection-row + .selection-row{margin-top:8px}
+/* Mercado "Marcador": junta Marcador a Qualquer Momento/Primeiro/Último Marcador (3 mercados
+   brutos distintos) numa única tabela por jogador — ver buildMarcadorTable() em app.js. Cada
+   célula continua a submeter o mercado/seleção EXATOS de origem, nunca um mercado sintetizado. */
+.marcador-table{width:100%}
+.marcador-head{display:flex;align-items:center;gap:6px;font-size:.6rem;text-transform:uppercase;letter-spacing:.02em;color:var(--muted);font-weight:700;padding:0 2px 6px}
+.marcador-head .mc-player{flex:1}
+.marcador-head .mc-col{flex:0 0 70px;text-align:center}
+.marcador-row{display:flex;align-items:center;gap:6px;padding:7px 2px;border-bottom:1px solid var(--border)}
+.marcador-row:last-child{border-bottom:none}
+.marcador-row.mc-extra.hidden{display:none}
+.marcador-row .mc-player{flex:1;font-weight:700;font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.marcador-row .mc-col{flex:0 0 70px}
+.marcador-odd-btn{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:6px 4px;text-align:center;font-size:.76rem;font-weight:700;cursor:pointer}
+.marcador-odd-btn.picked{border-color:var(--red);background:rgba(230,48,39,.1);color:var(--red)}
+.marcador-odd-btn.na{cursor:default;color:var(--muted);background:transparent;border-style:dashed}
+.marcador-more{text-align:center;padding:10px 2px 2px;color:var(--red);font-weight:700;font-size:.8rem;cursor:pointer}
+/* "Melhores Escolhas": combinação da Bet Builder pré-preenchida com a seleção mais provável (odd
+   mais baixa) de 3 categorias reais deste jogo — nunca uma odd "boost"/promocional inventada, a
+   combinada mostrada é sempre o produto real das odds atuais. Ver buildFeaturedCombo() em app.js. */
+#featured-combo:empty{margin:0}
+.combo-title{font-family:'Bebas Neue',sans-serif;letter-spacing:.6px;font-size:.92rem;color:var(--muted);margin-bottom:8px}
+.combo-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 16px;margin-bottom:16px}
+.combo-leg{display:flex;align-items:baseline;gap:8px;font-size:.82rem;padding:7px 0;border-bottom:1px solid var(--border)}
+.combo-leg:last-of-type{border-bottom:none}
+.combo-leg-dot{width:6px;height:6px;border-radius:50%;background:var(--red);flex-shrink:0}
+.combo-leg-cat{color:var(--muted);font-size:.7rem;text-transform:uppercase;letter-spacing:.02em;flex-shrink:0}
+.combo-odd-row{display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:.88rem}
+.combo-odd-row b{color:var(--gold);font-size:1.15rem}
 .selection-btn.picked{border-color:var(--red);background:rgba(230,48,39,.1)}
 .selection-btn.picked .sel-odd{color:var(--red)}
 .selection-btn.suspended{cursor:not-allowed;opacity:.5;background:var(--surface2)}
@@ -1038,6 +1078,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
         <div class="section-title" id="market-title" style="margin-bottom:0">—</div>
     </div>
     <div class="match-tracker" id="match-tracker"></div>
+    <div id="featured-combo"></div>
     <div class="market-filter-bar" id="market-filter-bar"></div>
     <div id="market-groups"></div>
     <!-- ESTATÍSTICAS: substitui mercados/odds inline no centro da página quando aberta (ver
