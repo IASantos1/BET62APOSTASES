@@ -9,7 +9,7 @@ import { getHeadToHead, getPredictions, getStandings, type HeadToHeadMatch } fro
 import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent, getFullFixtureMapping } from "./mapping/service";
 import { getUnifiedMatchData } from "./unified/service";
 import { getSportmonksEventById, getSportmonksFootballPrematchDiagnosis } from "./sportmonks/prematch";
-import { fetchTodayRawFixtureForLiveDiagnosis } from "./sportmonks/client";
+import { fetchFixtureDetail, fetchTodayRawFixtureForLiveDiagnosis, normalizeFixtureDetail } from "./sportmonks/client";
 import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
 import { logger } from "../../lib/logger";
@@ -91,6 +91,22 @@ router.get(
 router.get(
   "/events/:id/refresh",
   asyncHandler(async (req, res) => {
+    // Jogos da Sportmonks (só futebol, FOOTBALL_PROVIDER=sportmonks) têm o seu próprio refresh —
+    // pedido explícito do utilizador ("as odds em ao vivo não estão atualizando"): ao abrir o
+    // Match Tracker, busca-se esse jogo sozinho (fetchFixtureDetail, mais leve do que esperar
+    // pelo ciclo de 15s da lista de Ao Vivo), em vez de cair nos fetchers da Pulsescore abaixo
+    // (que não reconhecem este formato de id). Sem mapeamento API-Football nem enriquecimento
+    // cross-bookmaker aqui — esses são conceitos só da Pulsescore.
+    if (req.params.id.startsWith("sportmonks:")) {
+      const fixtureId = Number(req.params.id.slice("sportmonks:".length));
+      if (!Number.isFinite(fixtureId)) throw Errors.badRequest("Id de evento Sportmonks inválido");
+      const detail = await fetchFixtureDetail(fixtureId);
+      const event = normalizeFixtureDetail(detail);
+      if (!event) throw Errors.notFound("Evento não encontrado na Sportmonks");
+      res.json({ event });
+      return;
+    }
+
     const sport = req.query.sport;
     if (typeof sport !== "string" || !ALL_SPORTS.includes(sport as Sport)) {
       throw Errors.badRequest("Parâmetro sport em falta ou inválido");

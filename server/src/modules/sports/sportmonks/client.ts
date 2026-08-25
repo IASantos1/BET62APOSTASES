@@ -417,6 +417,84 @@ export function normalizeLiveFixture(fixture: SportmonksLiveFixture, odds: LiveO
   };
 }
 
+interface SportmonksFixtureState {
+  short_name: string; // "NS" CONFIRMADO numa amostra real = "Not Started" (ver comentário abaixo)
+}
+interface SportmonksFixtureDetail {
+  id: number;
+  starting_at: string;
+  state?: SportmonksFixtureState;
+  participants?: SportmonksParticipant[];
+  league?: SportmonksLeague;
+  scores?: SportmonksLiveScore[];
+  periods?: SportmonksLivePeriod[];
+  odds?: SportmonksOdd[];
+}
+
+/**
+ * GET /fixtures/{id} — CONFIRMADO por uma amostra real completa (`include=state;participants;
+ * venue;scores;league;events...;predictions...`, sem `odds.market;odds.bookmaker` nessa amostra
+ * em concreto — pedido aqui na mesma, mesmo padrão de include já confirmado a funcionar nos
+ * outros endpoints da Sportmonks; se um dia se confirmar que não devolve odds neste endpoint,
+ * fica só sem mercados, nunca inventa). Usado para o refresh "abrir o Match Tracker" de UM jogo
+ * específico (mesma ideia do refresh da Pulsescore em pulsescore/client.ts) — mais leve do que
+ * pedir o dia inteiro (fetchFixturesBetween) só para atualizar um jogo.
+ *
+ * `state.short_name` CONFIRMADO: "NS" = "Not Started" — usado como sinal extra (par com a hora)
+ * só para reforçar "ainda não começou"; outros valores de `state` NUNCA foram confirmados (ver
+ * aviso no comentário do módulo), por isso um jogo já começado continua classificado só pela hora,
+ * tal como em normalizeFixture()/normalizeLiveFixture().
+ */
+export async function fetchFixtureDetail(fixtureId: number): Promise<SportmonksFixtureDetail> {
+  const data = await sportmonksFetch<{ data: SportmonksFixtureDetail }>(`/fixtures/${fixtureId}`, {
+    include: "state;participants;league.country;scores;periods;odds.market;odds.bookmaker",
+    filters: `bookmakers:${env.SPORTMONKS_BOOKMAKER_ID}`,
+  });
+  return data.data;
+}
+
+/** Normaliza a resposta de fetchFixtureDetail() para LiveEvent — usado só para o refresh on-demand
+ * de UM jogo (ver routes.ts, GET /events/:id/refresh). */
+export function normalizeFixtureDetail(fixture: SportmonksFixtureDetail): LiveEvent | null {
+  const home = fixture.participants?.find((p) => p.meta?.location === "home");
+  const away = fixture.participants?.find((p) => p.meta?.location === "away");
+  if (!home || !away) return null;
+
+  const startTimeIso = `${fixture.starting_at.trim().replace(" ", "T")}Z`;
+  const hasKickedOff = new Date(startTimeIso).getTime() <= Date.now();
+  const isScheduled = fixture.state?.short_name === "NS" || !hasKickedOff;
+
+  const currentScores = (fixture.scores ?? []).filter((s) => s.description === "CURRENT");
+  const homeScore = currentScores.find((s) => s.score.participant === "home")?.score.goals;
+  const awayScore = currentScores.find((s) => s.score.participant === "away")?.score.goals;
+
+  const periods = fixture.periods ?? [];
+  const activePeriod = periods.find((p) => p.ended === null) ?? periods[periods.length - 1];
+  const minuteOrPeriod = !isScheduled && activePeriod ? `${activePeriod.minutes}'` : "";
+
+  return {
+    id: `sportmonks:${fixture.id}`,
+    sport: "football",
+    league: fixture.league?.name ?? "Futebol",
+    home: home.name,
+    away: away.name,
+    homeScore: isScheduled ? undefined : homeScore,
+    awayScore: isScheduled ? undefined : awayScore,
+    minuteOrPeriod,
+    // "live" para qualquer jogo já começado sem "NS" — sem confirmação de outros valores de
+    // state para "terminado" (ver aviso acima), esta função é só para refresh on-demand ao abrir
+    // um jogo que o frontend já sabe (pela secção onde estava) que é pré-jogo ou ao vivo; o caso
+    // raro de reabrir mesmo no instante em que termina fica coberto pelo merge do frontend, que
+    // nunca troca mercados já mostrados por uma resposta mais pobre.
+    status: isScheduled ? "scheduled" : "live",
+    odds: finalizeMarketOrder(groupOddsIntoMarkets(fixture.odds)),
+    updatedAt: new Date().toISOString(),
+    source: "sportmonks",
+    startTime: startTimeIso,
+    country: fixture.league?.country?.iso2,
+  };
+}
+
 /**
  * Diagnóstico (ver routes.ts, GET /api/sports/sportmonks-live-debug) — duas amostras BRUTAS
  * (sem normalizar, todos os campos tal como a Sportmonks manda), num único pedido:
