@@ -2690,13 +2690,13 @@ async function renderStandings(e) {
     el.innerHTML = `
       <div class="standings-table">
         <div class="standings-row standings-header">
-          <span class="st-rank">#</span><span class="st-team">Equipa</span><span class="st-pts">Pts</span><span class="st-pj">J</span><span class="st-gd">SG</span>
+          <span class="st-rank">#</span><span class="st-team">Equipa</span><span class="st-pts">Pts</span><span class="st-pj">J</span><span class="st-gd">SG</span><span class="st-form"></span>
         </div>
         ${standings
           .map(
             (r) => `
-          <div class="standings-row${r.team === e.home || r.team === e.away ? " highlight" : ""}">
-            <span class="st-rank">${r.rank}</span><span class="st-team">${r.team}</span><span class="st-pts">${r.points}</span><span class="st-pj">${r.played}</span><span class="st-gd">${r.goalsDiff > 0 ? "+" : ""}${r.goalsDiff}</span>
+          <div class="standings-row${r.team === e.home || r.team === e.away ? " highlight" : ""}"${standingsZoneStyle(r.zoneLabel)}>
+            <span class="st-rank">${r.rank}</span><span class="st-team">${r.team}</span><span class="st-pts">${r.points}</span><span class="st-pj">${r.played}</span><span class="st-gd">${r.goalsDiff > 0 ? "+" : ""}${r.goalsDiff}</span><span class="st-form">${Array.isArray(r.form) ? r.form.map(formDot).join("") : ""}</span>
           </div>`
           )
           .join("")}
@@ -2704,6 +2704,26 @@ async function renderStandings(e) {
   } catch {
     el.innerHTML = '<div class="empty-note">Não foi possível carregar a classificação</div>';
   }
+}
+
+// Cor da faixa lateral por zona da classificação (Sportmonks `rule.type.name`, ex: "CONMEBOL
+// Libertadores", "CONMEBOL Sudamericana", "Relegation") — reconhecimento por palavra-chave, mesmo
+// padrão heurístico já usado em MARKET_FILTER_CATEGORIES abaixo. Linhas sem zona (`zoneLabel`
+// undefined, meio da tabela) ficam sem faixa nenhuma.
+function standingsZoneStyle(zoneLabel) {
+  if (!zoneLabel) return "";
+  let color = null;
+  if (/relegation/i.test(zoneLabel)) color = "var(--red)";
+  else if (/libertadores/i.test(zoneLabel)) color = "var(--gold)";
+  else if (/sudamericana/i.test(zoneLabel)) color = "#3b82f6";
+  return color ? ` style="border-left:3px solid ${color}"` : "";
+}
+
+// Bolinha de forma recente (Sportmonks, "W"/"D"/"L") — só aparece quando a fonte devolve o campo
+// (Sportmonks); jogos da API-Football continuam sem esta coluna, exatamente como antes.
+function formDot(letter) {
+  const cls = letter === "W" ? "st-form-dot-w" : letter === "L" ? "st-form-dot-l" : "st-form-dot-d";
+  return `<span class="st-form-dot ${cls}"></span>`;
 }
 
 // Artilheiros da época via Sportmonks (só jogos da Sportmonks — ver GET /events/:id/topscorers)

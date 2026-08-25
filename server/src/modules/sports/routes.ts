@@ -15,7 +15,7 @@ import {
   fetchInplayOddsForFixture,
   fetchTodayRawFixtureForLiveDiagnosis,
   getHeadToHeadForFixture,
-  getStandingsByRound,
+  getStandingsBySeason,
   getTeamFormForFixture,
   getTopscorersBySeason,
   normalizeFixtureDetail,
@@ -380,10 +380,13 @@ router.get(
 );
 
 // Classificação da liga do evento — só futebol. Jogos da Sportmonks (id "sportmonks:...") usam a
-// classificação NATIVA da Sportmonks (GET /standings/rounds/{roundId}, ver sportmonks/client.ts) —
-// mais rica (inclui Expected Points/xPTS) e sem depender do motor de mapeamento por nome. Os
-// restantes (Pulsescore) continuam a usar a API-Football, resolvendo a liga pelo motor de
-// mapeamento (mapping/service.ts::resolveLeagueForEvent) em vez de pesquisar o nome a cada pedido.
+// classificação NATIVA da Sportmonks (GET /standings/seasons/{seasonId}, ver sportmonks/client.ts)
+// — mais rica (inclui Expected Points/xPTS, forma recente e zona de qualificação/despromoção) e
+// sem depender do motor de mapeamento por nome; usa a época inteira (não a ronda do jogo em
+// concreto) para mostrar sempre a tabela mais atual, mesmo ao abrir um jogo já terminado há
+// semanas. Os restantes (Pulsescore) continuam a usar a API-Football, resolvendo a liga pelo motor
+// de mapeamento (mapping/service.ts::resolveLeagueForEvent) em vez de pesquisar o nome a cada
+// pedido.
 router.get(
   "/events/:id/standings",
   asyncHandler(async (req, res) => {
@@ -395,7 +398,7 @@ router.get(
       const fixtureId = Number(req.params.id.slice("sportmonks:".length));
       const ids = Number.isFinite(fixtureId) ? await resolveRoundAndSeasonId(fixtureId).catch(() => null) : null;
       if (!ids) return res.json({ standings: [] });
-      const rows = await getStandingsByRound(ids.roundId);
+      const rows = await getStandingsBySeason(ids.seasonId);
       return res.json({ standings: rows.map(normalizeStandingsRow) });
     }
 

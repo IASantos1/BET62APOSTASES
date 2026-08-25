@@ -762,15 +762,27 @@ async function resolveTeamIds(fixtureId: number): Promise<{ homeTeamId: number; 
   return resolved;
 }
 
-// --- Classificação (/standings/rounds/{roundId}) — CONFIRMADO por uma amostra real completa
-// colada pelo utilizador (ronda 396700, Brasileirão Série A, 20 equipas, Palmeiras 1º com 48pts).
-// Forma de cada linha: `{id, league_id, season_id, stage_id, round_id, participant_id, position,
-// points, result, details: [{type_id, value, type: {id, name, code, developer_name, model_type,
-// stat_group}}], participant: {id, name, short_code, image_path}}`. `details` traz uma entrada por
-// estatística — identificada pelo `type.developer_name` (nunca pela posição no array, que a
-// amostra real não garante fixa); os nomes confirmados usados abaixo (OVERALL_MATCHES,
-// OVERALL_WINS, OVERALL_DRAWS, OVERALL_LOST, OVERALL_SCORED, OVERALL_CONCEDED,
-// OVERALL_GOAL_DIFFERENCE, EXPECTED_POINTS) vieram todos dessa mesma amostra.
+// --- Classificação (/standings/seasons/{seasonId}) — CONFIRMADO por DUAS amostras reais coladas
+// pelo utilizador: primeiro `/standings/rounds/{roundId}` (ronda 396700, sem `form`/`rule`), depois
+// `/standings/seasons/{seasonId}?include=participant;form;league;stage;group;details.type;
+// rule.type` (época 26763, mesmas 20 equipas). Trocado de rounds para seasons porque rounds devolve
+// a tabela TAL COMO ESTAVA naquela ronda específica (a do jogo que originou o pedido, ver
+// resolveRoundAndSeasonId) — para um jogo de uma ronda já passada isso mostraria uma tabela
+// desatualizada, não a classificação atual; seasons devolve sempre a tabela mais recente da época
+// inteira, o que é o que faz sentido numa aba "Classificação". Forma de cada linha: `{id,
+// league_id, season_id, stage_id, round_id, participant_id, position, points, result, details:
+// [{type_id, value, type: {developer_name, ...}}], participant: {id, name, short_code,
+// image_path}, form: [{fixture_id, form: "W"|"D"|"L", sort_order}], rule: {type: {name,
+// developer_name}} | null}`. `details` identifica-se por `type.developer_name` (nunca pela posição
+// no array); os nomes confirmados usados abaixo (OVERALL_MATCHES, OVERALL_WINS, OVERALL_DRAWS,
+// OVERALL_LOST, OVERALL_SCORED, OVERALL_CONCEDED, OVERALL_GOAL_DIFFERENCE, EXPECTED_POINTS) vieram
+// da amostra de rounds; a de seasons trouxe os mesmos nomes outra vez, confirmando que são
+// estáveis entre os dois endpoints. `form` vem ordenado por `sort_order` CRESCENTE = jogo mais
+// ANTIGO primeiro (confirmado comparando sort_order 1 com o fixture_id de uma ronda inicial da
+// época, e sort_order mais alto com uma ronda recente) — por isso pega-se nos ÚLTIMOS elementos do
+// array (maior sort_order), não nos primeiros, para os jogos mais recentes. `rule` identifica a
+// zona da tabela (`type.name`, ex: "CONMEBOL Libertadores", "Relegation") — `null` para posições
+// sem zona associada (meio da tabela), confirmado nas próprias linhas 12/13/14/15/16 da amostra.
 interface SportmonksStandingDetailType {
   id: number;
   name: string;
@@ -787,6 +799,18 @@ interface SportmonksStandingParticipant {
   short_code?: string;
   image_path?: string;
 }
+interface SportmonksStandingFormEntry {
+  fixture_id: number;
+  form: string; // "W" | "D" | "L" — CONFIRMADO
+  sort_order: number;
+}
+interface SportmonksStandingRuleType {
+  name: string;
+  developer_name: string;
+}
+interface SportmonksStandingRule {
+  type?: SportmonksStandingRuleType;
+}
 interface SportmonksStandingRow {
   id: number;
   league_id: number;
@@ -798,11 +822,13 @@ interface SportmonksStandingRow {
   result?: string;
   details?: SportmonksStandingDetail[];
   participant?: SportmonksStandingParticipant;
+  form?: SportmonksStandingFormEntry[];
+  rule?: SportmonksStandingRule | null;
 }
 
-async function fetchStandingsByRound(roundId: number): Promise<SportmonksStandingRow[]> {
-  const data = await sportmonksFetch<{ data: SportmonksStandingRow[] }>(`/standings/rounds/${roundId}`, {
-    include: "stage;league;details.type;participant",
+async function fetchStandingsBySeason(seasonId: number): Promise<SportmonksStandingRow[]> {
+  const data = await sportmonksFetch<{ data: SportmonksStandingRow[] }>(`/standings/seasons/${seasonId}`, {
+    include: "participant;form;league;stage;group;details.type;rule.type",
   });
   return data.data ?? [];
 }
@@ -810,12 +836,12 @@ async function fetchStandingsByRound(roundId: number): Promise<SportmonksStandin
 const standingsCache = new Map<number, { rows: SportmonksStandingRow[]; fetchedAt: number }>();
 const STANDINGS_CACHE_TTL_MS = 5 * 60_000; // mesmo TTL já usado para a classificação da API-Football
 
-/** Classificação de UMA ronda, com cache curta (mesmo padrão de getRoundEvents acima). */
-export async function getStandingsByRound(roundId: number): Promise<SportmonksStandingRow[]> {
-  const cached = standingsCache.get(roundId);
+/** Classificação de UMA época, com cache curta (mesmo padrão de getRoundEvents acima). */
+export async function getStandingsBySeason(seasonId: number): Promise<SportmonksStandingRow[]> {
+  const cached = standingsCache.get(seasonId);
   if (cached && Date.now() - cached.fetchedAt < STANDINGS_CACHE_TTL_MS) return cached.rows;
-  const rows = await fetchStandingsByRound(roundId);
-  standingsCache.set(roundId, { rows, fetchedAt: Date.now() });
+  const rows = await fetchStandingsBySeason(seasonId);
+  standingsCache.set(seasonId, { rows, fetchedAt: Date.now() });
   return rows;
 }
 
@@ -832,17 +858,24 @@ export interface StandingsTableRow {
   goalsAgainst?: number;
   goalsDiff?: number;
   expectedPoints?: number;
+  form?: Array<"W" | "D" | "L">; // últimos 5 jogos, mais recente primeiro
+  zoneLabel?: string; // ex: "CONMEBOL Libertadores", "Relegation" — undefined quando não há zona
 }
 
 function standingDetailValue(row: SportmonksStandingRow, developerName: string): number | undefined {
   return row.details?.find((d) => d.type?.developer_name === developerName)?.value;
 }
 
-/** Normaliza uma linha de /standings/rounds/{id} para o formato consumido pelo frontend — mesmos
+/** Normaliza uma linha de /standings/seasons/{id} para o formato consumido pelo frontend — mesmos
  * nomes de campo já usados pela rota equivalente da API-Football (GET /events/:id/standings),
  * para o frontend (renderStandings() em app.js) não precisar de saber qual das duas fontes está a
  * usar. */
 export function normalizeStandingsRow(row: SportmonksStandingRow): StandingsTableRow {
+  const form = [...(row.form ?? [])]
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .slice(-5)
+    .reverse()
+    .map((f) => f.form as "W" | "D" | "L");
   return {
     rank: row.position,
     team: row.participant?.name ?? `Equipa ${row.participant_id}`,
@@ -856,6 +889,8 @@ export function normalizeStandingsRow(row: SportmonksStandingRow): StandingsTabl
     goalsAgainst: standingDetailValue(row, "OVERALL_CONCEDED"),
     goalsDiff: standingDetailValue(row, "OVERALL_GOAL_DIFFERENCE"),
     expectedPoints: standingDetailValue(row, "EXPECTED_POINTS"),
+    form: form.length ? form : undefined,
+    zoneLabel: row.rule?.type?.name,
   };
 }
 
@@ -914,7 +949,7 @@ async function fetchTopscorersBySeason(seasonId: number): Promise<SportmonksTops
 const topscorersCache = new Map<number, { entries: SportmonksTopscorerEntry[]; fetchedAt: number }>();
 const TOPSCORERS_CACHE_TTL_MS = 5 * 60_000;
 
-/** Artilheiros de UMA época, com cache curta (mesmo padrão de getStandingsByRound acima). */
+/** Artilheiros de UMA época, com cache curta (mesmo padrão de getStandingsBySeason acima). */
 export async function getTopscorersBySeason(seasonId: number): Promise<SportmonksTopscorerEntry[]> {
   const cached = topscorersCache.get(seasonId);
   if (cached && Date.now() - cached.fetchedAt < TOPSCORERS_CACHE_TTL_MS) return cached.entries;
@@ -1046,7 +1081,7 @@ const teamFormCache = new Map<number, { data: { recent: TeamFormMatch[]; upcomin
 const TEAM_FORM_CACHE_TTL_MS = 5 * 60_000;
 
 /** Últimos e próximos jogos de UMA equipa (Sportmonks team id), com cache curta (mesmo padrão de
- * getStandingsByRound/getTopscorersBySeason acima). */
+ * getStandingsBySeason/getTopscorersBySeason acima). */
 export async function getTeamForm(teamId: number): Promise<{ recent: TeamFormMatch[]; upcoming: TeamFormMatch[] }> {
   const cached = teamFormCache.get(teamId);
   if (cached && Date.now() - cached.fetchedAt < TEAM_FORM_CACHE_TTL_MS) return cached.data;
