@@ -2909,9 +2909,12 @@ function marketSelectionsLookPlausible(basePt, selectionLabels, home, away) {
     return labels.every((l) => ["1", "x", "2", "home", "away", "draw", "empate", "casa", "fora"].includes(l) || l === homeL || l === awayL);
   }
   if (basePt === "Dupla Hipótese") {
+    // "and" (Pulsescore) e "or" (Sportmonks, confirmado numa amostra real: "Abha or Draw") são os
+    // dois formatos vistos — ver mesmo ajuste em translateSelectionLabel() e em
+    // resolveDoubleChance() no backend (settlementRules.ts).
     return labels.every((l) => {
       const compact = l.replace(/\s+/g, "");
-      return ["1x", "x1", "x2", "2x", "12"].includes(compact) || /^.+\s+and\s+.+$/.test(l);
+      return ["1x", "x1", "x2", "2x", "12"].includes(compact) || /^.+\s+(and|or)\s+.+$/i.test(l);
     });
   }
   if (basePt === "Total da Equipa" || /^mais\/menos de/i.test(basePt)) {
@@ -2970,13 +2973,15 @@ function translateSelectionLabel(rawLabel) {
     const side = handicapMatch[1].toLowerCase() === "home" ? "Casa" : "Fora";
     return `${side} ${handicapMatch[2]}`;
   }
-  // Dupla Hipótese: rótulos reais vêm como "<Equipa> and Draw" / "<Equipa1> and <Equipa2>" —
-  // só a palavra de ligação ("and"→"e") e "Draw"→"Empate" são traduzidos, os nomes das equipas
-  // (não vocabulário fixo) passam exatamente como vieram.
-  const doubleChanceMatch = trimmed.match(/^(.+?)\s+and\s+(.+)$/i);
+  // Dupla Hipótese: rótulos reais vêm como "<Equipa> and Draw" / "<Equipa1> and <Equipa2>"
+  // (Pulsescore, confirmado) ou "<Equipa> or Draw" (Sportmonks, confirmado numa amostra real de
+  // produção: "Abha or Draw") — só a palavra de ligação ("and"→"e"/"or"→"ou") e "Draw"→"Empate"
+  // são traduzidos, os nomes das equipas (não vocabulário fixo) passam exatamente como vieram.
+  const doubleChanceMatch = trimmed.match(/^(.+?)\s+(and|or)\s+(.+)$/i);
   if (doubleChanceMatch) {
     const side = (s) => (/^draw$/i.test(s) ? "Empate" : s);
-    return `${side(doubleChanceMatch[1])} e ${side(doubleChanceMatch[2])}`;
+    const connector = doubleChanceMatch[2].toLowerCase() === "or" ? "ou" : "e";
+    return `${side(doubleChanceMatch[1])} ${connector} ${side(doubleChanceMatch[3])}`;
   }
   return trimmed;
 }

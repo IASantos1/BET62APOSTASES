@@ -41,7 +41,11 @@ export function classifyMarket(market: string): MarketCategory {
   // "Home -1.5", "-1.5 Casa"...) nunca foi confirmado contra uma amostra real da Pulsescore —
   // resolver às cegas arriscaria interpretar mal o sinal/lado. NEEDS_REVIEW até haver amostra.
   if (/handicap|spread|asian/i.test(market)) return "UNKNOWN";
-  if (/match odds|\b1x2\b|to win|winner|money.?line|full time result|3.?way/i.test(market)) return "MATCH_RESULT";
+  // "full.?time" (não só "full time") — confirmado numa amostra real da Sportmonks em produção
+  // (ver web/app.js::translateMarketBaseName, mesmo ajuste): o mercado principal (1X2) chama-se
+  // "Fulltime Result", uma só palavra. Sem isto, NENHUMA aposta de Resultado num jogo da
+  // Sportmonks liquidava sozinha — caía sempre em UNKNOWN/UNRESOLVABLE.
+  if (/match odds|\b1x2\b|to win|winner|money.?line|full.?time result|3.?way/i.test(market)) return "MATCH_RESULT";
   return "UNKNOWN";
 }
 
@@ -77,7 +81,11 @@ export function resolveDoubleChance(selection: string, home: string, away: strin
   // "<Equipa> and Draw" / "<Equipa1> and <Equipa2>" — a Pulsescore não manda "1X"/"X2"/"12"
   // compacto, manda os dois lados por extenso ligados por "and". Sem isto NENHUMA aposta real de
   // Dupla Hipótese teria conseguido liquidar sozinha (caía sempre em UNRESOLVABLE acima).
-  const m = selection.match(/^(.+?)\s+and\s+(.+)$/i);
+  //
+  // A Sportmonks confirmou-se numa amostra real em produção a usar "or" em vez de "and" (ex:
+  // "Abha or Draw", "Abha or Al Khaleej Saihat") para o mesmo mercado — aceite aqui também, sem
+  // tirar o suporte a "and" da Pulsescore.
+  const m = selection.match(/^(.+?)\s+(?:and|or)\s+(.+)$/i);
   if (m) {
     const norm = (s: string) => s.trim().toLowerCase();
     const isDrawToken = (s: string) => s === "draw" || s === "empate";
