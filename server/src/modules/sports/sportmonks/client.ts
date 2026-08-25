@@ -1070,3 +1070,77 @@ export async function getTeamFormForFixture(
   ]);
   return { home, away };
 }
+
+// --- Confrontos diretos / H2H (/fixtures/head-to-head/{team1}/{team2}) — CONFIRMADO por uma
+// amostra real completa colada pelo utilizador (São Paulo 3496 vs Chapecoense 710). Devolve as
+// fixtures mais recentes entre as duas equipas, com `participants` (meta.location/winner),
+// `scores` (description "CURRENT") e `league.name` — mesmas formas já confirmadas e usadas no
+// resto do módulo (SportmonksParticipant/SportmonksLiveScore/SportmonksLeague), reutilizadas tal
+// como estão. A forma normalizada abaixo (HeadToHeadRow) é DE PROPÓSITO idêntica à já devolvida
+// pela rota H2H da API-Football (ver routes.ts, HeadToHeadMatch em apifootball/client.ts) — o
+// frontend (renderH2H() em app.js) já sabe consumir esse formato, sem precisar de nenhuma
+// alteração.
+interface SportmonksH2HFixture {
+  id: number;
+  starting_at: string;
+  participants?: SportmonksParticipant[];
+  scores?: SportmonksLiveScore[];
+  league?: SportmonksLeague;
+}
+
+async function fetchHeadToHead(team1Id: number, team2Id: number): Promise<SportmonksH2HFixture[]> {
+  const data = await sportmonksFetch<{ data: SportmonksH2HFixture[] }>(`/fixtures/head-to-head/${team1Id}/${team2Id}`, {
+    include: "participants;scores;league",
+  });
+  return data.data ?? [];
+}
+
+export interface HeadToHeadRow {
+  date: string;
+  homeTeam: string;
+  awayTeam: string;
+  homeGoals: number | null;
+  awayGoals: number | null;
+  competition: string;
+}
+
+function normalizeH2HFixture(fixture: SportmonksH2HFixture): HeadToHeadRow | null {
+  const home = fixture.participants?.find((p) => p.meta?.location === "home");
+  const away = fixture.participants?.find((p) => p.meta?.location === "away");
+  if (!home || !away) return null;
+  const currentScores = (fixture.scores ?? []).filter((s) => s.description === "CURRENT");
+  return {
+    date: `${fixture.starting_at.trim().replace(" ", "T")}Z`,
+    homeTeam: home.name,
+    awayTeam: away.name,
+    homeGoals: currentScores.find((s) => s.participant_id === home.id)?.score.goals ?? null,
+    awayGoals: currentScores.find((s) => s.participant_id === away.id)?.score.goals ?? null,
+    competition: fixture.league?.name ?? "Futebol",
+  };
+}
+
+const h2hCache = new Map<string, { rows: HeadToHeadRow[]; fetchedAt: number }>();
+const H2H_CACHE_TTL_MS = 5 * 60_000;
+
+async function getHeadToHeadCached(team1Id: number, team2Id: number): Promise<HeadToHeadRow[]> {
+  const key = [team1Id, team2Id].sort((a, b) => a - b).join(":");
+  const cached = h2hCache.get(key);
+  if (cached && Date.now() - cached.fetchedAt < H2H_CACHE_TTL_MS) return cached.rows;
+  const fixtures = await fetchHeadToHead(team1Id, team2Id);
+  const rows = fixtures
+    .map(normalizeH2HFixture)
+    .filter((r): r is HeadToHeadRow => r !== null)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  h2hCache.set(key, { rows, fetchedAt: Date.now() });
+  return rows;
+}
+
+/** Confrontos diretos das duas equipas de uma fixture — resolve os IDs Sportmonks (resolveTeamIds
+ * acima) e pede o histórico entre elas. Sem os IDs resolvidos, devolve lista vazia (nunca inventa
+ * confrontos). */
+export async function getHeadToHeadForFixture(fixtureId: number, limit = 5): Promise<HeadToHeadRow[]> {
+  const teamIds = await resolveTeamIds(fixtureId);
+  if (!teamIds) return [];
+  const rows = await getHeadToHeadCached(teamIds.homeTeamId, teamIds.awayTeamId);
+  return rows.slice(0, limit);
+}

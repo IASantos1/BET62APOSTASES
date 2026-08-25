@@ -14,6 +14,7 @@ import {
   fetchFixtureDetail,
   fetchInplayOddsForFixture,
   fetchTodayRawFixtureForLiveDiagnosis,
+  getHeadToHeadForFixture,
   getStandingsByRound,
   getTeamFormForFixture,
   getTopscorersBySeason,
@@ -329,14 +330,23 @@ router.get(
   })
 );
 
-// Confrontos diretos (H2H) via API-Football — resolve as duas equipas através do motor de
-// mapeamento persistente (mapping/service.ts::resolveTeamsForEvent, ver docs/TEAM_MAPPING.md),
-// não por pesquisa de nome direta a cada pedido.
+// Confrontos diretos (H2H) — jogos da Sportmonks usam o endpoint NATIVO (GET /fixtures/head-to-
+// head/{team1}/{team2}, ver sportmonks/client.ts), sem depender do motor de mapeamento por nome.
+// Os restantes (Pulsescore) continuam na API-Football, resolvendo as duas equipas através do
+// motor de mapeamento persistente (mapping/service.ts::resolveTeamsForEvent, ver
+// docs/TEAM_MAPPING.md), não por pesquisa de nome direta a cada pedido.
 router.get(
   "/events/:id/h2h",
   asyncHandler(async (req, res) => {
     const event = findCachedEvent(req.params.id);
     if (!event) throw Errors.notFound("Evento não encontrado");
+
+    if (req.params.id.startsWith("sportmonks:")) {
+      const fixtureId = Number(req.params.id.slice("sportmonks:".length));
+      const matches = Number.isFinite(fixtureId) ? await getHeadToHeadForFixture(fixtureId).catch(() => []) : [];
+      return res.json({ matches });
+    }
+
     const teams = await resolveTeamsForEvent(event);
     if (!teams) return res.json({ matches: [] });
     const data = await getHeadToHead(teams.homeTeamId, teams.awayTeamId, { last: 5 });
