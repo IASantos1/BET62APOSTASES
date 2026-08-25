@@ -329,6 +329,17 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .mt-pulse-marker.away .mt-pulse-icon{border-color:var(--gold)}
 .mt-pulse-name{font-size:.56rem;font-weight:700;color:var(--muted);white-space:nowrap;max-width:64px;overflow:hidden;text-overflow:ellipsis}
 .mt-pulse-labels{display:flex;justify-content:space-between;font-size:.62rem;color:var(--muted);margin-top:2px;padding:0 2px}
+/* Match Tracker: mini campo 2D com a posição real da bola (Sportmonks ballCoordinates). Relva
+   fica sempre verde (convenção universal de campo, independente do tema claro/escuro do site) — a
+   bola usa --gold, a cor de destaque própria da app. */
+.tracker-box{max-width:480px}
+.tracker-body{padding:16px}
+.tracker-teams{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700;font-size:.85rem;margin-bottom:12px}
+.tracker-teams #tracker-score{font-family:'Bebas Neue',sans-serif;font-size:1.3rem;color:var(--gold)}
+.tracker-pitch-svg{width:100%;height:auto;display:block;border-radius:10px;background:repeating-linear-gradient(90deg,#1c7a34 0 10%,#186c2d 10% 20%)}
+.tp-line{fill:none;stroke:rgba(255,255,255,.55);stroke-width:0.4}
+.tp-spot{fill:rgba(255,255,255,.55)}
+.tracker-pitch-caption{text-align:center;color:var(--muted);font-size:.68rem;margin-top:8px}
 /* "Jogo": comparação em barra dupla lado a lado (golos/posse/remates...), casa à esquerda em
    --red, fora à direita em --gold — paleta própria da app, nunca as cores da referência. */
 .jogo-stat-row{margin-bottom:14px}
@@ -1170,12 +1181,15 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 
 <!-- MATCH TRACKER MODAL (mini campo 2D — ainda por construir, só o ponto de entrada) -->
 <div class="auth-overlay" id="tracker-modal">
-    <div class="auth-box">
+    <div class="auth-box tracker-box">
         <div class="auth-tabs"><div class="auth-tab active" style="cursor:default"><span class="pitch-icon" style="margin-right:6px"></span>Match Tracker</div></div>
-        <div class="auth-body" style="text-align:center;padding:40px 24px">
-            <div style="font-size:2rem;margin-bottom:10px">🛠️</div>
-            <div style="font-weight:700;margin-bottom:6px">Brevemente</div>
-            <div style="color:var(--muted);font-size:.85rem">O mini campo em 2D com a posição da jogada em tempo real está a caminho.</div>
+        <div class="auth-body tracker-body">
+            <div class="tracker-teams">
+                <span id="tracker-home">—</span>
+                <span id="tracker-score">vs</span>
+                <span id="tracker-away">—</span>
+            </div>
+            <div id="tracker-pitch-wrap"></div>
             <button class="btn-outline" onclick="closeTracker()">Fechar</button>
         </div>
     </div>

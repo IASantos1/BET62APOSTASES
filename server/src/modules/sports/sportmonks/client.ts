@@ -525,6 +525,60 @@ export async function fetchFixtureDetail(fixtureId: number): Promise<SportmonksF
   return data.data;
 }
 
+// GET /fixtures/{id}?include=ballCoordinates — CONFIRMADO por amostra real completa colada pelo
+// utilizador (fixture 19568502, Chelsea vs FC Barcelona, Champions League 2025). A resposta traz
+// a chave em minúsculas `ballcoordinates` (o include pede-se `ballCoordinates`, mas o campo devolvido
+// não segue esse camelCase). `x` cobre o comprimento do campo (0.01 = uma baliza, 1.01 = a outra),
+// `y` a largura (-0.02 a 1.02, sideline a sideline) — ambos strings, tal como as odds. `id` é
+// sequencial (a amostra real tem os ids a descer exatamente junto com o `timer`: 258909457@93:32,
+// 258909452@92:49, ..., 258909397@92:09) — usa-se isto para saber qual é o ponto mais recente em vez
+// de tentar comparar `timer` (que reinicia a cada parte, formato nunca confirmado a atravessar esse
+// limite). Documentação diz "disponível para ligas selecionadas" — jogo sem esta tecnologia de
+// tracking devolve lista vazia, nunca um erro.
+export interface SportmonksBallCoordinate {
+  id: number;
+  fixture_id: number;
+  period_id: number;
+  timer: string; // "93:32" (MM:SS)
+  x: string;
+  y: string;
+}
+
+/**
+ * Pedido à parte de fetchFixtureDetail() — só com o include `ballCoordinates`, sem juntar
+ * participants/odds/events, porque só é chamado quando o utilizador abre o Match Tracker de UM
+ * jogo específico (não faz parte do ciclo de poll geral do Ao Vivo em live.ts, que já tem vários
+ * jogos em simultâneo e não precisa desta granularidade — até ~1000 pontos por jogo — para todos).
+ */
+export async function fetchBallCoordinates(fixtureId: number): Promise<SportmonksBallCoordinate[]> {
+  const data = await sportmonksFetch<{ data: { ballcoordinates?: SportmonksBallCoordinate[] } }>(`/fixtures/${fixtureId}`, {
+    include: "ballCoordinates",
+  });
+  return data.data.ballcoordinates ?? [];
+}
+
+export interface BallPositionPoint {
+  timer: string;
+  x: number; // 0-1, encostado às margens (ver clampUnit abaixo)
+  y: number; // 0-1
+}
+
+function clampUnit(n: number): number {
+  if (!Number.isFinite(n)) return 0.5;
+  return Math.min(1, Math.max(0, n));
+}
+
+/** Do mais recente para o mais antigo (por `id`, ver comentário de SportmonksBallCoordinate acima),
+ * limitado a `limit` pontos — o mais recente vira a posição atual da bola no mini campo, os
+ * restantes um rasto a desvanecer. `x`/`y` fora de [0,1] (a amostra real confirma valores até 1.01/
+ * -0.02) ficam encostados à margem em vez de desenhados fora do campo. */
+export function normalizeBallPositions(coordinates: SportmonksBallCoordinate[], limit = 12): BallPositionPoint[] {
+  return [...coordinates]
+    .sort((a, b) => b.id - a.id)
+    .slice(0, limit)
+    .map((c) => ({ timer: c.timer, x: clampUnit(parseFloat(c.x)), y: clampUnit(parseFloat(c.y)) }));
+}
+
 export interface MatchEventRow {
   minute: string; // "76'" ou "45+4'" (tempo adicionado)
   kind: "goal" | "yellowcard" | "redcard" | "substitution" | "var" | "other";
