@@ -232,7 +232,12 @@ class PulsescoreWsManager extends EventEmitter {
     let targets: Sport[];
     try {
       const liveSports = await fetchLiveSportsUnionAllBookmakers();
-      targets = liveSports.slice(0, this.maxConnections);
+      // Futebol Ao Vivo é dono exclusivo da Sportmonks quando o interruptor está ligado (ver
+      // sportmonks/live.ts) — sem isto, o WebSocket ligava-se a futebol na mesma (é quase sempre
+      // o desporto com mais eventos) e ficava a competir com o poller da Sportmonks pelo mesmo
+      // snapshot em hybridService.ts.
+      const candidates = env.FOOTBALL_PROVIDER === "sportmonks" ? liveSports.filter((s) => s !== "football") : liveSports;
+      targets = candidates.slice(0, this.maxConnections);
     } catch (err) {
       logger.warn({ err }, "Pulsescore WS: falha ao decidir a que desportos ligar, a manter ligações atuais");
       return;

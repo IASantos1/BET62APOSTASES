@@ -27,13 +27,14 @@ function dateRangeFromToday(days: number): { start: string; end: string } {
 async function fetchAndNormalize(): Promise<LiveEvent[]> {
   const { start, end } = dateRangeFromToday(PREMATCH_WINDOW_DAYS);
   const events = await fetchFixturesBetween(start, end);
-  return (
-    events
-      .filter((e) => e.status === "scheduled")
-      // Jogos sem odds do bookmaker filtrado (bet365) não são utilizáveis para apostar — mostrá-los
-      // na lista era o "jogos sem odds" reportado pelo utilizador.
-      .filter((e) => e.odds.length > 0)
-  );
+  // Jogos sem odds do bookmaker filtrado (bet365) não são utilizáveis para apostar — mostrá-los na
+  // lista era o "jogos sem odds" reportado pelo utilizador. Mantém-se aqui tanto "scheduled" como
+  // "finished" (fetchFixturesBetween/normalizeFixture chama "finished" a qualquer jogo já
+  // começado, mesmo a decorrer — ver aviso em client.ts): esta cache alimenta tanto o pré-jogo
+  // (só "scheduled", filtrado abaixo em getSportmonksFootballPrematch) como as odds do poller de
+  // Ao Vivo (sportmonks/live.ts), que procura aqui pelas odds de um jogo já começado através de
+  // getSportmonksEventById() — sem manter os já começados, o Ao Vivo nunca encontrava odds.
+  return events.filter((e) => e.odds.length > 0);
 }
 
 /** startTime é sempre ISO UTC explícito (ver normalizeFixture em client.ts) — os primeiros 10
@@ -66,7 +67,10 @@ export async function getSportmonksFootballPrematch(date?: string): Promise<Spor
   if (!cache || Date.now() - cache.fetchedAt >= CACHE_TTL_MS) {
     cache = { events: await fetchAndNormalize(), fetchedAt: Date.now() };
   }
-  const allEvents = cache.events;
+  // Só "scheduled" aqui — a cache agora também guarda os jogos já começados (ver
+  // fetchAndNormalize()), mas esses já aparecem no Ao Vivo (sportmonks/live.ts), não faz sentido
+  // continuarem também na lista de pré-jogo.
+  const allEvents = cache.events.filter((e) => e.status === "scheduled");
   const availableDates = [...new Set(allEvents.map(eventDateKey))].sort();
   const targetDate = date && availableDates.includes(date) ? date : availableDates[0];
   const events = targetDate ? allEvents.filter((e) => eventDateKey(e) === targetDate) : [];

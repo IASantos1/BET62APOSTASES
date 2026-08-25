@@ -8,6 +8,7 @@ import { seedDefaultAliases } from "./modules/sports/mapping/aliasStore";
 import { settleEventFinished, checkEarlySettlement, sweepStaleBets } from "./modules/betting/settlement";
 import { sweepExpiredPromotions, seedRecommendedLaunchPromotion } from "./modules/promotions/service";
 import { startSportmonksPrematchBackgroundRefresh } from "./modules/sports/sportmonks/prematch";
+import { startSportmonksLiveFootballPoll } from "./modules/sports/sportmonks/live";
 import type { LiveEvent } from "./modules/sports/types";
 
 const app = createApp();
@@ -16,10 +17,13 @@ const server = http.createServer(app);
 attachSportsWebsocketGateway(server);
 hybridSportsService.start();
 // Só arranca se o futebol estiver mesmo a usar a Sportmonks e a chave estiver configurada — caso
-// contrário getSportmonksFootballPrematch() nunca é chamada e este pré-aquecimento seria só
-// pedidos a falhar (SPORTMONKS_API_KEY em falta) de 40 em 40s sem propósito nenhum.
+// contrário estas funções nunca teriam nada para fazer, só pedidos a falhar (SPORTMONKS_API_KEY
+// em falta) em intervalo sem propósito nenhum. O poller de Ao Vivo (startSportmonksLiveFootballPoll)
+// é o que faz hybridSportsService.applyExternalSnapshot("football", ...) — hybridService.ts e
+// wsClient.ts já sabem parar de tocar em "football" nesse modo, ver comentários lá.
 if (env.FOOTBALL_PROVIDER === "sportmonks" && env.SPORTMONKS_API_KEY) {
   startSportmonksPrematchBackgroundRefresh();
+  startSportmonksLiveFootballPoll();
 }
 seedDefaultAliases().catch((err) => logger.warn({ err }, "Mapping: falha ao semear aliases por omissão"));
 seedRecommendedLaunchPromotion().catch((err) => logger.warn({ err }, "Promotions: falha ao semear a promoção de lançamento"));
