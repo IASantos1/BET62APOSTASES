@@ -370,18 +370,59 @@ async function renderPrematchList() {
   if (cachedEvents) paintPrematchList(container, cachedEvents);
   else container.innerHTML = skeletonCardsHtml(6);
 
-  const realEvents = [];
-  const results = await Promise.allSettled(sports.map((s) => Bet62Api.getPrematchEvents(s)));
+  // Futebol é o desporto prioritário a carregar depressa (pedido explícito do utilizador) —
+  // pedido em separado dos outros e pintado assim que a SUA resposta chegar, sem esperar pelos
+  // restantes. Antes disto, um único desporto lento a responder atrasava TODOS (Promise.allSettled
+  // só pintava depois de todos os 8 pedidos terminarem, futebol incluído). Os pedidos continuam
+  // todos em paralelo (otherPromise arranca já, antes do await do futebol) — não fica mais lento
+  // para os outros desportos, só o futebol é que deixa de ficar refém do mais lento.
+  const includesFootball = sports.includes("football");
+  const otherSports = sports.filter((s) => s !== "football");
+  const otherPromise = Promise.allSettled(otherSports.map((s) => Bet62Api.getPrematchEvents(s)));
+  let footballEvents = [];
+
+  if (includesFootball) {
+    try {
+      const data = await Bet62Api.getPrematchEvents("football");
+      if (requestToken !== renderPrematchList._token) return;
+      footballEvents = data.source === "pulsescore" ? data.events : [];
+      // Pinta já: futebol fresco + os restantes desportos ainda com o que estava em cache (se
+      // houver), para não fazer desaparecer jogos já visíveis enquanto se espera pelos outros.
+      const otherFromCache = (cachedEvents || []).filter((e) => e.sport !== "football");
+      paintPrematchList(container, [...footballEvents, ...otherFromCache]);
+    } catch {
+      footballEvents = [];
+    }
+  }
+
+  const otherResults = await otherPromise;
   if (requestToken !== renderPrematchList._token) return; // uma seleção mais recente já está a carregar
 
-  results.forEach((r) => {
-    if (r.status === "fulfilled" && r.value.source === "pulsescore") realEvents.push(...r.value.events);
+  const otherEvents = [];
+  otherResults.forEach((r) => {
+    if (r.status === "fulfilled" && r.value.source === "pulsescore") otherEvents.push(...r.value.events);
   });
 
+  const realEvents = [...footballEvents, ...otherEvents];
   savePrematchCache(cacheKey, realEvents);
   paintPrematchList(container, realEvents);
 }
 renderPrematchList._token = 0;
+
+// Atualização periódica em segundo plano das listas de Pré-jogo (Esportes e Destaques) — sem
+// isto, a lista só refrescava ao mudar de página/filtro, podendo ficar minutos sem refletir jogos
+// novos ou horários corrigidos enquanto o utilizador fica parado numa destas páginas. Pausa
+// sozinho com a aba em segundo plano (document.hidden) para não gastar rede/bateria à toa, e só
+// age quando a página relevante está mesmo visível — mesmo padrão de guarda usado em
+// startMyBetsLiveRefresh(). 60s: acima da cache de 45s do servidor (prematch/service.ts), para
+// quase sempre apanhar dados já renovados do lado do servidor em vez de bater sempre na mesma
+// resposta em cache.
+setInterval(() => {
+  if (document.hidden) return;
+  const activePage = document.querySelector(".top-nav-item.active")?.dataset.page;
+  if (activePage === "esportes") renderPrematchList();
+  else if (activePage === "destaques") renderDestaquesHighlights();
+}, 60000);
 // Fuso horário fixo de Portugal (IANA — trata sozinho a mudança de hora WET/WEST, ao contrário
 // de um offset fixo tipo "+01:00") — pedido explícito do utilizador: um jogo do Japão (Japan
 // NPB) ou de qualquer outro país deve sempre aparecer na hora de Portugal, nunca na hora do
