@@ -1,18 +1,63 @@
-import { logger } from "../../../lib/logger";
 import type { LiveEvent } from "../types";
-import { fetchLeaguesWithCurrentRound, getRoundEvents } from "./client";
+import { fetchFixturesBetween, fetchLeaguesWithCurrentRound, getRoundEvents } from "./client";
 
 /**
  * Junta o pré-jogo de futebol de TODAS as ligas da Sportmonks (pedido explícito do utilizador)
- * numa lista plana, ao contrário da API deles (organizada por ronda de uma liga de cada vez —
- * ver comentário em sportmonks/client.ts). Dois níveis de cache diferentes:
- * - Quais ligas existem e qual a sua ronda atual: muda raramente (uma ronda dura vários dias),
- *   cache de 1h — pedir isto a cada 45s desperdiçaria pedidos à toa.
- * - Os jogos+odds de CADA ronda: cache de 45s (ver getRoundEvents em client.ts), porque as odds
- *   em si mudam com frequência normal de pré-jogo.
- * "Todas as ligas" pode ser uma lista grande — os pedidos por ronda correm em paralelo
- * (Promise.allSettled), uma liga a falhar nunca derruba as restantes.
+ * numa lista plana. Usa fetchFixturesBetween() (intervalo de datas, todas as ligas de uma vez) —
+ * ver aviso "não confirmado" em sportmonks/client.ts. A via original, por "ronda atual" de cada
+ * liga (fetchLeaguesWithCurrentRound), confirmou-se estruturalmente quebrada em produção (0 ligas
+ * com ronda atual em 20 páginas percorridas, ver GET /api/sports/sportmonks-debug) — mantida no
+ * módulo (getSportmonksFootballPrematchByRounds) só para referência/diagnóstico, já não é o
+ * caminho principal.
  */
+const CACHE_TTL_MS = 45_000; // mesmo TTL já usado para o pré-jogo da Pulsescore
+const PREMATCH_WINDOW_DAYS = 10; // dias à frente a cobrir — sem confirmação do período ideal da Sportmonks, valor razoável
+let cache: { events: LiveEvent[]; fetchedAt: number } | null = null;
+
+function dateRangeFromToday(): { start: string; end: string } {
+  const now = new Date();
+  const start = now.toISOString().slice(0, 10);
+  const end = new Date(now.getTime() + PREMATCH_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
+  return { start, end };
+}
+
+export async function getSportmonksFootballPrematch(): Promise<LiveEvent[]> {
+  if (cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS) return cache.events;
+
+  const { start, end } = dateRangeFromToday();
+  const events = await fetchFixturesBetween(start, end);
+  const scheduled = events.filter((e) => e.status === "scheduled");
+  cache = { events: scheduled, fetchedAt: Date.now() };
+  return scheduled;
+}
+
+/** Diagnóstico (ver routes.ts, GET /api/sports/sportmonks-debug) — corre a mesma lógica de
+ * produção mas devolve os números em cada etapa, para se ver onde a contagem cai a zero. */
+export async function getSportmonksFootballPrematchDiagnosis(): Promise<{
+  dateRange: { start: string; end: string };
+  totalFixturesFound: number;
+  scheduledFixtures: number;
+  sampleFixture: LiveEvent | null;
+  diagnosis: string;
+}> {
+  const { start, end } = dateRangeFromToday();
+  const events = await fetchFixturesBetween(start, end);
+  const scheduled = events.filter((e) => e.status === "scheduled");
+
+  let diagnosis: string;
+  if (events.length === 0) {
+    diagnosis = `0 jogos encontrados entre ${start} e ${end} em todas as ligas — verificar se /fixtures/between existe mesmo no plano da conta (endpoint não confirmado por amostra real).`;
+  } else if (scheduled.length === 0) {
+    diagnosis = `${events.length} jogos encontrados, mas nenhum com status "scheduled" (todos já começaram/terminaram) — improvável para um intervalo de ${PREMATCH_WINDOW_DAYS} dias à frente, sinal de possível problema na classificação de status.`;
+  } else {
+    diagnosis = `${scheduled.length} jogos agendados encontrados — a funcionar.`;
+  }
+
+  return { dateRange: { start, end }, totalFixturesFound: events.length, scheduledFixtures: scheduled.length, sampleFixture: events[0] ?? null, diagnosis };
+}
+
+// --- Mantido só para referência/diagnóstico — via "ronda atual" confirmada quebrada, ver aviso acima ---
+
 const LEAGUES_CACHE_TTL_MS = 60 * 60_000;
 let leaguesCache: { pairs: Array<{ leagueId: number; roundId: number }>; fetchedAt: number } | null = null;
 
@@ -23,65 +68,12 @@ async function getLeaguesWithCurrentRoundCached(): Promise<Array<{ leagueId: num
   return pairs;
 }
 
-export async function getSportmonksFootballPrematch(): Promise<LiveEvent[]> {
+export async function getSportmonksFootballPrematchByRounds(): Promise<LiveEvent[]> {
   const pairs = await getLeaguesWithCurrentRoundCached();
   const results = await Promise.allSettled(pairs.map(({ roundId }) => getRoundEvents(roundId)));
-
   const events: LiveEvent[] = [];
-  let failures = 0;
-  results.forEach((r, i) => {
-    if (r.status === "fulfilled") events.push(...r.value.filter((e) => e.status === "scheduled"));
-    else {
-      failures += 1;
-      logger.warn({ err: r.reason, roundId: pairs[i]?.roundId }, "Sportmonks: falha ao obter jogos desta ronda, a ignorar só esta");
-    }
-  });
-  if (failures > 0) logger.warn({ failures, total: pairs.length }, "Sportmonks: algumas rondas falharam neste ciclo");
-
-  return events;
-}
-
-/** Diagnóstico completo (ver admin/routes.ts, GET /admin/sportmonks/prematch-status) — corre a
- * MESMA lógica de getSportmonksFootballPrematch(), mas devolve os números em cada etapa do funil
- * em vez de só a lista final, para se ver exatamente onde a contagem cai a zero: nenhuma liga com
- * ronda atual encontrada? rondas encontradas mas sem jogos? jogos encontrados mas todos já
- * começados (status !== "scheduled")? */
-export async function getSportmonksFootballPrematchDiagnosis(): Promise<{
-  leaguesWithCurrentRound: number;
-  roundFetchFailures: number;
-  totalFixturesInRounds: number;
-  scheduledFixtures: number;
-  sampleRound: LiveEvent | null;
-  diagnosis: string;
-}> {
-  const pairs = await fetchLeaguesWithCurrentRound(); // sem cache — diagnóstico deve refletir o estado agora
-  const results = await Promise.allSettled(pairs.map(({ roundId }) => getRoundEvents(roundId)));
-
-  let totalFixturesInRounds = 0;
-  let scheduledFixtures = 0;
-  let roundFetchFailures = 0;
-  let sampleRound: LiveEvent | null = null;
   results.forEach((r) => {
-    if (r.status === "fulfilled") {
-      totalFixturesInRounds += r.value.length;
-      const scheduled = r.value.filter((e) => e.status === "scheduled");
-      scheduledFixtures += scheduled.length;
-      if (!sampleRound && r.value.length > 0) sampleRound = r.value[0]!;
-    } else {
-      roundFetchFailures += 1;
-    }
+    if (r.status === "fulfilled") events.push(...r.value.filter((e) => e.status === "scheduled"));
   });
-
-  let diagnosis: string;
-  if (pairs.length === 0) {
-    diagnosis = "0 ligas com ronda atual em toda a procura (até 20 páginas) — nenhuma liga tem currentSeason.rounds com is_current:true neste momento.";
-  } else if (totalFixturesInRounds === 0) {
-    diagnosis = `${pairs.length} ligas com ronda atual encontrada, mas 0 jogos vieram dessas rondas (todos os pedidos falharam ou as rondas estão vazias).`;
-  } else if (scheduledFixtures === 0) {
-    diagnosis = `${pairs.length} ligas com ronda atual, ${totalFixturesInRounds} jogos encontrados no total — mas nenhum tem status "scheduled" (todos já começaram/terminaram, a "ronda atual" da Sportmonks parece ser a última já jogada, não a próxima).`;
-  } else {
-    diagnosis = `${scheduledFixtures} jogos agendados encontrados — a funcionar.`;
-  }
-
-  return { leaguesWithCurrentRound: pairs.length, roundFetchFailures, totalFixturesInRounds, scheduledFixtures, sampleRound, diagnosis };
+  return events;
 }

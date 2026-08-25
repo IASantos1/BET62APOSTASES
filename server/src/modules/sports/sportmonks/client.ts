@@ -195,6 +195,45 @@ function normalizeFixture(fixture: SportmonksFixture, league: SportmonksLeague |
   };
 }
 
+interface SportmonksFixtureWithLeague extends SportmonksFixture {
+  league?: SportmonksLeague;
+}
+
+/**
+ * ⚠️ NÃO confirmado por amostra real — tentativa alternativa à descoberta de "ronda atual"
+ * (fetchLeaguesWithCurrentRound), que confirmou-se estruturalmente quebrada em produção: 0 ligas
+ * com ronda atual em 20 páginas percorridas (ver GET /api/sports/sportmonks-debug). Padrão
+ * documentado publicamente da Sportmonks v3 para "jogos num intervalo de datas, todas as ligas
+ * de uma vez" — não depende de resolver ronda nenhuma, cada fixture já vem com a sua própria
+ * `league` (via include `league.country`), evitando o problema todo da relação currentRound/
+ * currentSeason.rounds que já falhou duas vezes.
+ */
+export async function fetchFixturesBetween(
+  startDateISO: string,
+  endDateISO: string,
+  opts: { marketIds?: number[] } = {}
+): Promise<LiveEvent[]> {
+  const filters: string[] = [`bookmakers:${env.SPORTMONKS_BOOKMAKER_ID}`];
+  if (opts.marketIds?.length) filters.push(`markets:${opts.marketIds.join(",")}`);
+
+  const events: LiveEvent[] = [];
+  let page = 1;
+  const maxPages = 30; // pode ser muitos jogos num intervalo de dias, todas as ligas
+  while (page <= maxPages) {
+    const data = await sportmonksFetch<{ data: SportmonksFixtureWithLeague[]; pagination?: { has_more?: boolean } }>(
+      `/fixtures/between/${startDateISO}/${endDateISO}`,
+      { include: "participants;odds.market;odds.bookmaker;league.country", filters: filters.join(";"), page }
+    );
+    for (const fixture of data.data ?? []) {
+      const evt = normalizeFixture(fixture, fixture.league);
+      if (evt) events.push(evt);
+    }
+    if (!data.pagination?.has_more) break;
+    page += 1;
+  }
+  return events;
+}
+
 const roundCache = new Map<number, { events: LiveEvent[]; fetchedAt: number }>();
 const ROUND_CACHE_TTL_MS = 45_000; // mesmo TTL já usado para o pré-jogo da Pulsescore
 
