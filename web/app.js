@@ -2454,6 +2454,7 @@ function renderMarketPage() {
   document.getElementById("market-league").textContent = `${sportMeta ? sportMeta.icon + " " : ""}${e.league}`;
   document.getElementById("market-title").textContent = `${e.home} vs ${e.away}`;
   renderMatchTracker(e);
+  renderFeaturedCombo(e);
   renderMarketFilterBar(e);
   if (selectedMarketFilter === BET_BUILDER_LABEL) {
     renderBetBuilder(e);
@@ -2688,6 +2689,7 @@ function renderTrackerPitch(points) {
 // conteúdo (ver #market-stats-inline em index.html).
 function openStats() {
   if (!currentMarketEvent) return;
+  document.getElementById("featured-combo").classList.add("hidden");
   document.getElementById("market-filter-bar").classList.add("hidden");
   document.getElementById("market-groups").classList.add("hidden");
   document.getElementById("market-stats-inline").classList.remove("hidden");
@@ -2695,6 +2697,7 @@ function openStats() {
 }
 function closeStats() {
   document.getElementById("market-stats-inline").classList.add("hidden");
+  document.getElementById("featured-combo").classList.remove("hidden");
   document.getElementById("market-filter-bar").classList.remove("hidden");
   document.getElementById("market-groups").classList.remove("hidden");
 }
@@ -3470,64 +3473,300 @@ function filterMarketGroups(e) {
   return e.odds.filter((g) => classifyMarket(e.sport, g.market) === selectedMarketFilter);
 }
 
+// Linha de seleções de UM mercado bruto (`group`) — extraído do antigo renderMarketGroups() para
+// ser reutilizado tanto em mercados normais (uma linha) como em cada linha de um mercado
+// Mais/Menos/Handicap fundido (`withLine`, ver buildMarketDisplayGroups abaixo). Cada botão
+// continua a submeter o `group.market`/`label`/`odd` EXATOS de origem — a fusão visual nunca
+// sintetiza um mercado novo, só reorganiza como os mercados reais aparecem no ecrã.
+function normalSelectionRowHtml(e, group, isLive, withLine) {
+  const rows = orderedSelectionEntries(group.selections)
+    .map(([label, sel]) => {
+      const labelPt = withLine ? overUnderButtonLabel(label, group.line) : translateSelectionLabel(label);
+      // Seleção suspensa pelo bookmaker (isActive:false — ex: durante uma revisão VAR ou logo
+      // após um penálti/cartão, ver LiveSelection em types.ts): mostra-se visível mas sem onclick,
+      // em vez de desaparecer ou continuar clicável com uma odd desatualizada. Mesmo tratamento
+      // para uma odd inválida (ex: NaN de uma transição de deploy com JS antigo em cache) — nunca
+      // deixar clicar numa aposta sem preço válido.
+      if (!sel.isActive || !Number.isFinite(sel.odd)) {
+        return `<div class="selection-btn suspended">
+          <span class="sel-label">${labelPt}</span><span class="sel-odd">Suspenso</span>
+        </div>`;
+      }
+      const key = `${e.id}|${group.market}|${label}`;
+      const picked = betslipSelections.has(key);
+      const selection = { eventId: e.id, sport: e.sport, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league, line: group.line };
+      // Setas de subida/descida só em Ao Vivo — no pré-jogo o valor não costuma mudar ao ponto de
+      // justificar o indicador, e não foi pedido para essa página.
+      const arrow = isLive ? oddsArrowHtml(key, sel.odd) : "";
+      return `<div class="selection-btn ${picked ? "picked" : ""}" onclick='toggleSelection(${JSON.stringify(key)}, ${JSON.stringify(selection)})'>
+        <span class="sel-label">${labelPt}</span><span class="sel-odd">${sel.odd.toFixed(2)}${arrow}</span>
+      </div>`;
+    })
+    .join("");
+  return `<div class="selection-row">${rows}</div>`;
+}
+
+// Rótulo do botão de um mercado Mais/Menos/Handicap fundido (várias linhas do MESMO mercado bruto
+// juntas num só acordeão, ver buildMarketDisplayGroups) — pedido explícito do utilizador: "dentro
+// das odds aparece Mais de 0.5" em vez de só "MAIS DE" com a linha só no título de fora (que deixa
+// de existir quando há mais do que uma linha). Quando o rótulo da seleção já traz o número (ex:
+// "Over 2.5", ou "Home -1.5" de handicap — ambos via translateSelectionLabel), não duplica.
+function overUnderButtonLabel(label, line) {
+  const translated = translateSelectionLabel(label);
+  if (typeof line !== "number" || /\d/.test(translated)) return translated;
+  return `${translated} ${line}`;
+}
+
+// "Marcador" (Primeiro/Qualquer Momento/Último) — 3 mercados brutos distintos que a bookmaker
+// devolve separados; aqui só se decide a que COLUNA cada um pertence para a tabela por jogador
+// (ver buildMarcadorTable), mesma ordem de reconhecimento de translateMarketBaseName (primeiro/
+// último testados antes do genérico "a qualquer momento").
+function marcadorRole(rawMarketName) {
+  if (/first to score|to score first|first goalscorer/i.test(rawMarketName)) return "first";
+  if (/last to score|to score last|last goalscorer/i.test(rawMarketName)) return "last";
+  return "anytime";
+}
+
+// Junta os (até 3) mercados brutos "Marcador" num mapa jogador -> {anytime,first,last}, cada
+// papel com o group.market/label/odd EXATOS do mercado de origem (nunca sintetizado) — devolve
+// pares [jogador, papéis] pela ordem de primeira aparição.
+function buildMarcadorTable(e, groups) {
+  const byPlayer = new Map();
+  for (const group of groups) {
+    const role = marcadorRole(group.market);
+    for (const [label, sel] of orderedSelectionEntries(group.selections)) {
+      if (!byPlayer.has(label)) byPlayer.set(label, {});
+      byPlayer.get(label)[role] = { market: group.market, label, odd: sel.odd, isActive: sel.isActive };
+    }
+  }
+  return [...byPlayer.entries()];
+}
+
+const MARCADOR_VISIBLE_ROWS = 8;
+
+function marcadorCellHtml(e, roleData) {
+  if (!roleData) return '<div class="mc-col"><div class="marcador-odd-btn na">-</div></div>';
+  if (!roleData.isActive || !Number.isFinite(roleData.odd)) return '<div class="mc-col"><div class="marcador-odd-btn na">Susp.</div></div>';
+  const key = `${e.id}|${roleData.market}|${roleData.label}`;
+  const picked = betslipSelections.has(key);
+  const selection = { eventId: e.id, sport: e.sport, market: roleData.market, selection: roleData.label, odd: roleData.odd, home: e.home, away: e.away, league: e.league };
+  return `<div class="mc-col"><div class="marcador-odd-btn ${picked ? "picked" : ""}" onclick='toggleSelection(${JSON.stringify(key)}, ${JSON.stringify(selection)})'>${roleData.odd.toFixed(2)}</div></div>`;
+}
+
+// Tabela por jogador (Em Qualquer Momento/Primeiro/Último Marcador lado a lado) — pedido do
+// utilizador a partir da referência visual, com "ver mais" a revelar o resto dos jogadores reais
+// já presentes no DOM (sem pedido extra à rede, ver toggleMarcadorMore).
+function marcadorEntryHtml(e, groups) {
+  const rows = buildMarcadorTable(e, groups);
+  if (!rows.length) return '<div class="empty-note">Sem seleções disponíveis</div>';
+  const rowsHtml = rows
+    .map(
+      ([player, roles], i) => `
+    <div class="marcador-row${i >= MARCADOR_VISIBLE_ROWS ? " mc-extra hidden" : ""}">
+      <div class="mc-player">${player}</div>
+      ${marcadorCellHtml(e, roles.anytime)}
+      ${marcadorCellHtml(e, roles.first)}
+      ${marcadorCellHtml(e, roles.last)}
+    </div>`
+    )
+    .join("");
+  const moreBtn = rows.length > MARCADOR_VISIBLE_ROWS ? `<div class="marcador-more" onclick="toggleMarcadorMore(this)">Ver mais (+${rows.length - MARCADOR_VISIBLE_ROWS})</div>` : "";
+  return `
+    <div class="marcador-table">
+      <div class="marcador-head"><div class="mc-player"></div><div class="mc-col">Qualquer</div><div class="mc-col">Primeiro</div><div class="mc-col">Último</div></div>
+      ${rowsHtml}
+    </div>
+    ${moreBtn}`;
+}
+function toggleMarcadorMore(btn) {
+  const body = btn.closest(".ml-accordion-body");
+  if (!body) return;
+  body.querySelectorAll(".mc-extra").forEach((r) => r.classList.remove("hidden"));
+  btn.remove();
+}
+
+// Estado de expandir/fechar dos mercados na lista ("Todos"/filtrado) — por evento (reinicia ao
+// trocar de jogo), e só define os "5 primeiros abertos" UMA vez por evento (initialized), para
+// não desfazer o que o utilizador já abriu/fechou manualmente a cada atualização ao vivo.
+let marketAccordionState = { eventId: null, expanded: new Set(), initialized: false, autoOpenedFilter: undefined };
+function ensureMarketAccordionState(eventId) {
+  if (marketAccordionState.eventId !== eventId) marketAccordionState = { eventId, expanded: new Set(), initialized: false, autoOpenedFilter: undefined };
+}
+function toggleMarketAccordion(key) {
+  if (marketAccordionState.expanded.has(key)) marketAccordionState.expanded.delete(key);
+  else marketAccordionState.expanded.add(key);
+  if (currentMarketEvent) renderMarketGroups(currentMarketEvent);
+}
+
+// Reorganiza os mercados brutos (e.odds, já filtrados pela categoria escolhida) em entradas para
+// a lista de acordeões: (1) todas as linhas de um mesmo mercado Mais/Menos/Handicap (mesmo
+// group.market, várias group.line) fundidas numa só entrada — pedido explícito do utilizador
+// ("o grupo desse mercado fique dentro de um único... sem essa base retangular"); (2) os (até 3)
+// mercados "Marcador" fundidos numa tabela por jogador; (3) tudo o resto, uma entrada por mercado.
+// Ordenado pela mesma prioridade de categoria da barra de filtros (FOOTBALL_FILTER_DISPLAY_ORDER)
+// — pedido explícito: "Resultado, Ambas Marcam, Mais/Menos, Handicap, 1ºT, 2ºT, Placar Exato,
+// Escanteios, Cartões, Marcador, Especial".
+function buildMarketDisplayGroups(e) {
+  const groups = filterMarketGroups(e);
+  const primaryMarket = e.odds[0];
+  const sport = e.sport;
+  const order = sport === "football" ? FOOTBALL_FILTER_DISPLAY_ORDER : (MARKET_FILTER_CATEGORIES[sport] || []).map((c) => c.label);
+  const rank = (label) => {
+    const idx = order.indexOf(label);
+    return idx === -1 ? order.length : idx;
+  };
+
+  const marcadorGroups = [];
+  const byMergeKey = new Map();
+  const result = [];
+  for (const group of groups) {
+    const category = classifyMarket(sport, group.market);
+    if (category === "Marcador") {
+      marcadorGroups.push(group);
+      continue;
+    }
+    let entry = byMergeKey.get(group.market);
+    if (!entry) {
+      entry = { key: `m:${group.market}`, kind: "normal", market: group.market, category, lines: [] };
+      byMergeKey.set(group.market, entry);
+      result.push(entry);
+    }
+    entry.lines.push(group);
+  }
+  for (const entry of result) entry.isPrimary = entry.lines.includes(primaryMarket);
+  if (marcadorGroups.length) {
+    result.push({ key: "marcador", kind: "marcador", market: "Marcador", category: "Marcador", isPrimary: false, groups: marcadorGroups });
+  }
+
+  result.sort((a, b) => rank(a.category) - rank(b.category));
+  return result;
+}
+
+function marketAccordionHtml(e, entry, isLive) {
+  const expanded = marketAccordionState.expanded.has(entry.key);
+  let title, badgeHtml, bodyHtml;
+  if (entry.kind === "marcador") {
+    title = "Marcador";
+    badgeHtml = "";
+    bodyHtml = marcadorEntryHtml(e, entry.groups);
+  } else {
+    const first = entry.lines[0];
+    title = translateMarketDisplayName(entry.market, e.sport, Object.keys(first.selections || {}), e.home, e.away, entry.lines.length === 1 ? first.line : undefined);
+    const allSuspended = entry.lines.every((g) => !g.isActive);
+    badgeHtml = allSuspended ? '<span class="market-suspended-badge">Suspenso</span>' : "";
+    if (entry.isPrimary && allSuspended) {
+      // Mercado principal (1X2/moneyline) totalmente suspenso: um único botão a cobrir a linha
+      // toda em vez de 3 caixas "Suspenso" repetidas — ver primarySuspendedLabel().
+      bodyHtml = `<div class="selection-row"><div class="selection-btn suspended"><span class="sel-odd">${primarySuspendedLabel(e)}</span></div></div>`;
+    } else if (entry.lines.length === 1) {
+      bodyHtml = normalSelectionRowHtml(e, entry.lines[0], isLive, false);
+    } else {
+      bodyHtml = entry.lines
+        .slice()
+        .sort((a, b) => (a.line ?? 0) - (b.line ?? 0))
+        .map((g) => normalSelectionRowHtml(e, g, isLive, true))
+        .join("");
+    }
+  }
+  return `
+    <div class="ml-accordion${expanded ? " open" : ""}">
+      <div class="ml-accordion-head" onclick='toggleMarketAccordion(${JSON.stringify(entry.key)})'>
+        <span>${title}${badgeHtml}</span>
+        <span class="ml-chevron">⌄</span>
+      </div>
+      <div class="ml-accordion-body">${bodyHtml}</div>
+    </div>`;
+}
+
 function renderMarketGroups(e) {
   const el = document.getElementById("market-groups");
   if (!e.odds || !e.odds.length) {
     el.innerHTML = '<div class="empty-note">Sem mercados disponíveis para este evento</div>';
     return;
   }
-  // Mercado principal antes de filtrar (ver comparação `group === primaryMarket` abaixo) — o
-  // filtro de categoria (barra de chips) pode escolher um subconjunto onde o mercado principal
-  // real nem sequer aparece, ou deixa de ser o primeiro; precisa de continuar a ser identificado
-  // pelo mercado em si, não pela posição dentro da lista já filtrada.
-  const primaryMarket = e.odds[0];
-  const groups = filterMarketGroups(e);
-  if (!groups.length) {
+  ensureMarketAccordionState(e.id);
+  const entries = buildMarketDisplayGroups(e);
+  if (!entries.length) {
     el.innerHTML = '<div class="empty-note">Sem mercados nesta categoria</div>';
     return;
   }
+  if (selectedMarketFilter) {
+    // Categoria específica escolhida na barra de chips (ex: "Mais/Menos"): mostra tudo já aberto,
+    // mas só na primeira renderização DEPOIS da troca de filtro (autoOpenedFilter) — senão um
+    // fecho manual do utilizador seria reaberto de novo a cada atualização ao vivo.
+    if (marketAccordionState.autoOpenedFilter !== selectedMarketFilter) {
+      entries.forEach((entry) => marketAccordionState.expanded.add(entry.key));
+      marketAccordionState.autoOpenedFilter = selectedMarketFilter;
+    }
+  } else if (!marketAccordionState.initialized) {
+    // "Todos": "os 5 primeiros ficam abertos" — pedido explícito do utilizador — só na primeira
+    // renderização deste evento, nunca reaplicado (ver ensureMarketAccordionState) para não
+    // fechar/reabrir o que o utilizador já escolheu a cada atualização ao vivo.
+    entries.slice(0, 5).forEach((entry) => marketAccordionState.expanded.add(entry.key));
+    marketAccordionState.initialized = true;
+  }
   const isLive = e._isLive || e.status === "live";
-  el.innerHTML = groups
-    .map((group) => {
-      // Mercado principal (1X2/moneyline, sempre o primeiro — ver orderMarketsWithPrimaryFirst
-      // no backend) totalmente suspenso: em vez de 3 caixas "Suspenso" repetidas lado a lado,
-      // mostra-se um único botão a cobrir a linha toda. O rótulo do mercado (group.market) pode
-      // vir "Match Odds", "Grande Chance" ou até "Revisão VAR" consoante o bookmaker/desporto —
-      // por isso a decisão compara o próprio grupo, não o texto do nome.
-      const marketNamePt = translateMarketDisplayName(group.market, e.sport, Object.keys(group.selections || {}), e.home, e.away, group.line);
-      if (group === primaryMarket && !group.isActive) {
-        return `<div class="market-group"><h4>${marketNamePt}</h4><div class="selection-row">
-          <div class="selection-btn suspended"><span class="sel-odd">${primarySuspendedLabel(e)}</span></div>
-        </div></div>`;
+  el.innerHTML = entries.map((entry) => marketAccordionHtml(e, entry, isLive)).join("");
+}
+
+// ====================== MELHORES ESCOLHAS (combinação em destaque) ======================
+// Pedido explícito do utilizador, a partir de uma referência visual de uma casa de apostas
+// grande — mas SEM a etiqueta "boost"/desconto dessa referência: este projeto não tem nenhum
+// mecanismo real de desconto por combinação (as "Promoções" existentes são de conta/depósito, ver
+// admin/promotions), inventar uma percentagem de boost mostraria um preço que não corresponde ao
+// pagamento real. Em vez disso, a combinada em destaque usa SEMPRE o produto real das odds atuais
+// de 3 seleções reais (uma por categoria, a de odd mais baixa = mais provável, sem preferência
+// arbitrária) — mesmas categorias e mesmo motor de liquidação da Bet Builder já existente
+// (classifyForBetBuilder/submitBetBuilder), nunca um mercado ou preço sintetizado.
+const FEATURED_COMBO_CATEGORY_KEYS = ["RESULTADO", "BTTS", "GOLS"];
+
+function buildFeaturedCombo(e) {
+  if (!e || e.sport !== "football" || !e.odds || !e.odds.length) return null;
+  const picks = [];
+  for (const key of FEATURED_COMBO_CATEGORY_KEYS) {
+    const optionsByLabel = new Map();
+    for (const group of e.odds) {
+      if (classifyForBetBuilder(group.market) !== key) continue;
+      for (const [label, sel] of orderedSelectionEntries(group.selections)) {
+        if (!sel.isActive || !Number.isFinite(sel.odd)) continue;
+        if (!optionsByLabel.has(label)) optionsByLabel.set(label, { market: group.market, label, odd: sel.odd });
       }
-      const rows = orderedSelectionEntries(group.selections)
-        .map(([label, sel]) => {
-          const labelPt = translateSelectionLabel(label);
-          // Seleção suspensa pelo bookmaker (isActive:false — ex: durante uma revisão VAR ou
-          // logo após um penálti/cartão, ver LiveSelection em types.ts): mostra-se visível mas
-          // sem onclick, em vez de desaparecer ou continuar clicável com uma odd desatualizada.
-          // Mesmo tratamento para uma odd inválida (ex: NaN de uma transição de deploy com JS
-          // antigo em cache) — nunca deixar clicar numa aposta sem preço válido.
-          if (!sel.isActive || !Number.isFinite(sel.odd)) {
-            return `<div class="selection-btn suspended">
-              <span class="sel-label">${labelPt}</span><span class="sel-odd">Suspenso</span>
-            </div>`;
-          }
-          const key = `${e.id}|${group.market}|${label}`;
-          const picked = betslipSelections.has(key);
-          const selection = { eventId: e.id, sport: e.sport, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league, line: group.line };
-          // Setas de subida/descida só em Ao Vivo — no pré-jogo o valor não costuma mudar
-          // ao ponto de justificar o indicador, e não foi pedido para essa página.
-          const arrow = isLive ? oddsArrowHtml(key, sel.odd) : "";
-          return `<div class="selection-btn ${picked ? "picked" : ""}" onclick='toggleSelection(${JSON.stringify(key)}, ${JSON.stringify(selection)})'>
-            <span class="sel-label">${labelPt}</span><span class="sel-odd">${sel.odd.toFixed(2)}${arrow}</span>
-          </div>`;
-        })
-        .join("");
-      const suspendedBadge = !group.isActive ? '<span class="market-suspended-badge">Suspenso</span>' : "";
-      return `<div class="market-group"><h4>${marketNamePt}${suspendedBadge}</h4><div class="selection-row">${rows}</div></div>`;
-    })
-    .join("");
+    }
+    if (!optionsByLabel.size) continue;
+    const best = [...optionsByLabel.values()].reduce((a, b) => (b.odd < a.odd ? b : a));
+    picks.push({ category: key, ...best });
+  }
+  if (picks.length < 2) return null; // uma perna só não é uma "combinação"
+  return { picks, combinedOdd: picks.reduce((acc, p) => acc * p.odd, 1) };
+}
+
+function renderFeaturedCombo(e) {
+  const el = document.getElementById("featured-combo");
+  if (!el) return;
+  const combo = e._finished ? null : buildFeaturedCombo(e);
+  if (!combo) {
+    el.innerHTML = "";
+    return;
+  }
+  const catLabel = (key) => BET_BUILDER_CATEGORIES.find((c) => c.key === key)?.label ?? key;
+  el.innerHTML = `
+    <div class="combo-title">MELHORES ESCOLHAS</div>
+    <div class="combo-card">
+      ${combo.picks
+        .map((p) => `<div class="combo-leg"><span class="combo-leg-dot"></span><span class="combo-leg-cat">${catLabel(p.category)}</span><b>${translateSelectionLabel(p.label)}</b></div>`)
+        .join("")}
+      <div class="combo-odd-row"><span>Odd combinada</span><b>${combo.combinedOdd.toFixed(2)}</b></div>
+      <button class="btn-outline" style="margin-top:10px" onclick="applyFeaturedCombo()">Adicionar ao Boletim</button>
+    </div>`;
+}
+
+function applyFeaturedCombo() {
+  const e = currentMarketEvent;
+  const combo = buildFeaturedCombo(e);
+  if (!combo) return;
+  betBuilderPicks.clear();
+  combo.picks.forEach((p) => betBuilderPicks.set(p.category, { market: p.market, selection: p.label, odd: p.odd }));
+  selectMarketFilter(BET_BUILDER_LABEL);
 }
 
 // ====================== BET BUILDER (apostas combinadas do MESMO jogo) ======================
