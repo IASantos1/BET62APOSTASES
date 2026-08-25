@@ -6,6 +6,7 @@ import { validateBody } from "../../middleware/validate";
 import { Errors, AppError } from "../../lib/errors";
 import { getApiFootballStatus } from "../sports/apifootball/client";
 import { fetchLeaguesFirstPageRaw } from "../sports/sportmonks/client";
+import { getSportmonksFootballPrematchDiagnosis } from "../sports/sportmonks/prematch";
 import { userRateLimit } from "../../lib/userRateLimit";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
@@ -558,6 +559,25 @@ router.get(
   asyncHandler(async (_req, res) => {
     try {
       const result = await fetchLeaguesFirstPageRaw();
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      const details = err instanceof AppError ? err.details : undefined;
+      res.json({ ok: false, message: err instanceof Error ? err.message : "Erro desconhecido", details });
+    }
+  })
+);
+
+// Diagnóstico completo (todas as até 20 páginas de ligas + os jogos de cada ronda atual
+// encontrada) — mais pesado que /sportmonks/status (só 1ª página), usado só quando esse já não
+// mostrou o problema (produção confirmou "0 ligas com ronda atual" na 1ª página, mas source:
+// "sportmonks" sem erro no /api/sports/prematch real — sinal de que a procura completa até pode
+// encontrar ligas mais além na paginação, e o funil pode estar a falhar noutra etapa: rondas sem
+// jogos, ou jogos todos já começados).
+router.get(
+  "/sportmonks/prematch-status",
+  asyncHandler(async (_req, res) => {
+    try {
+      const result = await getSportmonksFootballPrematchDiagnosis();
       res.json({ ok: true, ...result });
     } catch (err) {
       const details = err instanceof AppError ? err.details : undefined;

@@ -8,11 +8,28 @@ import { enrichEventFromOtherBookmakers } from "./pulsescore/crossBookmakerFallb
 import { getHeadToHead, getPredictions, getStandings, type HeadToHeadMatch } from "./apifootball/client";
 import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent, getFullFixtureMapping } from "./mapping/service";
 import { getUnifiedMatchData } from "./unified/service";
+import { getSportmonksFootballPrematchDiagnosis } from "./sportmonks/prematch";
 import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
 import { logger } from "../../lib/logger";
 
 const router = Router();
+
+// Diagnóstico temporário — sem autenticação de propósito, para se poder abrir diretamente no
+// browser e colar aqui a resposta (texto simples, sem os problemas de copiar do painel /admin
+// relatados nesta conversa). Não expõe nada sensível: só contagens e uma frase em português a
+// dizer onde o funil ligas -> ronda atual -> jogos agendados está a ficar a zero.
+router.get(
+  "/sportmonks-debug",
+  asyncHandler(async (_req, res) => {
+    try {
+      const result = await getSportmonksFootballPrematchDiagnosis();
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      res.json({ ok: false, message: err instanceof Error ? err.message : "Erro desconhecido" });
+    }
+  })
+);
 
 router.get(
   "/events",

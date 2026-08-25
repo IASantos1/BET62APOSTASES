@@ -40,3 +40,48 @@ export async function getSportmonksFootballPrematch(): Promise<LiveEvent[]> {
 
   return events;
 }
+
+/** Diagnóstico completo (ver admin/routes.ts, GET /admin/sportmonks/prematch-status) — corre a
+ * MESMA lógica de getSportmonksFootballPrematch(), mas devolve os números em cada etapa do funil
+ * em vez de só a lista final, para se ver exatamente onde a contagem cai a zero: nenhuma liga com
+ * ronda atual encontrada? rondas encontradas mas sem jogos? jogos encontrados mas todos já
+ * começados (status !== "scheduled")? */
+export async function getSportmonksFootballPrematchDiagnosis(): Promise<{
+  leaguesWithCurrentRound: number;
+  roundFetchFailures: number;
+  totalFixturesInRounds: number;
+  scheduledFixtures: number;
+  sampleRound: LiveEvent | null;
+  diagnosis: string;
+}> {
+  const pairs = await fetchLeaguesWithCurrentRound(); // sem cache — diagnóstico deve refletir o estado agora
+  const results = await Promise.allSettled(pairs.map(({ roundId }) => getRoundEvents(roundId)));
+
+  let totalFixturesInRounds = 0;
+  let scheduledFixtures = 0;
+  let roundFetchFailures = 0;
+  let sampleRound: LiveEvent | null = null;
+  results.forEach((r) => {
+    if (r.status === "fulfilled") {
+      totalFixturesInRounds += r.value.length;
+      const scheduled = r.value.filter((e) => e.status === "scheduled");
+      scheduledFixtures += scheduled.length;
+      if (!sampleRound && r.value.length > 0) sampleRound = r.value[0]!;
+    } else {
+      roundFetchFailures += 1;
+    }
+  });
+
+  let diagnosis: string;
+  if (pairs.length === 0) {
+    diagnosis = "0 ligas com ronda atual em toda a procura (até 20 páginas) — nenhuma liga tem currentSeason.rounds com is_current:true neste momento.";
+  } else if (totalFixturesInRounds === 0) {
+    diagnosis = `${pairs.length} ligas com ronda atual encontrada, mas 0 jogos vieram dessas rondas (todos os pedidos falharam ou as rondas estão vazias).`;
+  } else if (scheduledFixtures === 0) {
+    diagnosis = `${pairs.length} ligas com ronda atual, ${totalFixturesInRounds} jogos encontrados no total — mas nenhum tem status "scheduled" (todos já começaram/terminaram, a "ronda atual" da Sportmonks parece ser a última já jogada, não a próxima).`;
+  } else {
+    diagnosis = `${scheduledFixtures} jogos agendados encontrados — a funcionar.`;
+  }
+
+  return { leaguesWithCurrentRound: pairs.length, roundFetchFailures, totalFixturesInRounds, scheduledFixtures, sampleRound, diagnosis };
+}
