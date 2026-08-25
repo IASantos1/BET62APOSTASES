@@ -289,33 +289,42 @@ function renderInBlocks(container, htmlArray, blockSize = 12) {
 
 const prematchEventsById = new Map();
 
+// Cache local (localStorage) dos jogos de Pré-jogo — pinta instantaneamente ao abrir/reabrir a
+// Web ou PWA, em vez de mostrar a lista vazia (só o skeleton) durante os segundos que a Pulsescore
+// demora a responder, mesmo mostrando exatamente os mesmos jogos há pouco. Os dados frescos da
+// rede substituem sempre a cache assim que chegam — nunca fica preso ao que estava guardado, e
+// `hasKickedOff()` filtra à hora de PINTAR (não à hora de guardar), por isso um jogo que já
+// começou entretanto não aparece, mesmo vindo da cache.
+const PREMATCH_CACHE_PREFIX = "bet62:prematch-cache:";
+const PREMATCH_CACHE_MAX_AGE_MS = 3 * 60 * 60 * 1000; // 3h — generoso, mas nunca mostra jogos de ontem
+
+function savePrematchCache(key, events) {
+  try {
+    localStorage.setItem(PREMATCH_CACHE_PREFIX + key, JSON.stringify({ events, savedAt: Date.now() }));
+  } catch {
+    /* localStorage indisponível (modo privado, quota cheia...) — sem cache, comportamento igual a antes */
+  }
+}
+
+function loadPrematchCache(key) {
+  try {
+    const raw = localStorage.getItem(PREMATCH_CACHE_PREFIX + key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Date.now() - parsed.savedAt > PREMATCH_CACHE_MAX_AGE_MS) return null;
+    return Array.isArray(parsed.events) ? parsed.events : null;
+  } catch {
+    return null;
+  }
+}
+
 function clearLeagueFilter() {
   selectedLeague = null;
   renderSportsMenu();
   renderPrematchList();
 }
 
-async function renderPrematchList() {
-  const container = document.getElementById("prematch-list");
-  const requestToken = ++renderPrematchList._token;
-  container.innerHTML = skeletonCardsHtml(6);
-
-  const badge = document.getElementById("league-filter-badge");
-  if (badge) {
-    badge.innerHTML = selectedLeague
-      ? `<div class="league-filter-badge">Filtrado por: <b>${selectedLeague}</b> <span onclick="clearLeagueFilter()">✕</span></div>`
-      : "";
-  }
-
-  const sports = selectedSport ? [selectedSport] : SPORTS_META.map((s) => s.id);
-  const realEvents = [];
-  const results = await Promise.allSettled(sports.map((s) => Bet62Api.getPrematchEvents(s)));
-  if (requestToken !== renderPrematchList._token) return; // uma seleção mais recente já está a carregar
-
-  results.forEach((r) => {
-    if (r.status === "fulfilled" && r.value.source === "pulsescore") realEvents.push(...r.value.events);
-  });
-
+function paintPrematchList(container, realEvents) {
   const filteredEvents = realEvents
     .filter((e) => !hasKickedOff(e)) // já passou da hora de início — deve estar em Ao Vivo, não aqui
     .filter((e) => !selectedLeague || (e.league && e.league.toLowerCase().includes(selectedLeague.toLowerCase())));
@@ -342,6 +351,35 @@ async function renderPrematchList() {
       </div>`
   );
   renderInBlocks(container, cardsHtml);
+}
+
+async function renderPrematchList() {
+  const container = document.getElementById("prematch-list");
+  const requestToken = ++renderPrematchList._token;
+
+  const badge = document.getElementById("league-filter-badge");
+  if (badge) {
+    badge.innerHTML = selectedLeague
+      ? `<div class="league-filter-badge">Filtrado por: <b>${selectedLeague}</b> <span onclick="clearLeagueFilter()">✕</span></div>`
+      : "";
+  }
+
+  const sports = selectedSport ? [selectedSport] : SPORTS_META.map((s) => s.id);
+  const cacheKey = `list:${sports.join(",")}`;
+  const cachedEvents = loadPrematchCache(cacheKey);
+  if (cachedEvents) paintPrematchList(container, cachedEvents);
+  else container.innerHTML = skeletonCardsHtml(6);
+
+  const realEvents = [];
+  const results = await Promise.allSettled(sports.map((s) => Bet62Api.getPrematchEvents(s)));
+  if (requestToken !== renderPrematchList._token) return; // uma seleção mais recente já está a carregar
+
+  results.forEach((r) => {
+    if (r.status === "fulfilled" && r.value.source === "pulsescore") realEvents.push(...r.value.events);
+  });
+
+  savePrematchCache(cacheKey, realEvents);
+  paintPrematchList(container, realEvents);
 }
 renderPrematchList._token = 0;
 // Fuso horário fixo de Portugal (IANA — trata sozinho a mudança de hora WET/WEST, ao contrário
@@ -1996,26 +2034,11 @@ async function renderDestaquesPromoBanner() {
   }
 }
 
-async function renderDestaquesHighlights() {
-  renderDestaquesPromoBanner();
-  const prematchEl = document.getElementById("destaques-prematch-list");
-  const liveEl = document.getElementById("destaques-live-list");
-  if (!prematchEl || !liveEl) return;
-  prematchEl.innerHTML = skeletonCardsHtml(5);
-  liveEl.innerHTML = skeletonCardsHtml(5);
-  const icon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
-
-  const [prematchResults, liveResult] = await Promise.all([
-    Promise.allSettled(SPORTS_META.map((s) => Bet62Api.getPrematchEvents(s.id))),
-    Bet62Api.getLiveEvents().catch(() => ({ events: [] })),
-  ]);
-
-  // --- Pré-jogo: 5, com preferência para competições UEFA (ordenação estável: mantém a ordem
-  // relativa original dentro de cada grupo, só separa "é UEFA" de "não é UEFA"). ---
-  const prematchEvents = [];
-  prematchResults.forEach((r) => {
-    if (r.status === "fulfilled" && r.value.source === "pulsescore") prematchEvents.push(...r.value.events);
-  });
+// --- Pré-jogo: 5, com preferência para competições UEFA (ordenação estável: mantém a ordem
+// relativa original dentro de cada grupo, só separa "é UEFA" de "não é UEFA"). Extraído para ser
+// reutilizado tanto na pintura instantânea a partir da cache local (ver PREMATCH_CACHE_PREFIX)
+// como na pintura com os dados frescos da Pulsescore. ---
+function paintDestaquesPrematch(prematchEl, icon, prematchEvents) {
   const prematchHighlights = [...prematchEvents.filter((e) => !hasKickedOff(e))]
     .sort((a, b) => (/uefa/i.test(a.league || "") ? 0 : 1) - (/uefa/i.test(b.league || "") ? 0 : 1))
     .slice(0, 5);
@@ -2026,6 +2049,34 @@ async function renderDestaquesHighlights() {
   } else {
     renderInBlocks(prematchEl, prematchHighlights.map((e) => highlightPrematchCardHtml(e, icon)));
   }
+}
+
+async function renderDestaquesHighlights() {
+  renderDestaquesPromoBanner();
+  const prematchEl = document.getElementById("destaques-prematch-list");
+  const liveEl = document.getElementById("destaques-live-list");
+  if (!prematchEl || !liveEl) return;
+  const icon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
+
+  // Pintura instantânea a partir da cache local — esta é a página de arranque (Destaques), a
+  // primeira coisa vista ao abrir/reabrir a Web ou PWA, por isso é aqui que o "fica vazio por
+  // uns segundos" reportado mais se nota.
+  const cachedPrematch = loadPrematchCache("highlights");
+  if (cachedPrematch) paintDestaquesPrematch(prematchEl, icon, cachedPrematch);
+  else prematchEl.innerHTML = skeletonCardsHtml(5);
+  liveEl.innerHTML = skeletonCardsHtml(5);
+
+  const [prematchResults, liveResult] = await Promise.all([
+    Promise.allSettled(SPORTS_META.map((s) => Bet62Api.getPrematchEvents(s.id))),
+    Bet62Api.getLiveEvents().catch(() => ({ events: [] })),
+  ]);
+
+  const prematchEvents = [];
+  prematchResults.forEach((r) => {
+    if (r.status === "fulfilled" && r.value.source === "pulsescore") prematchEvents.push(...r.value.events);
+  });
+  savePrematchCache("highlights", prematchEvents);
+  paintDestaquesPrematch(prematchEl, icon, prematchEvents);
 
   // --- Ao vivo: 1 por desporto-alvo + vagas em falta (incluindo o "bónus") preenchidas com
   // futebol extra. ---
