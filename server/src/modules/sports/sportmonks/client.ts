@@ -211,9 +211,25 @@ export async function getRoundEvents(roundId: number, opts: { marketIds?: number
 }
 
 // --- ⚠️ Não confirmado: descoberta de ligas + ronda atual (ver aviso no comentário do módulo) ---
+//
+// PRIMEIRA TENTATIVA CORRIGIDA (2026-08-25): `include=currentSeason.currentRound` devolvia 404
+// real da Sportmonks — "The requested include 'currentround' does not exist on Season" (code
+// 5013), confirmado via o diagnóstico do admin (GET /admin/sportmonks/status). Não existe essa
+// relação. Corrigido para `currentSeason.rounds` (todas as rondas da época atual — nome de
+// relação muito mais convencional) e filtra-se pelo campo `is_current`, que esse sim está
+// CONFIRMADO em ambas as amostras reais da ronda (ver comentário do módulo) — mais seguro do que
+// voltar a adivinhar outro nome de relação sem amostra.
 
-interface SportmonksLeagueWithCurrentRound extends SportmonksLeague {
-  currentSeason?: { currentRound?: { id: number } };
+interface SportmonksRoundRef {
+  id: number;
+  is_current?: boolean;
+}
+interface SportmonksLeagueWithRounds extends SportmonksLeague {
+  currentSeason?: { rounds?: SportmonksRoundRef[] };
+}
+
+function findCurrentRoundId(league: SportmonksLeagueWithRounds): number | undefined {
+  return league.currentSeason?.rounds?.find((r) => r.is_current)?.id;
 }
 
 /** Diagnóstico — só a 1ª página de /leagues, sem paginar tudo, para o admin (ver
@@ -222,16 +238,16 @@ interface SportmonksLeagueWithCurrentRound extends SportmonksLeague {
 export async function fetchLeaguesFirstPageRaw(): Promise<{
   totalOnPage: number;
   withCurrentRound: number;
-  sample: SportmonksLeagueWithCurrentRound | null;
+  sample: SportmonksLeagueWithRounds | null;
 }> {
-  const data = await sportmonksFetch<{ data: SportmonksLeagueWithCurrentRound[]; pagination?: { has_more?: boolean } }>("/leagues", {
-    include: "currentSeason.currentRound",
+  const data = await sportmonksFetch<{ data: SportmonksLeagueWithRounds[]; pagination?: { has_more?: boolean } }>("/leagues", {
+    include: "currentSeason.rounds",
     page: 1,
   });
   const leagues = data.data ?? [];
   return {
     totalOnPage: leagues.length,
-    withCurrentRound: leagues.filter((l) => l.currentSeason?.currentRound?.id).length,
+    withCurrentRound: leagues.filter((l) => findCurrentRoundId(l)).length,
     sample: leagues[0] ?? null,
   };
 }
@@ -241,12 +257,12 @@ export async function fetchLeaguesWithCurrentRound(): Promise<Array<{ leagueId: 
   let page = 1;
   const maxPages = 20; // travão de segurança — "todas as ligas" pode ser uma lista grande
   while (page <= maxPages) {
-    const data = await sportmonksFetch<{ data: SportmonksLeagueWithCurrentRound[]; pagination?: { has_more?: boolean } }>("/leagues", {
-      include: "currentSeason.currentRound",
+    const data = await sportmonksFetch<{ data: SportmonksLeagueWithRounds[]; pagination?: { has_more?: boolean } }>("/leagues", {
+      include: "currentSeason.rounds",
       page,
     });
     for (const league of data.data ?? []) {
-      const roundId = league.currentSeason?.currentRound?.id;
+      const roundId = findCurrentRoundId(league);
       if (roundId) pairs.push({ leagueId: league.id, roundId });
     }
     if (!data.pagination?.has_more) break;
