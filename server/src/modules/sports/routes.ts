@@ -15,6 +15,7 @@ import {
   fetchInplayOddsForFixture,
   fetchTodayRawFixtureForLiveDiagnosis,
   getHeadToHeadForFixture,
+  getMatchTimeline,
   getStandingsBySeason,
   getTeamFormForFixture,
   getTopscorersBySeason,
@@ -459,6 +460,24 @@ router.get(
 
     const form = await getTeamFormForFixture(fixtureId).catch(() => ({ home: null, away: null }));
     res.json(form);
+  })
+);
+
+// Linha do tempo do jogo (golos/cartões/substituições) — só futebol, só jogos da Sportmonks (GET
+// /fixtures/{id} com events.player;events.type incluído, ver sportmonks/client.ts). Jogos da
+// Pulsescore devolvem lista vazia, nunca um erro — mesma disciplina das rotas acima.
+router.get(
+  "/events/:id/timeline",
+  asyncHandler(async (req, res) => {
+    const event = findCachedEvent(req.params.id);
+    if (!event) throw Errors.notFound("Evento não encontrado");
+    if (event.sport !== "football" || !req.params.id.startsWith("sportmonks:")) return res.json({ events: [] });
+
+    const fixtureId = Number(req.params.id.slice("sportmonks:".length));
+    if (!Number.isFinite(fixtureId)) return res.json({ events: [] });
+
+    const detail = await fetchFixtureDetail(fixtureId).catch(() => null);
+    res.json({ events: detail ? getMatchTimeline(detail) : [] });
   })
 );
 

@@ -342,6 +342,12 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .st-form-dot-w{background:var(--green)}
 .st-form-dot-l{background:var(--red)}
 .st-form-dot-d{background:var(--muted)}
+.timeline-list{max-height:320px;overflow-y:auto}
+.timeline-row{display:flex;align-items:center;gap:8px;padding:7px 2px;font-size:.78rem;border-bottom:1px solid var(--border)}
+.timeline-row:last-child{border-bottom:none}
+.timeline-minute{flex:0 0 36px;color:var(--muted);font-weight:700}
+.timeline-icon{flex:0 0 18px;text-align:center}
+.timeline-text{flex:1;overflow:hidden;text-overflow:ellipsis}
 .form-team{margin-bottom:16px}
 .form-team:last-child{margin-bottom:0}
 .form-team-name{font-weight:700;font-size:.82rem;margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -1112,6 +1118,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
             <div class="stats-tab" id="stats-tab-table" onclick="switchStatsTab('table')">Classificação</div>
             <div class="stats-tab" id="stats-tab-topscorers" onclick="switchStatsTab('topscorers')">Artilheiros</div>
             <div class="stats-tab" id="stats-tab-form" onclick="switchStatsTab('form')">Forma</div>
+            <div class="stats-tab" id="stats-tab-timeline" onclick="switchStatsTab('timeline')">Eventos</div>
         </div>
         <div class="stats-tab-body">
             <div id="stats-body-prob"></div>
@@ -1120,6 +1127,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
             <div id="stats-body-table" class="hidden"></div>
             <div id="stats-body-topscorers" class="hidden"></div>
             <div id="stats-body-form" class="hidden"></div>
+            <div id="stats-body-timeline" class="hidden"></div>
             <button class="btn-outline" onclick="closeStats()">Fechar</button>
         </div>
     </div>
