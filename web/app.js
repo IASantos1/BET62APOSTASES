@@ -2384,9 +2384,11 @@ function openMarket(eventId, isLive) {
   showPage("market");
   renderMarketPage();
 
-  // Eventos reais da Pulsescore: pede dados frescos em vez de confiar só na última leitura
-  // em cache (snapshot ao vivo ou lista de pré-jogo).
-  if (event.source === "pulsescore") {
+  // Eventos reais da Pulsescore/Sportmonks: pede dados frescos em vez de confiar só na última
+  // leitura em cache (snapshot ao vivo ou lista de pré-jogo) — para a Sportmonks isto é o que
+  // torna as odds de um jogo ao vivo aberto mais frescas do que o ciclo de 15s da lista inteira
+  // (reportado pelo utilizador como "as odds em ao vivo não estão atualizando").
+  if (event.source === "pulsescore" || event.source === "sportmonks") {
     const marketsBeforeRefresh = event.odds || [];
     Bet62Api.refreshEvent(eventId, event.sport)
       .then((res) => {

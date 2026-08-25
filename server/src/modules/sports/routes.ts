@@ -9,7 +9,7 @@ import { getHeadToHead, getPredictions, getStandings, type HeadToHeadMatch } fro
 import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent, getFullFixtureMapping } from "./mapping/service";
 import { getUnifiedMatchData } from "./unified/service";
 import { getSportmonksEventById, getSportmonksFootballPrematchDiagnosis } from "./sportmonks/prematch";
-import { fetchTodayRawFixtureForLiveDiagnosis } from "./sportmonks/client";
+import { diagnoseLiveOddsMovement, fetchFixtureDetail, fetchTodayRawFixtureForLiveDiagnosis, normalizeFixtureDetail } from "./sportmonks/client";
 import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
 import { logger } from "../../lib/logger";
@@ -59,6 +59,24 @@ router.get(
   })
 );
 
+// Diagnóstico temporário — pedido explícito do utilizador ("odds em ao vivo não está funcionando",
+// mesmo depois da cache de 15s e do refresh on-demand ao abrir o jogo). Pede as odds do mesmo jogo
+// ao vivo duas vezes com um intervalo (por omissão 8s) e diz se os valores mudaram — responde de
+// vez se a Sportmonks está mesmo a atualizar odds ao vivo através deste endpoint, ou se o
+// problema está noutro sítio. `?waitMs=15000` para um intervalo maior.
+router.get(
+  "/sportmonks-odds-movement-debug",
+  asyncHandler(async (req, res) => {
+    const waitMs = typeof req.query.waitMs === "string" && Number.isFinite(Number(req.query.waitMs)) ? Number(req.query.waitMs) : undefined;
+    try {
+      const result = await diagnoseLiveOddsMovement(waitMs);
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      res.json({ ok: false, message: err instanceof Error ? err.message : "Erro desconhecido" });
+    }
+  })
+);
+
 router.get(
   "/events",
   asyncHandler(async (req, res) => {
@@ -91,6 +109,22 @@ router.get(
 router.get(
   "/events/:id/refresh",
   asyncHandler(async (req, res) => {
+    // Jogos da Sportmonks (só futebol, FOOTBALL_PROVIDER=sportmonks) têm o seu próprio refresh —
+    // pedido explícito do utilizador ("as odds em ao vivo não estão atualizando"): ao abrir o
+    // Match Tracker, busca-se esse jogo sozinho (fetchFixtureDetail, mais leve do que esperar
+    // pelo ciclo de 15s da lista de Ao Vivo), em vez de cair nos fetchers da Pulsescore abaixo
+    // (que não reconhecem este formato de id). Sem mapeamento API-Football nem enriquecimento
+    // cross-bookmaker aqui — esses são conceitos só da Pulsescore.
+    if (req.params.id.startsWith("sportmonks:")) {
+      const fixtureId = Number(req.params.id.slice("sportmonks:".length));
+      if (!Number.isFinite(fixtureId)) throw Errors.badRequest("Id de evento Sportmonks inválido");
+      const detail = await fetchFixtureDetail(fixtureId);
+      const event = normalizeFixtureDetail(detail);
+      if (!event) throw Errors.notFound("Evento não encontrado na Sportmonks");
+      res.json({ event });
+      return;
+    }
+
     const sport = req.query.sport;
     if (typeof sport !== "string" || !ALL_SPORTS.includes(sport as Sport)) {
       throw Errors.badRequest("Parâmetro sport em falta ou inválido");

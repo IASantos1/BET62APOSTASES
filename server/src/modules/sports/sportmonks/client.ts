@@ -417,6 +417,140 @@ export function normalizeLiveFixture(fixture: SportmonksLiveFixture, odds: LiveO
   };
 }
 
+interface SportmonksFixtureState {
+  short_name: string; // "NS" CONFIRMADO numa amostra real = "Not Started" (ver comentário abaixo)
+}
+interface SportmonksFixtureDetail {
+  id: number;
+  starting_at: string;
+  state?: SportmonksFixtureState;
+  participants?: SportmonksParticipant[];
+  league?: SportmonksLeague;
+  scores?: SportmonksLiveScore[];
+  periods?: SportmonksLivePeriod[];
+  odds?: SportmonksOdd[];
+}
+
+/**
+ * GET /fixtures/{id} — CONFIRMADO por uma amostra real completa (`include=state;participants;
+ * venue;scores;league;events...;predictions...`, sem `odds.market;odds.bookmaker` nessa amostra
+ * em concreto — pedido aqui na mesma, mesmo padrão de include já confirmado a funcionar nos
+ * outros endpoints da Sportmonks; se um dia se confirmar que não devolve odds neste endpoint,
+ * fica só sem mercados, nunca inventa). Usado para o refresh "abrir o Match Tracker" de UM jogo
+ * específico (mesma ideia do refresh da Pulsescore em pulsescore/client.ts) — mais leve do que
+ * pedir o dia inteiro (fetchFixturesBetween) só para atualizar um jogo.
+ *
+ * `state.short_name` CONFIRMADO: "NS" = "Not Started" — usado como sinal extra (par com a hora)
+ * só para reforçar "ainda não começou"; outros valores de `state` NUNCA foram confirmados (ver
+ * aviso no comentário do módulo), por isso um jogo já começado continua classificado só pela hora,
+ * tal como em normalizeFixture()/normalizeLiveFixture().
+ */
+export async function fetchFixtureDetail(fixtureId: number): Promise<SportmonksFixtureDetail> {
+  const data = await sportmonksFetch<{ data: SportmonksFixtureDetail }>(`/fixtures/${fixtureId}`, {
+    include: "state;participants;league.country;scores;periods;odds.market;odds.bookmaker",
+    filters: `bookmakers:${env.SPORTMONKS_BOOKMAKER_ID}`,
+  });
+  return data.data;
+}
+
+/** Normaliza a resposta de fetchFixtureDetail() para LiveEvent — usado só para o refresh on-demand
+ * de UM jogo (ver routes.ts, GET /events/:id/refresh). */
+export function normalizeFixtureDetail(fixture: SportmonksFixtureDetail): LiveEvent | null {
+  const home = fixture.participants?.find((p) => p.meta?.location === "home");
+  const away = fixture.participants?.find((p) => p.meta?.location === "away");
+  if (!home || !away) return null;
+
+  const startTimeIso = `${fixture.starting_at.trim().replace(" ", "T")}Z`;
+  const hasKickedOff = new Date(startTimeIso).getTime() <= Date.now();
+  const isScheduled = fixture.state?.short_name === "NS" || !hasKickedOff;
+
+  const currentScores = (fixture.scores ?? []).filter((s) => s.description === "CURRENT");
+  const homeScore = currentScores.find((s) => s.score.participant === "home")?.score.goals;
+  const awayScore = currentScores.find((s) => s.score.participant === "away")?.score.goals;
+
+  const periods = fixture.periods ?? [];
+  const activePeriod = periods.find((p) => p.ended === null) ?? periods[periods.length - 1];
+  const minuteOrPeriod = !isScheduled && activePeriod ? `${activePeriod.minutes}'` : "";
+
+  return {
+    id: `sportmonks:${fixture.id}`,
+    sport: "football",
+    league: fixture.league?.name ?? "Futebol",
+    home: home.name,
+    away: away.name,
+    homeScore: isScheduled ? undefined : homeScore,
+    awayScore: isScheduled ? undefined : awayScore,
+    minuteOrPeriod,
+    // "live" para qualquer jogo já começado sem "NS" — sem confirmação de outros valores de
+    // state para "terminado" (ver aviso acima), esta função é só para refresh on-demand ao abrir
+    // um jogo que o frontend já sabe (pela secção onde estava) que é pré-jogo ou ao vivo; o caso
+    // raro de reabrir mesmo no instante em que termina fica coberto pelo merge do frontend, que
+    // nunca troca mercados já mostrados por uma resposta mais pobre.
+    status: isScheduled ? "scheduled" : "live",
+    odds: finalizeMarketOrder(groupOddsIntoMarkets(fixture.odds)),
+    updatedAt: new Date().toISOString(),
+    source: "sportmonks",
+    startTime: startTimeIso,
+    country: fixture.league?.country?.iso2,
+  };
+}
+
+/**
+ * Diagnóstico (ver routes.ts, GET /api/sports/sportmonks-odds-movement-debug) — pedido explícito
+ * do utilizador ("odds em ao vivo não está funcionando", "continuam paradas/iguais" mesmo depois
+ * da cache de 15s e do refresh on-demand ao abrir o jogo). Antes de mexer mais em código, esta
+ * função responde a uma pergunta em falta: a Sportmonks está mesmo a mandar valores DIFERENTES
+ * para o mesmo jogo ao vivo ao longo do tempo através deste endpoint (GET /fixtures/{id}), ou o
+ * has_odds:true/has_premium_odds:true só significa "há odds" (o snapshot de pré-jogo, congelado
+ * desde o apito inicial) sem estas se atualizarem durante o jogo? Pega no primeiro jogo ao vivo
+ * agora, pede as suas odds duas vezes com um intervalo, e compara o mercado principal (Fulltime
+ * Result) valor a valor — nunca assumido, sempre confirmado com uma amostra real.
+ */
+export async function diagnoseLiveOddsMovement(waitMs = 8_000): Promise<{
+  fixtureId: number | null;
+  fixtureName: string | null;
+  waitedMs: number;
+  snapshot1: Record<string, number> | null;
+  snapshot2: Record<string, number> | null;
+  changed: boolean | null;
+  diagnosis: string;
+}> {
+  const live = await fetchLivescoresInplay();
+  if (!live.length) {
+    return { fixtureId: null, fixtureName: null, waitedMs: 0, snapshot1: null, snapshot2: null, changed: null, diagnosis: "Nenhum jogo ao vivo neste momento — tentar de novo durante um jogo a decorrer." };
+  }
+  const fixture = live[0]!;
+
+  const snapshotOf = async (): Promise<Record<string, number>> => {
+    const detail = await fetchFixtureDetail(fixture.id);
+    const primary = groupOddsIntoMarkets(detail.odds).find((m) => /full.?time result/i.test(m.market));
+    const out: Record<string, number> = {};
+    if (primary) for (const [label, sel] of Object.entries(primary.selections)) out[label] = sel.odd;
+    return out;
+  };
+
+  const snapshot1 = await snapshotOf();
+  await new Promise((resolve) => setTimeout(resolve, waitMs));
+  const snapshot2 = await snapshotOf();
+
+  const keys = new Set([...Object.keys(snapshot1), ...Object.keys(snapshot2)]);
+  let changed = false;
+  for (const k of keys) {
+    if (snapshot1[k] !== snapshot2[k]) changed = true;
+  }
+
+  let diagnosis: string;
+  if (!Object.keys(snapshot1).length && !Object.keys(snapshot2).length) {
+    diagnosis = `Este jogo (${fixture.name}) não devolveu nenhuma odd de Fulltime Result em nenhuma das duas vezes — o problema pode ser falta de odds mesmo, não movimento.`;
+  } else if (changed) {
+    diagnosis = `Os valores MUDARAM entre os dois pedidos (${waitMs / 1000}s de intervalo) — a Sportmonks está mesmo a atualizar as odds ao vivo, o problema deve estar do nosso lado (cache/refresh).`;
+  } else {
+    diagnosis = `Os valores ficaram EXATAMENTE IGUAIS nos dois pedidos (${waitMs / 1000}s de intervalo) — sinal de que este endpoint pode não estar a devolver odds atualizadas durante o jogo (pode ser só o snapshot de pré-jogo congelado), não é um problema da nossa cache.`;
+  }
+
+  return { fixtureId: fixture.id, fixtureName: fixture.name, waitedMs: waitMs, snapshot1, snapshot2, changed, diagnosis };
+}
+
 /**
  * Diagnóstico (ver routes.ts, GET /api/sports/sportmonks-live-debug) — duas amostras BRUTAS
  * (sem normalizar, todos os campos tal como a Sportmonks manda), num único pedido:
