@@ -22,6 +22,15 @@ const SPORTS_META = [
 let selectedSport = null; // null = todos
 let selectedLeague = null; // filtra ainda mais por liga (ver loadFootballCountriesTree)
 
+// Futebol pré-jogo (Sportmonks): a janela toda tem ~200 jogos/5 dias, mas só o dia selecionado
+// vem na resposta (~40 jogos), para não repetir a lentidão de mandar tudo de uma vez com todos os
+// mercados (pedido explícito do utilizador: manter TODOS os mercados, mas limitar quantos JOGOS
+// ficam visíveis, navegando por dia em vez de por corte de mercados). null = dia por omissão (o
+// primeiro disponível, ver sportmonks/prematch.ts). Só se aplica ao futebol — os outros desportos
+// (Pulsescore) continuam a devolver a lista inteira de uma vez, como sempre.
+let selectedFootballDate = null;
+let footballAvailableDates = []; // preenchido a partir de data.availableDates na resposta
+
 // Lista estática usada só como fallback instantâneo enquanto a árvore real (ver
 // loadFootballCountriesTree, abaixo) ainda não carregou, ou se a API não devolver nada (ex: sem
 // PULSESCORE_API_KEY configurada). Assim que houver dados reais, o menu troca para eles.
@@ -383,9 +392,11 @@ async function renderPrematchList() {
 
   if (includesFootball) {
     try {
-      const data = await Bet62Api.getPrematchEvents("football");
+      const data = await Bet62Api.getPrematchEvents("football", selectedFootballDate);
       if (requestToken !== renderPrematchList._token) return;
       footballEvents = data.source === "pulsescore" || data.source === "sportmonks" ? data.events : [];
+      footballAvailableDates = data.availableDates || [];
+      renderFootballDateFilter();
       // Pinta já: futebol fresco + os restantes desportos ainda com o que estava em cache (se
       // houver), para não fazer desaparecer jogos já visíveis enquanto se espera pelos outros.
       const otherFromCache = (cachedEvents || []).filter((e) => e.sport !== "football");
@@ -393,6 +404,9 @@ async function renderPrematchList() {
     } catch {
       footballEvents = [];
     }
+  } else {
+    footballAvailableDates = [];
+    renderFootballDateFilter();
   }
 
   const otherResults = await otherPromise;
@@ -408,6 +422,37 @@ async function renderPrematchList() {
   paintPrematchList(container, realEvents);
 }
 renderPrematchList._token = 0;
+
+// Separadores de dia do pré-jogo de futebol (só Sportmonks — availableDates só vem preenchido
+// nesse ramo, ver prematch/service.ts) — só aparecem quando se está mesmo a ver só futebol
+// (selectedSport === "football"), nunca na vista "Todos" nem nos outros desportos.
+function renderFootballDateFilter() {
+  const el = document.getElementById("football-date-filter");
+  if (!el) return;
+  if (selectedSport !== "football" || !footballAvailableDates.length) {
+    el.innerHTML = "";
+    el.style.display = "none";
+    return;
+  }
+  el.style.display = "flex";
+  const todayKeyUtc = new Date().toISOString().slice(0, 10); // mesma convenção do backend (UTC)
+  const activeDate = selectedFootballDate || footballAvailableDates[0];
+  el.innerHTML = footballAvailableDates
+    .map((d) => {
+      const label =
+        d === todayKeyUtc
+          ? "Hoje"
+          : new Date(`${d}T12:00:00Z`).toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit", timeZone: BET62_TIMEZONE });
+      return `<div class="sport-chip ${d === activeDate ? "active" : ""}" onclick="selectFootballDate('${d}')">${label}</div>`;
+    })
+    .join("");
+}
+
+function selectFootballDate(date) {
+  if (selectedFootballDate === date) return;
+  selectedFootballDate = date;
+  renderPrematchList();
+}
 
 // Atualização periódica em segundo plano das listas de Pré-jogo (Esportes e Destaques) — sem
 // isto, a lista só refrescava ao mudar de página/filtro, podendo ficar minutos sem refletir jogos

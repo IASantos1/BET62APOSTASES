@@ -15,16 +15,6 @@ const PREMATCH_WINDOW_DAYS = 5; // dias à frente a cobrir — reduzido de 10 pa
 // mais rápido); sem confirmação do período ideal da Sportmonks, valor razoável, pode subir depois
 // de confirmado que o endpoint responde bem.
 
-// Amostra real em produção (198 jogos, 5 dias): média de ~150 mercados por jogo, alguns com 267 —
-// muito mais do que a Pulsescore costuma trazer (até ~34 numa amostra rica) porque
-// fetchFixturesBetween() não filtra por mercado (ver aviso "não confirmado" em client.ts sobre
-// não adivinhar IDs de mercado). Isto sozinho gerava respostas de 8+ MB, lentas a transferir e a
-// desenhar no telemóvel. Não é curadoria de "quais mercados importam" (isso exigiria adivinhar
-// IDs/nomes não confirmados) — é só um limite de largura de banda para a LISTA de pré-jogo: fica
-// com os primeiros N mercados devolvidos pela Sportmonks para cada jogo, que continuam a ser
-// "vários mercados" (pedido explícito do utilizador), só não TODOS de uma vez.
-const MAX_MARKETS_PER_EVENT_IN_LIST = 30;
-
 let cache: { events: LiveEvent[]; fetchedAt: number } | null = null;
 
 function dateRangeFromToday(days: number): { start: string; end: string } {
@@ -37,21 +27,60 @@ function dateRangeFromToday(days: number): { start: string; end: string } {
 async function fetchAndNormalize(): Promise<LiveEvent[]> {
   const { start, end } = dateRangeFromToday(PREMATCH_WINDOW_DAYS);
   const events = await fetchFixturesBetween(start, end);
-  return events
-    .filter((e) => e.status === "scheduled")
-    // Jogos sem odds do bookmaker filtrado (bet365) não são utilizáveis para apostar — mostrá-los
-    // na lista era o "jogos sem odds" reportado pelo utilizador. Excluídos aqui, não em
-    // normalizeFixture(), para o diagnóstico (getSportmonksFootballPrematchDiagnosis) continuar a
-    // ver a contagem bruta e conseguir distinguir "0 jogos" de "jogos sem odds".
-    .filter((e) => e.odds.length > 0)
-    .map((e) => (e.odds.length > MAX_MARKETS_PER_EVENT_IN_LIST ? { ...e, odds: e.odds.slice(0, MAX_MARKETS_PER_EVENT_IN_LIST) } : e));
+  return (
+    events
+      .filter((e) => e.status === "scheduled")
+      // Jogos sem odds do bookmaker filtrado (bet365) não são utilizáveis para apostar — mostrá-los
+      // na lista era o "jogos sem odds" reportado pelo utilizador.
+      .filter((e) => e.odds.length > 0)
+  );
 }
 
-export async function getSportmonksFootballPrematch(): Promise<LiveEvent[]> {
-  if (cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS) return cache.events;
-  const events = await fetchAndNormalize();
-  cache = { events, fetchedAt: Date.now() };
-  return events;
+/** startTime é sempre ISO UTC explícito (ver normalizeFixture em client.ts) — os primeiros 10
+ * caracteres já são o dia civil "YYYY-MM-DD" nesse fuso, usado só para agrupar/filtrar por dia
+ * (não é o dia civil do utilizador, mas é estável e consistente com o resto do pipeline). */
+function eventDateKey(e: LiveEvent): string {
+  // startTime é sempre preenchido pelo normalizeFixture() da Sportmonks (ver client.ts) — o tipo
+  // é opcional só porque LiveEvent é partilhado com o feed ao vivo da Pulsescore, que não o tem.
+  return (e.startTime ?? "").slice(0, 10);
+}
+
+export interface SportmonksPrematchResult {
+  events: LiveEvent[];
+  /** Todos os dias com pelo menos um jogo na janela cheia (~200 jogos/5 dias), ordenados — usado
+   * pelo frontend para desenhar os separadores de dia. `events` é só o dia pedido (ou o primeiro
+   * disponível, por omissão). */
+  availableDates: string[];
+}
+
+/**
+ * Pedido explícito do utilizador: manter TODOS os mercados de cada jogo (não cortar), mas limitar
+ * quantos JOGOS ficam visíveis de uma vez — em vez de mandar os ~200 jogos da janela toda com
+ * todos os mercados (era isso que gerava as respostas de 8+ MB, lentas), devolve só os jogos de UM
+ * dia (`date`, ou o primeiro dia disponível por omissão — tipicamente ~40 jogos/dia numa amostra
+ * real de 198 jogos/5 dias), com a lista de dias disponíveis para o frontend deixar trocar de dia.
+ * A janela cheia continua toda em cache (getSportmonksEventById também procura nela), só a resposta
+ * é que fica fatiada por dia.
+ */
+export async function getSportmonksFootballPrematch(date?: string): Promise<SportmonksPrematchResult> {
+  if (!cache || Date.now() - cache.fetchedAt >= CACHE_TTL_MS) {
+    cache = { events: await fetchAndNormalize(), fetchedAt: Date.now() };
+  }
+  const allEvents = cache.events;
+  const availableDates = [...new Set(allEvents.map(eventDateKey))].sort();
+  const targetDate = date && availableDates.includes(date) ? date : availableDates[0];
+  const events = targetDate ? allEvents.filter((e) => eventDateKey(e) === targetDate) : [];
+  return { events, availableDates };
+}
+
+/** Procura um jogo pelo id (`sportmonks:<fixtureId>`) na janela cheia já em cache — usado pelas
+ * rotas de H2H/previsões/classificação (routes.ts), que só sabiam procurar eventos na cache da
+ * Pulsescore (hybridSportsService.getById) e por isso devolviam sempre vazio para jogos da
+ * Sportmonks. Não dispara um pedido novo à Sportmonks: se a cache ainda não tiver sido preenchida
+ * (ex: mesmo depois do arranque do servidor, antes do primeiro tick do pré-aquecimento em
+ * segundo plano), devolve null em vez de bloquear o pedido do utilizador. */
+export function getSportmonksEventById(id: string): LiveEvent | null {
+  return cache?.events.find((e) => e.id === id) ?? null;
 }
 
 // Pré-aquece a cache em segundo plano em vez de deixar o primeiro pedido do utilizador depois de

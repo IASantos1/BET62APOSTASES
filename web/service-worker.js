@@ -9,7 +9,7 @@
 // ficheiro service-worker.js de vez em quando; subir a versão aqui garante um novo install/
 // activate imediato, o que já se confirmou ser necessário para o modo PWA standalone do iOS não
 // prender uma versão antiga durante muito tempo).
-const CACHE_NAME = "bet62-shell-v3";
+const CACHE_NAME = "bet62-shell-v4";
 const SHELL_FILES = ["/", "/index.html", "/app.js", "/api.js", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (event) => {

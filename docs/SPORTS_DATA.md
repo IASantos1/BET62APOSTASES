@@ -799,26 +799,53 @@ Sportmonks em vez disso — cobertura de "todas as ligas" e "vários mercados". 
 `FOOTBALL_PROVIDER` em `env.ts` (`pulsescore` por omissão — nada muda até ser mudado
 explicitamente para `sportmonks`). Os outros 7 desportos NUNCA passam pela Sportmonks.
 
-**✅ Confirmado por duas amostras reais idênticas coladas pelo utilizador** (`GET /rounds/{id}?
-include=fixtures.odds.market;fixtures.odds.bookmaker;fixtures.participants;league.country&
-filters=markets:X;bookmakers:2`): forma da ronda/fixture/odd/participante — ver comentário
-completo em `sportmonks/client.ts`. Testado com uma reprodução exata dessa amostra: liga,
-equipas (via `participants[].meta.location`), e as três odds 1X2 saem todas corretas.
+**✅ Confirmado por amostras reais em produção**:
+- `GET /rounds/{id}?include=fixtures.odds.market;fixtures.odds.bookmaker;fixtures.participants;
+  league.country&filters=markets:X;bookmakers:2`: forma da ronda/fixture/odd/participante — ver
+  comentário completo em `sportmonks/client.ts`.
+- `GET /fixtures/between/{start}/{end}?include=participants;odds.market;odds.bookmaker;
+  league.country&filters=bookmakers:2` (sem filtrar por `markets`): é o endpoint em produção
+  (`fetchFixturesBetween`, ver `sportmonks/client.ts`) — devolve fixtures de TODAS as ligas num
+  intervalo de datas, cada uma já com a sua `league` embutida (sem precisar de resolver "ronda
+  atual"). Confirmado em produção com uma janela de 5 dias: 198 jogos, 28 ligas, 20 países, em
+  média ~150 mercados por jogo (Goalscorers, Half Time Correct Score, Winning Margin, Alternative
+  Corners em várias linhas, etc. — muito além do 1X2), alguns jogos com até 267. `odds[].market.
+  name` usado diretamente, sem tabela de tradução, tal como o `rawName` da Pulsescore.
+- Autenticação via `?api_token=` na query string — a chave real do utilizador funciona assim.
 
-**⚠️ NÃO confirmado com amostra real** (implementado contra os padrões documentados publicamente
-da Sportmonks v3, nunca testados contra a chave real deste projeto — rede deste ambiente de build
-bloqueia `api.sportmonks.com`):
-- Autenticação via `?api_token=` na query string.
-- `GET /leagues?include=currentSeason.currentRound` para descobrir a ronda atual de cada liga —
-  necessário para "todas as ligas" numa lista só, já que a Sportmonks organiza por
-  ronda/liga, ao contrário da lista plana da Pulsescore.
-- Qualquer mercado além do `market_id:1` (1X2) — a amostra só veio filtrada a esse mercado; outros
-  mercados devem funcionar pela mesma forma (`odds[].market.name` usado diretamente, sem tabela de
-  tradução, tal como o `rawName` da Pulsescore), mas nunca vistos numa resposta real.
+**⚠️ NÃO confirmado com amostra real**:
 - Classificação de estado do jogo (`state_id`): sem uma amostra de um jogo por começar/a decorrer
-  (a única amostra recebida foi sempre de uma ronda já terminada), `normalizeFixture()` NUNCA
-  assume "ao vivo" — só compara `starting_at` com a hora atual para decidir "agendado" vs.
-  "terminado", em vez de inventar significado para um enum não confirmado.
+  (as amostras recebidas são sempre de rondas já terminadas ou de jogos ainda por começar),
+  `normalizeFixture()` NUNCA assume "ao vivo" — só compara `starting_at` com a hora atual para
+  decidir "agendado" vs. "terminado", em vez de inventar significado para um enum não confirmado.
+- `GET /leagues?include=currentSeason.currentRound` / `currentSeason.rounds` para descobrir a
+  ronda atual de cada liga — via abandonada, ver "Problemas reais encontrados e resolvidos" abaixo.
+
+**Problemas reais encontrados e resolvidos em produção** (cada um só depois de uma amostra real
+relayada pelo utilizador, nunca adivinhado):
+1. `include=currentSeason.currentRound` → 404 real (código 5013, "requested include 'currentround'
+   does not exist on Season"). Tentativa seguinte, `currentSeason.rounds` + filtro `is_current`,
+   confirmou-se estruturalmente quebrada (0 ligas com ronda atual em 20 páginas percorridas).
+   Abandonada em favor de `fetchFixturesBetween` (não depende de nenhuma relação "ronda atual").
+2. Sem limite de páginas/timeout, `GET /api/sports/sportmonks-debug` ficou preso "só a carregar"
+   em produção — corrigido com `AbortController` de 15s por pedido e `maxPages` conservador (ver
+   `sportmonksFetch()`/`fetchFixturesBetween()` em `client.ts`).
+3. A lista de pré-jogo (todos os ~200 jogos da janela de 5 dias, cada um com ~150 mercados) gerava
+   respostas de 8+ MB — lentas a transferir/desenhar no telemóvel — e incluía jogos sem nenhuma odd
+   do bookmaker filtrado. Corrigido em `sportmonks/prematch.ts`: (a) jogos sem odds são filtrados
+   antes de chegar à lista; (b) a resposta só devolve os jogos de UM dia de cada vez (parâmetro
+   `date` em `GET /api/sports/prematch?sport=football&date=YYYY-MM-DD`, tipicamente ~40 jogos/dia),
+   mantendo TODOS os mercados por jogo (pedido explícito do utilizador — nada de cortar mercados);
+   a janela toda (~200 jogos/5 dias) continua em cache para os outros dias/`availableDates` e para
+   `getSportmonksEventById()` (usado pelas rotas de H2H/previsões/classificação); (c) a cache é
+   pré-aquecida em segundo plano a cada 40s (`startSportmonksPrematchBackgroundRefresh()`,
+   arrancado em `server.ts`) para nenhum utilizador pagar em direto o custo da cadeia de pedidos à
+   Sportmonks.
+4. H2H/previsões/classificação/mapeamento (`routes.ts`) só sabiam procurar o evento na cache ao
+   vivo da Pulsescore (`hybridSportsService.getById`) — para jogos de pré-jogo da Sportmonks isso
+   devolvia sempre "não encontrado", reportado pelo utilizador como "as estatísticas não estão a
+   aparecer". Corrigido com `findCachedEvent()` (novo helper em `routes.ts`), que também procura em
+   `getSportmonksEventById()` quando o id começa por `sportmonks:`.
 
 **Deliberadamente NÃO migrado**: o Ao Vivo de futebol (`hybridService.ts`) continua sempre na
 Pulsescore, mesmo com `FOOTBALL_PROVIDER=sportmonks`. A primeira amostra que o utilizador mostrou
@@ -828,10 +855,11 @@ não um feed ao vivo. Sem uma amostra real de um endpoint ao vivo COM odds, migr
 deixaria o futebol sem poder apostar durante os jogos — por isso fica por fazer até haver essa
 amostra.
 
-Ficheiros: `sportmonks/client.ts` (cliente + normalizador `LiveEvent`), `sportmonks/prematch.ts`
-(junta todas as ligas numa lista plana, dois níveis de cache — ligas/ronda-atual 1h, jogos+odds de
-cada ronda 45s), `prematch/service.ts::getPrematchEvents()` (desvia só o futebol quando o
-interruptor está ligado).
+Ficheiros: `sportmonks/client.ts` (cliente + normalizador `LiveEvent` + `fetchFixturesBetween`),
+`sportmonks/prematch.ts` (junta todas as ligas numa lista plana com `fetchFixturesBetween`, cache
+de 45s pré-aquecida em segundo plano, fatia por dia e expõe `getSportmonksEventById()`),
+`prematch/service.ts::getPrematchEvents(sport, date?)` (desvia só o futebol quando o interruptor
+está ligado, passa `date` adiante).
 
 ## Ordenação de desportos (Pré-jogo e Destaques)
 
