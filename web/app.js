@@ -88,7 +88,7 @@ async function loadFootballCountriesTree() {
   }
   try {
     const [prematch, live] = await Promise.all([Bet62Api.getPrematchEvents("football"), Bet62Api.getLiveEvents("football")]);
-    const events = [...(prematch?.source === "pulsescore" ? prematch.events : []), ...(live?.events || [])];
+    const events = [...(prematch?.source === "pulsescore" || prematch?.source === "sportmonks" ? prematch.events : []), ...(live?.events || [])];
     const byCountry = new Map(); // código ISO (ou "") -> Set<nome da liga>
     for (const e of events) {
       if (!e.league) continue;
@@ -385,7 +385,7 @@ async function renderPrematchList() {
     try {
       const data = await Bet62Api.getPrematchEvents("football");
       if (requestToken !== renderPrematchList._token) return;
-      footballEvents = data.source === "pulsescore" ? data.events : [];
+      footballEvents = data.source === "pulsescore" || data.source === "sportmonks" ? data.events : [];
       // Pinta já: futebol fresco + os restantes desportos ainda com o que estava em cache (se
       // houver), para não fazer desaparecer jogos já visíveis enquanto se espera pelos outros.
       const otherFromCache = (cachedEvents || []).filter((e) => e.sport !== "football");
@@ -2114,7 +2114,7 @@ async function renderDestaquesHighlights() {
 
   const prematchEvents = [];
   prematchResults.forEach((r) => {
-    if (r.status === "fulfilled" && r.value.source === "pulsescore") prematchEvents.push(...r.value.events);
+    if (r.status === "fulfilled" && (r.value.source === "pulsescore" || r.value.source === "sportmonks")) prematchEvents.push(...r.value.events);
   });
   savePrematchCache("highlights", prematchEvents);
   paintDestaquesPrematch(prematchEl, icon, prematchEvents);

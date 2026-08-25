@@ -1,6 +1,7 @@
 import { env } from "../../../config/env";
 import { logger } from "../../../lib/logger";
 import { fetchEventsFlat } from "../pulsescore/client";
+import { getSportmonksFootballPrematch } from "../sportmonks/prematch";
 import type { LiveEvent, Sport } from "../types";
 
 const CACHE_TTL_MS = 45_000;
@@ -8,7 +9,7 @@ const cache = new Map<string, { events: LiveEvent[]; fetchedAt: number }>();
 
 export interface PrematchResult {
   events: LiveEvent[];
-  source: "pulsescore" | "unconfigured";
+  source: "pulsescore" | "sportmonks" | "unconfigured";
 }
 
 /**
@@ -17,8 +18,33 @@ export interface PrematchResult {
  * Sem PULSESCORE_API_KEY configurada, ou se o pedido falhar (provedor em baixo, rede bloqueada,
  * chave inválida), devolve `source: "unconfigured"` com lista vazia — o frontend usa isso para
  * saber que deve cair para os dados de demonstração estáticos, tal como acontece no feed ao vivo.
+ *
+ * FOOTBALL_PROVIDER=sportmonks (env.ts, pedido explícito do utilizador): só o futebol desvia
+ * para a Sportmonks aqui — os outros 7 desportos nunca tocam neste ramo, ficam sempre na
+ * Pulsescore como antes. O Ao Vivo de futebol (hybridService.ts) NÃO foi alterado — continua na
+ * Pulsescore, porque a amostra da Sportmonks confirmada até agora só cobre pré-jogo com odds
+ * (o endpoint ao vivo que o utilizador mostrou primeiro, livescores/inplay, não tinha odds
+ * nenhumas — ver conversa). Misturar as duas fontes (pré-jogo Sportmonks + ao vivo Pulsescore)
+ * é deliberado e temporário, não um esquecimento — trocar o ao vivo precisa de uma amostra real
+ * confirmada com odds antes de avançar, mesma disciplina usada em todo este projeto.
  */
 export async function getPrematchEvents(sport: Sport): Promise<PrematchResult> {
+  if (sport === "football" && env.FOOTBALL_PROVIDER === "sportmonks") {
+    if (!env.SPORTMONKS_API_KEY) return { events: [], source: "unconfigured" };
+    const cached = cache.get("sportmonks:football");
+    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+      return { events: cached.events, source: "sportmonks" };
+    }
+    try {
+      const events = await getSportmonksFootballPrematch();
+      cache.set("sportmonks:football", { events, fetchedAt: Date.now() });
+      return { events, source: "sportmonks" };
+    } catch (err) {
+      logger.warn({ err }, "Sportmonks: falha ao obter pré-jogo de futebol");
+      return { events: [], source: "unconfigured" };
+    }
+  }
+
   if (!env.PULSESCORE_API_KEY) {
     return { events: [], source: "unconfigured" };
   }

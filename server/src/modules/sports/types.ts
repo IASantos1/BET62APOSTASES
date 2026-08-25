@@ -97,7 +97,9 @@ export interface LiveEvent {
   status: "scheduled" | "live" | "finished";
   odds: LiveOdds[];
   updatedAt: string; // ISO timestamp
-  source: "pulsescore";
+  // "sportmonks" só ocorre para sport === "football", e só quando FOOTBALL_PROVIDER=sportmonks
+  // (ver env.ts, sportmonks/client.ts) — os outros 7 desportos ficam sempre "pulsescore".
+  source: "pulsescore" | "sportmonks";
   apiFootballFixtureId?: number; // present when a matching API-Football fixture id is known
   startTime?: string; // ISO timestamp — kickoff time, present for scheduled (pré-jogo) events
   country?: string; // ISO 2-letter code (e.g. "CO", "GB"); "" for international/qualifier competitions
