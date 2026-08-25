@@ -2414,6 +2414,7 @@ function openMarket(eventId, isLive) {
   betBuilderPicks.clear();
   betBuilderStake = 0;
   closeStats(); // cada evento novo abre sempre nos mercados, nunca preso nas estatísticas do anterior
+  closeTracker(); // idem para o Match Tracker, nunca aberto por engano no jogo errado
   showPage("market");
   renderMarketPage();
 
@@ -2464,6 +2465,7 @@ function renderMarketPage() {
 function renderMatchTracker(e) {
   const el = document.getElementById("match-tracker");
   const isLive = e._isLive || e.status === "live";
+  refreshTrackerPitchIfOpen(e, false); // sem custo se o modal do Match Tracker não estiver aberto
 
   if (e._finished) {
     el.innerHTML = `
@@ -2586,12 +2588,97 @@ async function refreshMatchPulseIfNeeded(e) {
 }
 
 // ====================== MATCH TRACKER (mini campo 2D) ======================
-// Só o ponto de entrada por agora — o campo 2D em si ainda não foi construído.
+// Posição real da bola via Sportmonks ballCoordinates (GET /fixtures/{id}?include=ballCoordinates,
+// ver fetchBallCoordinates em sportmonks/client.ts) — CONFIRMADO por amostra real completa colada
+// pelo utilizador (fixture 19568502, Chelsea vs FC Barcelona). x=0 é a baliza de um lado, x=1 a do
+// outro; y=0 a linha lateral esquerda, y=1 a direita — sem nenhum campo a dizer qual baliza é de
+// qual equipa, por isso segue-se a mesma convenção já usada no resto da app (casa à esquerda,
+// fora à direita, ver .mt-teams-top). Documentação confirma "disponível só para ligas
+// selecionadas" — jogo sem esta tecnologia devolve lista vazia, mostrado como tal, nunca inventado.
+let trackerBallState = { eventId: null, points: [], fetchedAt: 0 };
+const TRACKER_BALL_REFRESH_MS = 8000; // amostra real: ~6-12 pontos novos por minuto, ~15s de atraso — não vale a pena pedir mais depressa que isto
 function openTracker() {
   document.getElementById("tracker-modal").classList.add("open");
+  if (currentMarketEvent) refreshTrackerPitchIfOpen(currentMarketEvent, true);
 }
 function closeTracker() {
   document.getElementById("tracker-modal").classList.remove("open");
+}
+function trackerIsLiveFootball(e) {
+  return !!e && e.sport === "football" && (e._isLive || e.status === "live") && !e._finished;
+}
+function renderTrackerHeader(e) {
+  const homeEl = document.getElementById("tracker-home");
+  if (!homeEl) return;
+  homeEl.textContent = e.home;
+  document.getElementById("tracker-away").textContent = e.away;
+  document.getElementById("tracker-score").textContent =
+    e.homeScore !== undefined && e.awayScore !== undefined ? `${e.homeScore} - ${e.awayScore}` : "vs";
+}
+// Chamado em todo render do Match Tracker no cabeçalho (WS/poll) e ao abrir o modal — sem custo
+// nenhum quando o modal está fechado (só verifica a classe, não pede nada à rede).
+async function refreshTrackerPitchIfOpen(e, force) {
+  const modal = document.getElementById("tracker-modal");
+  if (!modal || !modal.classList.contains("open") || !e) return;
+  renderTrackerHeader(e);
+  const wrap = document.getElementById("tracker-pitch-wrap");
+  if (!wrap) return;
+  if (!trackerIsLiveFootball(e)) {
+    wrap.innerHTML = '<div class="empty-note">Posição da bola disponível só para jogos de futebol ao vivo</div>';
+    return;
+  }
+  if (trackerBallState.eventId !== e.id) trackerBallState = { eventId: e.id, points: [], fetchedAt: 0 };
+  const now = Date.now();
+  if (!force && now - trackerBallState.fetchedAt < TRACKER_BALL_REFRESH_MS) {
+    renderTrackerPitch(trackerBallState.points);
+    return;
+  }
+  trackerBallState.fetchedAt = now;
+  try {
+    const { points } = await Bet62Api.getBallPosition(e.id);
+    if (trackerBallState.eventId !== e.id) return; // saiu deste evento entretanto
+    trackerBallState.points = points || [];
+  } catch {
+    /* mantém o rasto já mostrado */
+  }
+  if (modal.classList.contains("open") && currentMarketEvent && currentMarketEvent.id === e.id) {
+    renderTrackerPitch(trackerBallState.points);
+  }
+}
+// Campo desenhado em SVG (marcações padrão: círculo central, grandes/pequenas áreas) com a bola
+// mais recente maior/sólida e os pontos anteriores encolhendo/desvanecendo atrás dela — rasto,
+// nunca uma curva ou posição inventada entre pontos reais.
+function renderTrackerPitch(points) {
+  const el = document.getElementById("tracker-pitch-wrap");
+  if (!el) return;
+  if (!points.length) {
+    el.innerHTML = '<div class="empty-note">Sem dados de posição da bola disponíveis para este jogo</div>';
+    return;
+  }
+  const trailMarkers = points
+    .map((p, i) => {
+      const cx = (p.x * 100).toFixed(2);
+      const cy = (p.y * 64).toFixed(2);
+      const isLatest = i === 0;
+      const r = isLatest ? 2.1 : Math.max(0.6, 1.6 - i * 0.1);
+      const opacity = isLatest ? 1 : Math.max(0.08, 0.55 - i * 0.045);
+      return `<circle cx="${cx}" cy="${cy}" r="${r.toFixed(2)}" fill="var(--gold)" opacity="${opacity.toFixed(2)}"${isLatest ? ' stroke="#fff" stroke-width="0.4"' : ""}/>`;
+    })
+    .reverse()
+    .join("");
+  el.innerHTML = `
+    <svg viewBox="0 0 100 64" class="tracker-pitch-svg" preserveAspectRatio="xMidYMid meet">
+      <rect x="0.5" y="0.5" width="99" height="63" rx="1.5" class="tp-line"/>
+      <line x1="50" y1="0.5" x2="50" y2="63.5" class="tp-line"/>
+      <circle cx="50" cy="32" r="8.7" class="tp-line"/>
+      <circle cx="50" cy="32" r="0.5" class="tp-spot"/>
+      <rect x="0.5" y="13" width="16" height="38" class="tp-line"/>
+      <rect x="0.5" y="23.4" width="5" height="17.2" class="tp-line"/>
+      <rect x="83.5" y="13" width="16" height="38" class="tp-line"/>
+      <rect x="94.5" y="23.4" width="5" height="17.2" class="tp-line"/>
+      ${trailMarkers}
+    </svg>
+    <div class="tracker-pitch-caption">${points[0].timer} • posição da bola (~15s de atraso, ver Sportmonks)</div>`;
 }
 
 // ====================== ESTATÍSTICAS (Margens de Vitória / H2H / Classificação) ======================

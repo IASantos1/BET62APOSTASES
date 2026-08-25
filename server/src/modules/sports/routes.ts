@@ -11,6 +11,7 @@ import { getUnifiedMatchData } from "./unified/service";
 import { getSportmonksEventById, getSportmonksFootballPrematchDiagnosis } from "./sportmonks/prematch";
 import {
   diagnoseLiveOddsMovement,
+  fetchBallCoordinates,
   fetchFixtureDetail,
   fetchInplayOddsForFixture,
   fetchTodayRawFixtureForLiveDiagnosis,
@@ -20,6 +21,7 @@ import {
   getTeamFormForFixture,
   getTopscorersBySeason,
   normalizeFixtureDetail,
+  normalizeBallPositions,
   normalizeStandingsRow,
   normalizeTopscorerEntry,
   resolveRoundAndSeasonId,
@@ -478,6 +480,25 @@ router.get(
 
     const detail = await fetchFixtureDetail(fixtureId).catch(() => null);
     res.json({ events: detail ? getMatchTimeline(detail) : [] });
+  })
+);
+
+// Posição da bola no campo (mini campo 2D do Match Tracker) — só futebol, só jogos da Sportmonks
+// e só ligas com esta tecnologia de tracking (GET /fixtures/{id}?include=ballCoordinates, ver
+// fetchBallCoordinates em sportmonks/client.ts). Sem esta cobertura, devolve lista vazia, nunca um
+// erro — mesma disciplina "nunca inventa dados" das rotas acima.
+router.get(
+  "/events/:id/ball-position",
+  asyncHandler(async (req, res) => {
+    const event = findCachedEvent(req.params.id);
+    if (!event) throw Errors.notFound("Evento não encontrado");
+    if (event.sport !== "football" || !req.params.id.startsWith("sportmonks:")) return res.json({ points: [] });
+
+    const fixtureId = Number(req.params.id.slice("sportmonks:".length));
+    if (!Number.isFinite(fixtureId)) return res.json({ points: [] });
+
+    const coordinates = await fetchBallCoordinates(fixtureId).catch(() => []);
+    res.json({ points: normalizeBallPositions(coordinates) });
   })
 );
 
