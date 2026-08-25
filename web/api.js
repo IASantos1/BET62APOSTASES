@@ -338,9 +338,13 @@ const Bet62Api = (() => {
     /** @param {string} [sport] */
     getLiveEvents: (sport) =>
       request(`/sports/events${sport ? `?sport=${sport}` : ""}`, { auth: false }),
-    /** @param {string} sport */
-    getPrematchEvents: (sport) =>
-      request(`/sports/prematch?sport=${sport}`, { auth: false }),
+    /**
+     * @param {string} sport
+     * @param {string} [date] YYYY-MM-DD — só usado pelo futebol na Sportmonks (ver
+     * sportmonks/prematch.ts); ignorado pelos outros desportos/fontes.
+     */
+    getPrematchEvents: (sport, date) =>
+      request(`/sports/prematch?sport=${sport}${date ? `&date=${date}` : ""}`, { auth: false }),
     /**
      * @param {string} eventId
      * @param {string} sport

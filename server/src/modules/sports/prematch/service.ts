@@ -10,6 +10,10 @@ const cache = new Map<string, { events: LiveEvent[]; fetchedAt: number }>();
 export interface PrematchResult {
   events: LiveEvent[];
   source: "pulsescore" | "sportmonks" | "unconfigured";
+  /** Só para futebol+Sportmonks (pedido explícito do utilizador): outros dias com jogos na janela
+   * cheia (~200 jogos/5 dias), para o frontend desenhar separadores de dia. `events` é sempre só
+   * o dia pedido (`date`) ou o primeiro disponível. */
+  availableDates?: string[];
 }
 
 /**
@@ -28,17 +32,15 @@ export interface PrematchResult {
  * é deliberado e temporário, não um esquecimento — trocar o ao vivo precisa de uma amostra real
  * confirmada com odds antes de avançar, mesma disciplina usada em todo este projeto.
  */
-export async function getPrematchEvents(sport: Sport): Promise<PrematchResult> {
+export async function getPrematchEvents(sport: Sport, date?: string): Promise<PrematchResult> {
   if (sport === "football" && env.FOOTBALL_PROVIDER === "sportmonks") {
     if (!env.SPORTMONKS_API_KEY) return { events: [], source: "unconfigured" };
-    const cached = cache.get("sportmonks:football");
-    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
-      return { events: cached.events, source: "sportmonks" };
-    }
+    // Sem cache extra aqui de propósito: getSportmonksFootballPrematch() já tem a sua própria
+    // cache de 45s pré-aquecida em segundo plano (ver sportmonks/prematch.ts) — fatiar por dia é
+    // só um filtro em memória sobre essa cache, não vale a pena outra camada por cima.
     try {
-      const events = await getSportmonksFootballPrematch();
-      cache.set("sportmonks:football", { events, fetchedAt: Date.now() });
-      return { events, source: "sportmonks" };
+      const { events, availableDates } = await getSportmonksFootballPrematch(date);
+      return { events, source: "sportmonks", availableDates };
     } catch (err) {
       logger.warn({ err }, "Sportmonks: falha ao obter pré-jogo de futebol");
       return { events: [], source: "unconfigured" };

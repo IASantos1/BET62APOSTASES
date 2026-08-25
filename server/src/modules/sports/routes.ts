@@ -8,12 +8,23 @@ import { enrichEventFromOtherBookmakers } from "./pulsescore/crossBookmakerFallb
 import { getHeadToHead, getPredictions, getStandings, type HeadToHeadMatch } from "./apifootball/client";
 import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent, getFullFixtureMapping } from "./mapping/service";
 import { getUnifiedMatchData } from "./unified/service";
-import { getSportmonksFootballPrematchDiagnosis } from "./sportmonks/prematch";
+import { getSportmonksEventById, getSportmonksFootballPrematchDiagnosis } from "./sportmonks/prematch";
 import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
 import { logger } from "../../lib/logger";
 
 const router = Router();
+
+/** Procura um evento primeiro na cache ao vivo (hybridSportsService), depois — se for um id da
+ * Sportmonks — na cache de pré-jogo da Sportmonks (getSportmonksEventById, sem pedido novo à
+ * rede). Usado pelas rotas de H2H/previsões/classificação/mapeamento/auditoria de odds, que só
+ * sabiam procurar na cache ao vivo e por isso devolviam sempre "não encontrado" para jogos de
+ * pré-jogo da Sportmonks (reportado pelo utilizador como "estatísticas não aparecem"). Eventos de
+ * pré-jogo da Pulsescore continuam sem este fallback aqui — limitação já existente antes da
+ * Sportmonks, fora do âmbito deste pedido. */
+function findCachedEvent(id: string): LiveEvent | null {
+  return hybridSportsService.getById(id) ?? (id.startsWith("sportmonks:") ? getSportmonksEventById(id) : null);
+}
 
 // Diagnóstico temporário — sem autenticação de propósito, para se poder abrir diretamente no
 // browser e colar aqui a resposta (texto simples, sem os problemas de copiar do painel /admin
@@ -46,7 +57,8 @@ router.get(
     if (typeof sport !== "string" || !ALL_SPORTS.includes(sport as Sport)) {
       throw Errors.badRequest("Parâmetro sport em falta ou inválido");
     }
-    const result = await getPrematchEvents(sport as Sport);
+    const date = typeof req.query.date === "string" ? req.query.date : undefined;
+    const result = await getPrematchEvents(sport as Sport, date);
     res.json(result);
   })
 );
@@ -133,7 +145,7 @@ router.get(
     }
     const rawId = req.params.id.startsWith("pulsescore:") ? req.params.id.slice("pulsescore:".length) : req.params.id;
 
-    let event: LiveEvent | null = hybridSportsService.getById(req.params.id) ?? null;
+    let event: LiveEvent | null = findCachedEvent(req.params.id);
 
     if (!event) {
       try {
@@ -186,7 +198,7 @@ router.get(
     }
     const rawId = req.params.id.startsWith("pulsescore:") ? req.params.id.slice("pulsescore:".length) : req.params.id;
 
-    let event: LiveEvent | null = hybridSportsService.getById(req.params.id) ?? null;
+    let event: LiveEvent | null = findCachedEvent(req.params.id);
     if (!event) {
       try {
         event = await fetchEventById(sport as Sport, rawId);
@@ -248,7 +260,7 @@ router.get(
 router.get(
   "/events/:id/h2h",
   asyncHandler(async (req, res) => {
-    const event = hybridSportsService.getById(req.params.id);
+    const event = findCachedEvent(req.params.id);
     if (!event) throw Errors.notFound("Evento não encontrado");
     const teams = await resolveTeamsForEvent(event);
     if (!teams) return res.json({ matches: [] });
@@ -271,7 +283,7 @@ router.get(
 router.get(
   "/events/:id/predictions",
   asyncHandler(async (req, res) => {
-    const event = hybridSportsService.getById(req.params.id);
+    const event = findCachedEvent(req.params.id);
     if (!event) throw Errors.notFound("Evento não encontrado");
     if (event.sport !== "football") return res.json({ predictions: null });
     const resolved = await resolveFixtureForEvent(event);
@@ -287,7 +299,7 @@ router.get(
 router.get(
   "/events/:id/standings",
   asyncHandler(async (req, res) => {
-    const event = hybridSportsService.getById(req.params.id);
+    const event = findCachedEvent(req.params.id);
     if (!event) throw Errors.notFound("Evento não encontrado");
     if (event.sport !== "football") return res.json({ standings: [] });
     const league = await resolveLeagueForEvent(event);
