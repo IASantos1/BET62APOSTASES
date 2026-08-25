@@ -5,6 +5,7 @@ import { requireAuth, requireRole, type AuthedRequest } from "../../middleware/a
 import { validateBody } from "../../middleware/validate";
 import { Errors, AppError } from "../../lib/errors";
 import { getApiFootballStatus } from "../sports/apifootball/client";
+import { fetchLeaguesFirstPageRaw } from "../sports/sportmonks/client";
 import { userRateLimit } from "../../lib/userRateLimit";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
@@ -541,6 +542,23 @@ router.get(
     try {
       const status = await getApiFootballStatus();
       res.json({ ok: true, ...status.response });
+    } catch (err) {
+      const details = err instanceof AppError ? err.details : undefined;
+      res.json({ ok: false, message: err instanceof Error ? err.message : "Erro desconhecido", details });
+    }
+  })
+);
+
+// Diagnóstico de ligação Sportmonks — testa só a 1ª página de /leagues?include=currentSeason.
+// currentRound (a peça NÃO confirmada por amostra real, ver docs/SPORTS_DATA.md) sem paginar as
+// até 20 páginas que a descoberta completa faz. Devolve sempre 200 para o frontend mostrar o
+// motivo exato da falha em vez de só "erro 500".
+router.get(
+  "/sportmonks/status",
+  asyncHandler(async (_req, res) => {
+    try {
+      const result = await fetchLeaguesFirstPageRaw();
+      res.json({ ok: true, ...result });
     } catch (err) {
       const details = err instanceof AppError ? err.details : undefined;
       res.json({ ok: false, message: err instanceof Error ? err.message : "Erro desconhecido", details });
