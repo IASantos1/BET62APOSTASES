@@ -2413,6 +2413,7 @@ function openMarket(eventId, isLive) {
   selectedMarketFilter = null; // volta a "Todos" a cada novo evento aberto
   betBuilderPicks.clear();
   betBuilderStake = 0;
+  closeStats(); // cada evento novo abre sempre nos mercados, nunca preso nas estatísticas do anterior
   showPage("market");
   renderMarketPage();
 
@@ -2505,18 +2506,83 @@ function renderMatchTracker(e) {
   }
 
   const hasScore = e.homeScore !== undefined && e.awayScore !== undefined;
+  const showPulse = e.sport === "football";
   el.innerHTML = `
-    <div class="mt-live"><span class="dot"></span> AO VIVO</div>
-    <div class="mt-teams">
-      <div class="mt-team">${e.home}</div>
-      ${hasScore ? `<div class="mt-score">${e.homeScore} - ${e.awayScore}</div>` : '<div style="color:var(--muted);font-size:.85rem">vs</div>'}
-      <div class="mt-team">${e.away}</div>
+    <div class="mt-teams-top">
+      <div class="mt-team-name">${e.home}</div>
+      <div class="mt-team-name away">${e.away}</div>
     </div>
-    <div class="mt-period${clockClass}">${e.minuteOrPeriod}</div>
+    <div class="mt-scoreboard">
+      <div class="mt-live"><span class="dot"></span> AO VIVO</div>
+      ${hasScore ? `<div class="mt-score">${e.homeScore} - ${e.awayScore}</div>` : '<div class="mt-vs-label">vs</div>'}
+      <div class="mt-period${clockClass}">${e.minuteOrPeriod}</div>
+    </div>
+    ${showPulse ? '<div class="mt-pulse" id="mt-pulse"></div>' : ""}
     <div class="mt-actions">
       <div class="mt-action-btn" onclick="openTracker()"><span class="mt-action-icon"><span class="pitch-icon" style="width:26px;height:18px"></span></span>Match Tracker</div>
       <div class="mt-action-btn" onclick="openStats()"><span class="mt-action-icon">📊</span>Estatísticas</div>
     </div>`;
+  if (showPulse) {
+    renderMatchPulseTrack(e);
+    refreshMatchPulseIfNeeded(e);
+  }
+}
+
+// ====================== GRÁFICO DE EVENTOS DO JOGO (cabeçalho ao vivo) ======================
+// Mostra só golos/cartões/VAR reais posicionados pelo minuto (getMatchTimeline/MatchEventRow, já
+// usado na aba "Eventos" das estatísticas — ver Bet62Api.getTimeline). Pedido do utilizador foi
+// um "gráfico de pressão" ao estilo de uma referência visual, mas não existe nenhuma métrica de
+// pressão/intensidade por minuto confirmada em nenhum provedor desta app — em vez de inventar uma
+// curva, mostra-se a linha do tempo real dos eventos confirmados sobre o eixo 0'-90'.
+let matchPulseState = { eventId: null, events: [], fetchedAt: 0 };
+const MATCH_PULSE_REFRESH_MS = 20000;
+const PULSE_MARKER_ICON = { goal: "⚽", redcard: "🟥", yellowcard: "🟨", var: "📺" };
+function currentMatchMinute(e) {
+  const m = /^(\d+)/.exec(e.minuteOrPeriod || "");
+  return m ? parseInt(m[1], 10) : null;
+}
+function pulsePct(minute) {
+  return Math.max(3, Math.min(97, (minute / 90) * 100));
+}
+function renderMatchPulseTrack(e) {
+  const el = document.getElementById("mt-pulse");
+  if (!el) return;
+  const events = matchPulseState.eventId === e.id ? matchPulseState.events : [];
+  const markers = events.filter((ev) => PULSE_MARKER_ICON[ev.kind]);
+  const nowMinute = currentMatchMinute(e);
+  el.innerHTML = `
+    <div class="mt-pulse-track">
+      <div class="mt-pulse-line"></div>
+      <div class="mt-pulse-ht"></div>
+      ${nowMinute !== null ? `<div class="mt-pulse-now" style="left:${pulsePct(nowMinute)}%"></div>` : ""}
+      ${markers
+        .map((ev) => {
+          const minute = parseInt(ev.minute, 10) || 0;
+          const tooltip = `${ev.minute} ${ev.label}${ev.playerName ? ": " + ev.playerName : ""} (${ev.team})`;
+          return `<div class="mt-pulse-marker ${ev.isHome ? "home" : "away"}" style="left:${pulsePct(minute)}%" title="${tooltip}">
+            <span class="mt-pulse-icon">${PULSE_MARKER_ICON[ev.kind]}</span>
+            ${ev.playerName ? `<span class="mt-pulse-name">${ev.playerName}</span>` : ""}
+          </div>`;
+        })
+        .join("")}
+    </div>
+    <div class="mt-pulse-labels"><span>0'</span><span>45'</span><span>90'</span></div>`;
+}
+async function refreshMatchPulseIfNeeded(e) {
+  const now = Date.now();
+  if (matchPulseState.eventId !== e.id) {
+    matchPulseState = { eventId: e.id, events: [], fetchedAt: 0 };
+  }
+  if (now - matchPulseState.fetchedAt < MATCH_PULSE_REFRESH_MS) return;
+  matchPulseState.fetchedAt = now;
+  try {
+    const { events } = await Bet62Api.getTimeline(e.id);
+    if (matchPulseState.eventId !== e.id) return; // saiu deste evento entretanto
+    matchPulseState.events = events || [];
+    if (currentMarketEvent && currentMarketEvent.id === e.id) renderMatchPulseTrack(e);
+  } catch {
+    /* mantém os marcadores já mostrados */
+  }
 }
 
 // ====================== MATCH TRACKER (mini campo 2D) ======================
@@ -2529,13 +2595,21 @@ function closeTracker() {
 }
 
 // ====================== ESTATÍSTICAS (Margens de Vitória / H2H / Classificação) ======================
+// Pedido explícito do utilizador (referência visual de uma casa de apostas grande): ao abrir
+// Estatísticas, os mercados/odds desaparecem e a área central passa a mostrar só as estatísticas
+// — já não é um modal/overlay por cima da página, é a própria página de mercado a trocar de
+// conteúdo (ver #market-stats-inline em index.html).
 function openStats() {
   if (!currentMarketEvent) return;
-  document.getElementById("stats-modal").classList.add("open");
+  document.getElementById("market-filter-bar").classList.add("hidden");
+  document.getElementById("market-groups").classList.add("hidden");
+  document.getElementById("market-stats-inline").classList.remove("hidden");
   switchStatsTab("prob");
 }
 function closeStats() {
-  document.getElementById("stats-modal").classList.remove("open");
+  document.getElementById("market-stats-inline").classList.add("hidden");
+  document.getElementById("market-filter-bar").classList.remove("hidden");
+  document.getElementById("market-groups").classList.remove("hidden");
 }
 function switchStatsTab(tab) {
   document.getElementById("stats-tab-prob").classList.toggle("active", tab === "prob");
@@ -2668,9 +2742,35 @@ const TEAM_STAT_LABELS = {
   "Passes %": "Precisão de passe",
 };
 
+// Linha de comparação em barra dupla (casa à esquerda em --red, fora à direita em --gold) — ao
+// estilo Golos/xG/Posse de bola/Remates de uma referência visual pedida pelo utilizador, mas com
+// a paleta própria da app em vez das cores da referência ("não quero com as cores que estão aí").
+// Extrai o número de dentro de valores como "55%"/"12" para calcular a proporção da barra; "-"/
+// sem número em nenhum dos dois lados cai numa barra 50/50 neutra em vez de esconder a linha.
+function jogoStatRowHtml(label, homeVal, awayVal) {
+  const homeNum = parseFloat(String(homeVal).replace(",", "."));
+  const awayNum = parseFloat(String(awayVal).replace(",", "."));
+  const homeSafe = Number.isFinite(homeNum) ? Math.max(0, homeNum) : 0;
+  const awaySafe = Number.isFinite(awayNum) ? Math.max(0, awayNum) : 0;
+  const total = homeSafe + awaySafe;
+  const homePct = total > 0 ? (homeSafe / total) * 100 : 50;
+  const awayPct = 100 - homePct;
+  return `
+    <div class="jogo-stat-row">
+      <div class="jogo-stat-values">
+        <span class="jogo-val home">${homeVal}</span>
+        <span class="jogo-stat-label">${label}</span>
+        <span class="jogo-val away">${awayVal}</span>
+      </div>
+      <div class="jogo-bar-track">
+        <div class="jogo-bar-home" style="width:${homePct}%"></div>
+        <div class="jogo-bar-away" style="width:${awayPct}%"></div>
+      </div>
+    </div>`;
+}
+
 // Estatísticas completas por equipa via API-Football (só futebol — a API-Football não cobre
-// outros desportos). Reaproveita as classes .mt-stats/.mt-stats-col/.mt-stats-labels já usadas
-// antes na linha de estatísticas do Match Tracker.
+// outros desportos).
 let teamStatsLoadedForEventId = null;
 async function renderTeamStats(e) {
   const el = document.getElementById("stats-body-teamstats");
@@ -2693,12 +2793,7 @@ async function renderTeamStats(e) {
       homeVal: s.value ?? "-",
       awayVal: away.statistics[i]?.value ?? "-",
     }));
-    el.innerHTML = `
-      <div class="mt-stats">
-        <div class="mt-stats-col home">${rows.map((r) => `<div>${r.homeVal}</div>`).join("")}</div>
-        <div class="mt-stats-labels">${rows.map((r) => `<div>${r.label}</div>`).join("")}</div>
-        <div class="mt-stats-col away">${rows.map((r) => `<div>${r.awayVal}</div>`).join("")}</div>
-      </div>`;
+    el.innerHTML = rows.map((r) => jogoStatRowHtml(r.label, r.homeVal, r.awayVal)).join("");
   } catch {
     el.innerHTML = '<div class="empty-note">Não foi possível carregar as estatísticas</div>';
   }
@@ -2812,6 +2907,21 @@ function renderTeamFormColumn(name, form) {
     return `<div class="form-team"><div class="form-team-name">${name}</div><div class="empty-note">Sem dados de forma</div></div>`;
   }
   const badges = form.recent.map((m) => formBadge(m.result)).join("");
+  const wins = form.recent.filter((m) => m.result === "V").length;
+  const draws = form.recent.filter((m) => m.result === "E").length;
+  const losses = form.recent.filter((m) => m.result === "D").length;
+  const totalResults = wins + draws + losses;
+  const summaryHtml = totalResults
+    ? `
+    <div class="forma-summary">
+      <div class="forma-summary-counts"><span class="fc-v">${wins}V</span><span class="fc-e">${draws}E</span><span class="fc-d">${losses}D</span></div>
+      <div class="forma-bar-track">
+        <div class="forma-bar-seg v" style="width:${(wins / totalResults) * 100}%"></div>
+        <div class="forma-bar-seg e" style="width:${(draws / totalResults) * 100}%"></div>
+        <div class="forma-bar-seg d" style="width:${(losses / totalResults) * 100}%"></div>
+      </div>
+    </div>`
+    : "";
   const recentRows = form.recent
     .map(
       (m) => `
@@ -2831,6 +2941,7 @@ function renderTeamFormColumn(name, form) {
   return `
     <div class="form-team">
       <div class="form-team-name">${name} <span class="form-badges">${badges}</span></div>
+      ${summaryHtml}
       <div class="standings-table">${recentRows || '<div class="empty-note">Sem jogos recentes</div>'}</div>
       ${form.upcoming.length ? `<div class="form-section-label">Próximos jogos</div><div class="standings-table">${upcomingRows}</div>` : ""}
     </div>`;

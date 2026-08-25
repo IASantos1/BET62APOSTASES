@@ -305,11 +305,41 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .clock-missing{color:var(--red)!important;font-weight:700}
 .mt-scheduled{text-align:center;padding:8px 0}
 .mt-scheduled .big{font-family:'Bebas Neue',sans-serif;font-size:1.8rem;color:var(--text)}
-.mt-stats{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
-.mt-stats-col{flex:1;display:flex;flex-direction:column;gap:6px;font-size:.82rem;font-weight:700}
-.mt-stats-col.home{align-items:flex-start}
-.mt-stats-col.away{align-items:flex-end}
-.mt-stats-labels{flex:0 0 96px;display:flex;flex-direction:column;gap:6px;text-align:center;color:var(--muted);font-size:.66rem;text-transform:uppercase;letter-spacing:.03em}
+/* Cabeçalho ao vivo: nomes das equipas no topo, placar/relógio abaixo, gráfico de eventos por
+   baixo disso — ordem pedida pelo utilizador com base em referência visual de mercado
+   concorrente ("subir o nome dos time pra cima pro topo... abaixo o gráfico"). */
+.mt-teams-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.mt-teams-top .mt-team-name{flex:1;font-weight:700;font-size:.88rem;line-height:1.25}
+.mt-teams-top .mt-team-name.away{text-align:right}
+.mt-scoreboard{text-align:center}
+.mt-scoreboard .mt-live{justify-content:center;margin-bottom:8px}
+.mt-vs-label{color:var(--muted);font-size:.85rem}
+/* Gráfico de eventos ("gráfico de pressão" da referência) — mostra só o que temos confirmado
+   (golos/cartões/VAR pela linha do tempo real, ver getMatchTimeline em client.ts), nunca uma
+   curva de intensidade/pressão inventada — não existe métrica de pressão por minuto confirmada
+   em nenhum provedor usado nesta app. */
+.mt-pulse{margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+.mt-pulse-track{position:relative;height:58px}
+.mt-pulse-line{position:absolute;left:2px;right:2px;top:50%;height:2px;background:var(--surface2);border-radius:2px;transform:translateY(-50%)}
+.mt-pulse-ht{position:absolute;left:50%;top:8px;bottom:8px;width:1px;background:var(--border)}
+.mt-pulse-now{position:absolute;top:4px;bottom:4px;width:2px;border-radius:2px;background:var(--red)}
+.mt-pulse-marker{position:absolute;top:50%;display:flex;flex-direction:column;align-items:center;gap:2px;transform:translate(-50%,-100%);margin-top:-5px}
+.mt-pulse-marker.away{flex-direction:column-reverse;transform:translate(-50%,0);margin-top:5px}
+.mt-pulse-icon{width:20px;height:20px;border-radius:50%;background:var(--surface);border:1.5px solid var(--red);display:flex;align-items:center;justify-content:center;font-size:.66rem;line-height:1}
+.mt-pulse-marker.away .mt-pulse-icon{border-color:var(--gold)}
+.mt-pulse-name{font-size:.56rem;font-weight:700;color:var(--muted);white-space:nowrap;max-width:64px;overflow:hidden;text-overflow:ellipsis}
+.mt-pulse-labels{display:flex;justify-content:space-between;font-size:.62rem;color:var(--muted);margin-top:2px;padding:0 2px}
+/* "Jogo": comparação em barra dupla lado a lado (golos/posse/remates...), casa à esquerda em
+   --red, fora à direita em --gold — paleta própria da app, nunca as cores da referência. */
+.jogo-stat-row{margin-bottom:14px}
+.jogo-stat-row:last-child{margin-bottom:0}
+.jogo-stat-values{display:flex;align-items:center;justify-content:space-between;font-size:.8rem;font-weight:700;margin-bottom:5px}
+.jogo-stat-values .jogo-val{flex:0 0 46px}
+.jogo-stat-values .jogo-val.away{text-align:right}
+.jogo-stat-label{flex:1;text-align:center;color:var(--muted);font-size:.68rem;text-transform:uppercase;letter-spacing:.02em;font-weight:700}
+.jogo-bar-track{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--surface2)}
+.jogo-bar-home{background:var(--red);border-radius:4px 0 0 4px}
+.jogo-bar-away{background:var(--gold);border-radius:0 4px 4px 0}
 .mt-actions{display:flex;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
 .mt-action-btn{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 8px;text-align:center;cursor:pointer;font-weight:700;font-size:.82rem;color:var(--text)}
 .mt-action-btn .mt-action-icon{display:block;font-size:1.2rem;margin-bottom:4px}
@@ -358,6 +388,24 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .form-badge-E{background:var(--muted)}
 .form-badge-none{background:var(--surface2);color:var(--muted)}
 .form-section-label{font-size:.66rem;text-transform:uppercase;letter-spacing:.02em;color:var(--muted);margin:8px 0 2px}
+/* Barra segmentada Vitórias/Empates/Derrotas acima da lista de jogos, por equipa. */
+.forma-summary{margin-bottom:10px}
+.forma-summary-counts{display:flex;gap:12px;font-size:.72rem;font-weight:700;margin-bottom:6px}
+.forma-summary-counts .fc-v{color:var(--green)}
+.forma-summary-counts .fc-e{color:var(--muted)}
+.forma-summary-counts .fc-d{color:var(--red)}
+.forma-bar-track{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--surface2)}
+.forma-bar-seg.v{background:var(--green)}
+.forma-bar-seg.e{background:var(--muted)}
+.forma-bar-seg.d{background:var(--red)}
+/* Estatísticas agora ocupam o centro da página de mercado (não é mais um modal separado) —
+   pedido explícito do utilizador com base na referência: "quando a gente clicar no ícone
+   estatísticas todas as odds desaparecem e aparecem no centro simplesmente a página da
+   estatística". Ver openStats()/closeStats() em app.js. */
+.stats-inline{background:var(--surface);border:1px solid var(--border);border-radius:16px;margin-bottom:20px;overflow:hidden}
+.stats-inline-header{padding:14px 16px 0}
+.stats-inline-back{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:.8rem;font-weight:700;cursor:pointer}
+.stats-inline-back:hover{color:var(--text)}
 .market-group{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:12px}
 .market-group h4{font-size:.85rem;margin-bottom:10px;text-transform:capitalize}
 .selection-row{display:flex;gap:8px;flex-wrap:wrap}
@@ -981,6 +1029,31 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
     <div class="match-tracker" id="match-tracker"></div>
     <div class="market-filter-bar" id="market-filter-bar"></div>
     <div id="market-groups"></div>
+    <!-- ESTATÍSTICAS: substitui mercados/odds inline no centro da página quando aberta (ver
+         openStats()/closeStats() em app.js) — já não é um modal/overlay separado. -->
+    <div class="stats-inline hidden" id="market-stats-inline">
+        <div class="stats-inline-header">
+            <div class="stats-inline-back" onclick="closeStats()">← Voltar aos mercados</div>
+        </div>
+        <div class="stats-tabs">
+            <div class="stats-tab active" id="stats-tab-prob" onclick="switchStatsTab('prob')">Margens de Vitória</div>
+            <div class="stats-tab" id="stats-tab-h2h" onclick="switchStatsTab('h2h')">H2H</div>
+            <div class="stats-tab" id="stats-tab-teamstats" onclick="switchStatsTab('teamstats')">Jogo</div>
+            <div class="stats-tab" id="stats-tab-table" onclick="switchStatsTab('table')">Classificação</div>
+            <div class="stats-tab" id="stats-tab-topscorers" onclick="switchStatsTab('topscorers')">Artilheiros</div>
+            <div class="stats-tab" id="stats-tab-form" onclick="switchStatsTab('form')">Forma</div>
+            <div class="stats-tab" id="stats-tab-timeline" onclick="switchStatsTab('timeline')">Eventos</div>
+        </div>
+        <div class="stats-tab-body">
+            <div id="stats-body-prob"></div>
+            <div id="stats-body-h2h" class="hidden"></div>
+            <div id="stats-body-teamstats" class="hidden"></div>
+            <div id="stats-body-table" class="hidden"></div>
+            <div id="stats-body-topscorers" class="hidden"></div>
+            <div id="stats-body-form" class="hidden"></div>
+            <div id="stats-body-timeline" class="hidden"></div>
+        </div>
+    </div>
 </div>
 
 <!-- ========== PROMOÇÃO ========== -->
@@ -1104,31 +1177,6 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
             <div style="font-weight:700;margin-bottom:6px">Brevemente</div>
             <div style="color:var(--muted);font-size:.85rem">O mini campo em 2D com a posição da jogada em tempo real está a caminho.</div>
             <button class="btn-outline" onclick="closeTracker()">Fechar</button>
-        </div>
-    </div>
-</div>
-
-<!-- ESTATÍSTICAS MODAL: Margens de Vitória / H2H / Classificação lado a lado -->
-<div class="auth-overlay" id="stats-modal">
-    <div class="auth-box" style="max-width:440px">
-        <div class="stats-tabs">
-            <div class="stats-tab active" id="stats-tab-prob" onclick="switchStatsTab('prob')">Margens de Vitória</div>
-            <div class="stats-tab" id="stats-tab-h2h" onclick="switchStatsTab('h2h')">H2H</div>
-            <div class="stats-tab" id="stats-tab-teamstats" onclick="switchStatsTab('teamstats')">Jogo</div>
-            <div class="stats-tab" id="stats-tab-table" onclick="switchStatsTab('table')">Classificação</div>
-            <div class="stats-tab" id="stats-tab-topscorers" onclick="switchStatsTab('topscorers')">Artilheiros</div>
-            <div class="stats-tab" id="stats-tab-form" onclick="switchStatsTab('form')">Forma</div>
-            <div class="stats-tab" id="stats-tab-timeline" onclick="switchStatsTab('timeline')">Eventos</div>
-        </div>
-        <div class="stats-tab-body">
-            <div id="stats-body-prob"></div>
-            <div id="stats-body-h2h" class="hidden"></div>
-            <div id="stats-body-teamstats" class="hidden"></div>
-            <div id="stats-body-table" class="hidden"></div>
-            <div id="stats-body-topscorers" class="hidden"></div>
-            <div id="stats-body-form" class="hidden"></div>
-            <div id="stats-body-timeline" class="hidden"></div>
-            <button class="btn-outline" onclick="closeStats()">Fechar</button>
         </div>
     </div>
 </div>
