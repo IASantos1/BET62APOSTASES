@@ -529,6 +529,27 @@ const liveEventsById = new Map();
 let currentMarketEvent = null;
 const betslipSelections = new Map(); // key -> { eventId, market, selection, odd }
 
+// Ordem canónica (Casa/Empate/Fora) das seleções de um mercado — precisa de ser reaplicada aqui,
+// no frontend, mesmo já vindo ordenada do backend (ver HOME_DRAW_AWAY_PRIORITY em
+// sportmonks/client.ts), porque Object.entries()/Object.keys() em JavaScript colocam SEMPRE
+// chaves que parecem índices inteiros ("1", "2") primeiro, em ordem numérica ascendente, antes de
+// qualquer chave não numérica ("X") — independentemente da ordem de inserção no objeto (regra do
+// próprio motor JS, não hábito de quem escreveu o código). Isto fazia o cartão principal do Ao
+// Vivo mostrar "1, 2, X" em vez de "1, X, 2" sempre que a Sportmonks usava estes rótulos (só em Ao
+// Vivo — reportado pelo utilizador "estão aparecendo 12x e não 1x2"; o pré-jogo nunca sofria disto
+// porque usa "Home"/"Draw"/"Away", que não são chaves numéricas). Só reordena quando o CONJUNTO de
+// rótulos do grupo bate exatamente neste vocabulário (sem repetidos) — qualquer outro mercado
+// (Mais/Menos, Ambas Marcam, nomes de equipa/jogador...) mantém-se exatamente na ordem que
+// Object.entries() já dava, sem risco de baralhar algo que não se reconhece com confiança.
+const HOME_DRAW_AWAY_ORDER = { "1": 0, home: 0, casa: 0, x: 1, draw: 1, tie: 1, empate: 1, "2": 2, away: 2, fora: 2 };
+function orderedSelectionEntries(selections) {
+  const entries = Object.entries(selections || {});
+  const keys = entries.map(([label]) => label.trim().toLowerCase());
+  const isHomeDrawAway = keys.length > 0 && keys.every((k) => k in HOME_DRAW_AWAY_ORDER) && new Set(keys).size === keys.length;
+  if (!isHomeDrawAway) return entries;
+  return [...entries].sort((a, b) => HOME_DRAW_AWAY_ORDER[a[0].trim().toLowerCase()] - HOME_DRAW_AWAY_ORDER[b[0].trim().toLowerCase()]);
+}
+
 // Seleções ativas de um mercado — o backend já não descarta seleções suspensas (isActive:false,
 // ex: durante uma revisão VAR ou logo após um penálti/cartão), passam a chegar marcadas para a
 // UI as mostrar suspensas em vez de clicáveis. Os cartões compactos (pré-jogo/ao vivo) só
@@ -537,7 +558,7 @@ function activeSelectionEntries(group) {
   // Number.isFinite(sel?.odd) descarta qualquer entrada com odd inválida/em falta (ex: uma
   // transição de deploy em que JS antigo em cache leu a forma nova {odd,isActive} como se
   // fosse só um número — Number({odd:1.85,...}) dá NaN) em vez de deixar "NaN" aparecer no ecrã.
-  return Object.entries(group?.selections ?? {}).filter(([, sel]) => sel?.isActive && Number.isFinite(sel?.odd));
+  return orderedSelectionEntries(group?.selections).filter(([, sel]) => sel?.isActive && Number.isFinite(sel?.odd));
 }
 
 // Clicar numa odd 1x2 do cartão compacto (pré-jogo/ao vivo) vai direto ao boletim, sem abrir o
@@ -559,7 +580,7 @@ function quickPick(event, key, selection) {
 function quickOddsHtml(e, group, isLive) {
   if (!group?.selections) return "";
   if (!group.isActive) return '<div class="lc-odds"><div class="suspended" style="flex:3">Suspenso</div></div>';
-  const entries = Object.entries(group.selections).slice(0, 3);
+  const entries = orderedSelectionEntries(group.selections).slice(0, 3);
   if (!entries.length) return "";
   return `<div class="lc-odds">${entries
     .map(([label, sel]) => {
@@ -3128,6 +3149,13 @@ const SELECTION_WORD_MAP = {
   away: "Fora",
   draw: "Empate",
   tie: "Empate",
+  // "1"/"X"/"2" — rótulos CONFIRMADOS do mercado principal em Ao Vivo (Sportmonks, endpoint
+  // /odds/inplay/fixtures/{id}, ver comentário de HOME_DRAW_AWAY_PRIORITY em sportmonks/client.ts
+  // no backend), diferentes de "Home"/"Draw"/"Away" usados no pré-jogo — sem esta tradução
+  // ficavam a aparecer como "1"/"X"/"2" em vez de "Casa"/"Empate"/"Fora" como o resto da app.
+  1: "Casa",
+  x: "Empate",
+  2: "Fora",
   yes: "Sim",
   no: "Não",
   odd: "Ímpar",
@@ -3259,7 +3287,7 @@ function renderMarketGroups(e) {
           <div class="selection-btn suspended"><span class="sel-odd">Suspenso</span></div>
         </div></div>`;
       }
-      const rows = Object.entries(group.selections)
+      const rows = orderedSelectionEntries(group.selections)
         .map(([label, sel]) => {
           const labelPt = translateSelectionLabel(label);
           // Seleção suspensa pelo bookmaker (isActive:false — ex: durante uma revisão VAR ou
@@ -3374,7 +3402,7 @@ function renderBetBuilder(e) {
     const optionsByLabel = new Map();
     for (const group of e.odds) {
       if (classifyForBetBuilder(group.market) !== cat.key) continue;
-      for (const [label, sel] of Object.entries(group.selections ?? {})) {
+      for (const [label, sel] of orderedSelectionEntries(group.selections)) {
         if (!sel.isActive || !Number.isFinite(sel.odd)) continue;
         if (optionsByLabel.has(label)) continue;
         optionsByLabel.set(label, { market: group.market, label, odd: sel.odd });
