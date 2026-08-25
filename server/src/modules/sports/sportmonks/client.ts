@@ -258,6 +258,42 @@ export async function fetchFixturesBetween(
   return events;
 }
 
+/**
+ * Diagnóstico (ver routes.ts, GET /api/sports/sportmonks-live-debug) — pedido explícito do
+ * utilizador de migrar também o Ao Vivo de futebol para a Sportmonks. Ainda NUNCA se confirmou
+ * uma amostra real de um jogo A DECORRER: a única forma de fixture vista até agora foi sempre de
+ * jogos por começar ou já terminados (ver aviso no comentário do módulo) — por isso
+ * `normalizeFixture()` nunca assume "ao vivo" pelo `state_id`, só compara a hora. Esta função
+ * devolve a fixture BRUTA (sem normalizar, todos os campos tal como a Sportmonks manda) do
+ * primeiro jogo de hoje cuja hora de início já passou — candidato a estar "a decorrer" — para se
+ * poder ver o `state_id` real nesse estado, se há algum campo de placar ao vivo, e se as odds
+ * continuam presentes/atualizadas depois do apito inicial. Sem isso, migrar o Ao Vivo arriscaria
+ * ficar sem odds nem placar durante os jogos.
+ */
+export async function fetchTodayRawFixtureForLiveDiagnosis(): Promise<{
+  fetchedAt: string;
+  totalFixturesToday: number;
+  candidatesAlreadyStarted: number;
+  sample: SportmonksFixtureWithLeague | null;
+}> {
+  const today = new Date().toISOString().slice(0, 10);
+  const data = await sportmonksFetch<{ data: SportmonksFixtureWithLeague[] }>(`/fixtures/between/${today}/${today}`, {
+    include: "participants;odds.market;odds.bookmaker;league.country",
+    filters: `bookmakers:${env.SPORTMONKS_BOOKMAKER_ID}`,
+    page: 1,
+  });
+  const fixtures = data.data ?? [];
+  const now = Date.now();
+  const started = fixtures.filter((f) => {
+    const iso = `${f.starting_at.trim().replace(" ", "T")}Z`;
+    return new Date(iso).getTime() <= now;
+  });
+  // O jogo cuja hora de início está mais próxima de agora (mas já passou) — o melhor candidato a
+  // estar mesmo a decorrer neste preciso momento, em vez de já ter terminado há horas.
+  const sample = started.sort((a, b) => b.starting_at.localeCompare(a.starting_at))[0] ?? null;
+  return { fetchedAt: new Date().toISOString(), totalFixturesToday: fixtures.length, candidatesAlreadyStarted: started.length, sample };
+}
+
 const roundCache = new Map<number, { events: LiveEvent[]; fetchedAt: number }>();
 const ROUND_CACHE_TTL_MS = 45_000; // mesmo TTL já usado para o pré-jogo da Pulsescore
 
