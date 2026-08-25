@@ -9,7 +9,13 @@ import { getHeadToHead, getPredictions, getStandings, type HeadToHeadMatch } fro
 import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent, getFullFixtureMapping } from "./mapping/service";
 import { getUnifiedMatchData } from "./unified/service";
 import { getSportmonksEventById, getSportmonksFootballPrematchDiagnosis } from "./sportmonks/prematch";
-import { diagnoseLiveOddsMovement, fetchFixtureDetail, fetchTodayRawFixtureForLiveDiagnosis, normalizeFixtureDetail } from "./sportmonks/client";
+import {
+  diagnoseLiveOddsMovement,
+  fetchFixtureDetail,
+  fetchInplayOddsForFixture,
+  fetchTodayRawFixtureForLiveDiagnosis,
+  normalizeFixtureDetail,
+} from "./sportmonks/client";
 import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
 import { logger } from "../../lib/logger";
@@ -111,16 +117,28 @@ router.get(
   asyncHandler(async (req, res) => {
     // Jogos da Sportmonks (só futebol, FOOTBALL_PROVIDER=sportmonks) têm o seu próprio refresh —
     // pedido explícito do utilizador ("as odds em ao vivo não estão atualizando"): ao abrir o
-    // Match Tracker, busca-se esse jogo sozinho (fetchFixtureDetail, mais leve do que esperar
-    // pelo ciclo de 15s da lista de Ao Vivo), em vez de cair nos fetchers da Pulsescore abaixo
+    // Match Tracker, busca-se esse jogo sozinho, em vez de cair nos fetchers da Pulsescore abaixo
     // (que não reconhecem este formato de id). Sem mapeamento API-Football nem enriquecimento
     // cross-bookmaker aqui — esses são conceitos só da Pulsescore.
     if (req.params.id.startsWith("sportmonks:")) {
       const fixtureId = Number(req.params.id.slice("sportmonks:".length));
       if (!Number.isFinite(fixtureId)) throw Errors.badRequest("Id de evento Sportmonks inválido");
       const detail = await fetchFixtureDetail(fixtureId);
-      const event = normalizeFixtureDetail(detail);
+      let event = normalizeFixtureDetail(detail);
       if (!event) throw Errors.notFound("Evento não encontrado na Sportmonks");
+      // As odds de fetchFixtureDetail (GET /fixtures/{id}) confirmaram-se congeladas desde antes
+      // do apito inicial (ver diagnoseLiveOddsMovement em sportmonks/client.ts) — para um jogo já
+      // a decorrer, troca-se pelas odds do endpoint de Ao Vivo confirmado (/odds/inplay/fixtures/
+      // {id}), que sim atualiza durante o jogo. Falha aqui não esconde o jogo — fica só com as
+      // odds congeladas em vez de nada.
+      if (event.status === "live") {
+        try {
+          const liveOdds = await fetchInplayOddsForFixture(fixtureId);
+          if (liveOdds.length) event = { ...event, odds: liveOdds };
+        } catch (err) {
+          logger.warn({ err: String(err).slice(0, 200), fixtureId }, "Sportmonks: falha ao obter odds ao vivo (inplay) no refresh on-demand");
+        }
+      }
       res.json({ event });
       return;
     }
