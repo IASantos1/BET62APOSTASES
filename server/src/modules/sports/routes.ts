@@ -9,6 +9,7 @@ import { getHeadToHead, getPredictions, getStandings, type HeadToHeadMatch } fro
 import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent, getFullFixtureMapping } from "./mapping/service";
 import { getUnifiedMatchData } from "./unified/service";
 import { getSportmonksEventById, getSportmonksFootballPrematchDiagnosis } from "./sportmonks/prematch";
+import { fetchTodayRawFixtureForLiveDiagnosis } from "./sportmonks/client";
 import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
 import { logger } from "../../lib/logger";
@@ -35,6 +36,22 @@ router.get(
   asyncHandler(async (_req, res) => {
     try {
       const result = await getSportmonksFootballPrematchDiagnosis();
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      res.json({ ok: false, message: err instanceof Error ? err.message : "Erro desconhecido" });
+    }
+  })
+);
+
+// Diagnóstico temporário (mesmo padrão do /sportmonks-debug acima) — para confirmar a forma real
+// de uma fixture da Sportmonks já a decorrer (state_id, se há placar ao vivo, se as odds
+// continuam presentes) antes de tentar migrar o Ao Vivo de futebol para a Sportmonks (pedido
+// explícito do utilizador). Ver aviso "não confirmado" em sportmonks/client.ts.
+router.get(
+  "/sportmonks-live-debug",
+  asyncHandler(async (_req, res) => {
+    try {
+      const result = await fetchTodayRawFixtureForLiveDiagnosis();
       res.json({ ok: true, ...result });
     } catch (err) {
       res.json({ ok: false, message: err instanceof Error ? err.message : "Erro desconhecido" });
