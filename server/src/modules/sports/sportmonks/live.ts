@@ -23,6 +23,15 @@ import { fetchInplayOddsForFixture, fetchLivescoresInplay, normalizeLiveFixture 
  * que desaparece de /livescores/inplay (porque terminou) é tratado exatamente como um jogo que
  * desaparece de um snapshot da Pulsescore — remove com a mesma margem (REMOVE_GRACE_MS), liquidando
  * as apostas com o último placar conhecido.
+ *
+ * `state_id === 5` ("FT"/"Full Time", CONFIRMADO em três amostras reais distintas nesta base de
+ * código — ver comentário de detectSuspendedReason em client.ts) é filtrado ANTES de pedir odds:
+ * reportado pelo utilizador com um print real — vários jogos da Carabao Cup a 92'-96' presos em
+ * "Ao Vivo" com o mercado principal "Suspenso" (correto: a casa de apostas já não aceita apostas
+ * num jogo terminado) mas nunca a sair da lista, porque /livescores/inplay continuou a listá-los
+ * mesmo depois do fim. Só se filtra por este valor CONFIRMADO — qualquer outro state_id (incluindo
+ * prorrogação/pénaltis, cujos valores nunca se confirmaram) continua a passar normalmente, nunca
+ * se arrisca a remover um jogo genuinamente a decorrer.
  */
 // Um pedido de odds por jogo ao vivo (não em lote — /odds/inplay sem filtro por fixture nunca foi
 // confirmado por amostra real) — por isso o intervalo aqui é maior do que só o placar precisaria:
@@ -35,9 +44,12 @@ import { fetchInplayOddsForFixture, fetchLivescoresInplay, normalizeLiveFixture 
 // nisso — pode ser só quota de avaliação temporária).
 const POLL_INTERVAL_MS = 15_000;
 
+const FULL_TIME_STATE_ID = 5; // CONFIRMADO — ver comentário do módulo acima
+
 async function pollOnce() {
   try {
-    const fixtures = await fetchLivescoresInplay();
+    const allFixtures = await fetchLivescoresInplay();
+    const fixtures = allFixtures.filter((f) => f.state_id !== FULL_TIME_STATE_ID);
     const oddsResults = await Promise.allSettled(fixtures.map((f) => fetchInplayOddsForFixture(f.id)));
     const events: LiveEvent[] = [];
     fixtures.forEach((fixture, i) => {

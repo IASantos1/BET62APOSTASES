@@ -3084,6 +3084,10 @@ function translateMarketBaseName(m, sport) {
   }
   if (/draw no bet/i.test(m)) return "Empate Anula Aposta";
   if (/double chance/i.test(m)) return "Dupla Hipótese";
+  // "To Qualify" — CONFIRMADO numa amostra real da Sportmonks (Bodø/Glimt vs NEC, eliminatória
+  // europeia a duas mãos): quem passa à ronda seguinte, distinto de "Resultado Final" (quem ganha
+  // ESTE jogo) — teste antes desse, para não cair lá por engano.
+  if (/to qualify/i.test(m)) return "Vencedor da Eliminatória";
   // "full.?time" (não só "full time") — confirmado numa amostra real da Sportmonks em produção:
   // o mercado principal (1X2) chama-se "Fulltime Result", uma só palavra, sem espaço.
   if (/match odds|\b1x2\b|to win|winner|money.?line|full.?time result|3.?way|match winner/i.test(m)) return "Resultado Final";
