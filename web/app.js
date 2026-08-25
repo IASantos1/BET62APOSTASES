@@ -2512,18 +2512,21 @@ function switchStatsTab(tab) {
   document.getElementById("stats-tab-table").classList.toggle("active", tab === "table");
   document.getElementById("stats-tab-topscorers").classList.toggle("active", tab === "topscorers");
   document.getElementById("stats-tab-form").classList.toggle("active", tab === "form");
+  document.getElementById("stats-tab-timeline").classList.toggle("active", tab === "timeline");
   document.getElementById("stats-body-prob").classList.toggle("hidden", tab !== "prob");
   document.getElementById("stats-body-h2h").classList.toggle("hidden", tab !== "h2h");
   document.getElementById("stats-body-teamstats").classList.toggle("hidden", tab !== "teamstats");
   document.getElementById("stats-body-table").classList.toggle("hidden", tab !== "table");
   document.getElementById("stats-body-topscorers").classList.toggle("hidden", tab !== "topscorers");
   document.getElementById("stats-body-form").classList.toggle("hidden", tab !== "form");
+  document.getElementById("stats-body-timeline").classList.toggle("hidden", tab !== "timeline");
   if (tab === "prob") renderWinProbability(currentMarketEvent);
   if (tab === "h2h") renderH2H(currentMarketEvent);
   if (tab === "teamstats") renderTeamStats(currentMarketEvent);
   if (tab === "table") renderStandings(currentMarketEvent);
   if (tab === "topscorers") renderTopscorers(currentMarketEvent);
   if (tab === "form") renderTeamForm(currentMarketEvent);
+  if (tab === "timeline") renderTimeline(currentMarketEvent);
 }
 
 function renderWinProbabilityBars(el, entries, advice) {
@@ -2818,6 +2821,44 @@ async function renderTeamForm(e) {
     el.innerHTML = renderTeamFormColumn(e.home, home) + renderTeamFormColumn(e.away, away);
   } catch {
     el.innerHTML = '<div class="empty-note">Não foi possível carregar a forma das equipas</div>';
+  }
+}
+
+// Linha do tempo do jogo (golos/cartões/substituições) via Sportmonks (só jogos da Sportmonks —
+// ver GET /events/:id/timeline) — sem equivalente para jogos da Pulsescore, esses devolvem lista
+// vazia do backend e caem na mensagem "sem dados" abaixo, nunca um erro.
+let timelineLoadedForEventId = null;
+const TIMELINE_EVENT_ICON = { goal: "⚽", yellowcard: "🟨", redcard: "🟥", substitution: "🔄", other: "•" };
+async function renderTimeline(e) {
+  const el = document.getElementById("stats-body-timeline");
+  if (e.sport !== "football") {
+    el.innerHTML = '<div class="empty-note">Eventos disponíveis só para futebol, por agora</div>';
+    return;
+  }
+  if (timelineLoadedForEventId === e.id) return;
+  el.innerHTML = '<div class="empty-note">A carregar…</div>';
+  try {
+    const { events } = await Bet62Api.getTimeline(e.id);
+    timelineLoadedForEventId = e.id;
+    if (!events || !events.length) {
+      el.innerHTML = '<div class="empty-note">Sem eventos disponíveis para este jogo</div>';
+      return;
+    }
+    el.innerHTML = `
+      <div class="timeline-list">
+        ${events
+          .map(
+            (ev) => `
+          <div class="timeline-row">
+            <span class="timeline-minute">${ev.minute}</span>
+            <span class="timeline-icon">${TIMELINE_EVENT_ICON[ev.kind] || "•"}</span>
+            <span class="timeline-text">${ev.label}: ${ev.playerName}${ev.relatedPlayerName ? ` <span style="color:var(--muted)">↔ ${ev.relatedPlayerName}</span>` : ""} <span style="color:var(--muted)">(${ev.team})</span></span>
+          </div>`
+          )
+          .join("")}
+      </div>`;
+  } catch {
+    el.innerHTML = '<div class="empty-note">Não foi possível carregar os eventos</div>';
   }
 }
 

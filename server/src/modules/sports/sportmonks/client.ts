@@ -441,6 +441,33 @@ export function normalizeLiveFixture(fixture: SportmonksLiveFixture, odds: LiveO
 interface SportmonksFixtureState {
   short_name: string; // "NS" CONFIRMADO numa amostra real = "Not Started" (ver comentário abaixo)
 }
+// Eventos do jogo (golos/cartões/substituições) — CONFIRMADO por uma amostra real completa
+// (`include=...;events.player;events.type;events.period`, fixture 19621957, São Paulo vs
+// Mirassol). `type.developer_name` CONFIRMADOS nessa amostra: "GOAL" (golo, `result` traz o
+// placar acumulado tipo "1-0"), "SUBSTITUTION" (`player_name`/`related_player_name` são os dois
+// jogadores envolvidos — direção IN/OUT nunca confirmada por nenhum campo explícito, por isso
+// mostrados lado a lado sem assumir qual saiu/entrou), "YELLOWCARD". Outros type_id (ex: 10 "Var",
+// visto numa amostra anterior sem `events.type` incluído) ficam sem tradução, mostrados com o nome
+// tal como vier. `minute`/`extra_minute` CONFIRMADOS (ex: minute:45, extra_minute:4 = "45+4'",
+// tempo adicionado).
+interface SportmonksEventPlayer {
+  display_name: string;
+  name: string;
+}
+interface SportmonksEventType {
+  name: string;
+  developer_name: string;
+}
+interface SportmonksMatchEvent {
+  participant_id: number;
+  type_id: number;
+  player_name?: string | null;
+  related_player_name?: string | null;
+  minute: number;
+  extra_minute?: number | null;
+  player?: SportmonksEventPlayer | null;
+  type?: SportmonksEventType;
+}
 interface SportmonksFixtureDetail {
   id: number;
   round_id?: number; // CONFIRMADO numa amostra real desta MESMA fixture (19621839, ver comentário do módulo)
@@ -452,6 +479,7 @@ interface SportmonksFixtureDetail {
   scores?: SportmonksLiveScore[];
   periods?: SportmonksLivePeriod[];
   odds?: SportmonksOdd[];
+  events?: SportmonksMatchEvent[];
 }
 
 /**
@@ -461,7 +489,9 @@ interface SportmonksFixtureDetail {
  * outros endpoints da Sportmonks; se um dia se confirmar que não devolve odds neste endpoint,
  * fica só sem mercados, nunca inventa). Usado para o refresh "abrir o Match Tracker" de UM jogo
  * específico (mesma ideia do refresh da Pulsescore em pulsescore/client.ts) — mais leve do que
- * pedir o dia inteiro (fetchFixturesBetween) só para atualizar um jogo.
+ * pedir o dia inteiro (fetchFixturesBetween) só para atualizar um jogo. `events.player;events.type;
+ * events.period` juntado ao include (CONFIRMADO combinável com o resto numa amostra real completa,
+ * fixture 19621957) para alimentar getMatchTimeline() abaixo, sem pedido extra nenhum.
  *
  * `state.short_name` CONFIRMADO: "NS" = "Not Started" — usado como sinal extra (par com a hora)
  * só para reforçar "ainda não começou"; outros valores de `state` NUNCA foram confirmados (ver
@@ -470,10 +500,56 @@ interface SportmonksFixtureDetail {
  */
 export async function fetchFixtureDetail(fixtureId: number): Promise<SportmonksFixtureDetail> {
   const data = await sportmonksFetch<{ data: SportmonksFixtureDetail }>(`/fixtures/${fixtureId}`, {
-    include: "state;participants;league.country;scores;periods;odds.market;odds.bookmaker",
+    include: "state;participants;league.country;scores;periods;odds.market;odds.bookmaker;events.player;events.type",
     filters: `bookmakers:${env.SPORTMONKS_BOOKMAKER_ID}`,
   });
   return data.data;
+}
+
+export interface MatchEventRow {
+  minute: string; // "76'" ou "45+4'" (tempo adicionado)
+  kind: "goal" | "yellowcard" | "redcard" | "substitution" | "other";
+  label: string;
+  playerName: string;
+  relatedPlayerName?: string; // só substituições — o outro jogador envolvido, sem assumir direção
+  team: string;
+  isHome: boolean;
+}
+
+const EVENT_KIND_BY_DEVELOPER_NAME: Record<string, MatchEventRow["kind"]> = {
+  GOAL: "goal",
+  YELLOWCARD: "yellowcard",
+  REDCARD: "redcard",
+  SUBSTITUTION: "substitution",
+};
+const EVENT_LABEL_PT: Record<string, string> = {
+  GOAL: "Golo",
+  YELLOWCARD: "Cartão Amarelo",
+  REDCARD: "Cartão Vermelho",
+  SUBSTITUTION: "Substituição",
+};
+
+/** Linha do tempo do jogo (golos/cartões/substituições), ordenada por minuto — usa os mesmos
+ * `participants` já normalizados noutras funções deste módulo para saber a equipa/lado de cada
+ * evento. Sem `events` na resposta (jogo sem esta informação disponível), devolve lista vazia. */
+export function getMatchTimeline(fixture: SportmonksFixtureDetail): MatchEventRow[] {
+  return (fixture.events ?? [])
+    .map((ev) => {
+      const developerName = ev.type?.developer_name ?? "";
+      const team = fixture.participants?.find((p) => p.id === ev.participant_id);
+      return {
+        minute: ev.extra_minute ? `${ev.minute}+${ev.extra_minute}'` : `${ev.minute}'`,
+        minuteValue: ev.minute * 100 + (ev.extra_minute ?? 0),
+        kind: EVENT_KIND_BY_DEVELOPER_NAME[developerName] ?? "other",
+        label: EVENT_LABEL_PT[developerName] ?? ev.type?.name ?? "Evento",
+        playerName: ev.player?.display_name ?? ev.player_name ?? "?",
+        relatedPlayerName: developerName === "SUBSTITUTION" ? (ev.related_player_name ?? undefined) : undefined,
+        team: team?.name ?? "",
+        isHome: team?.meta?.location === "home",
+      };
+    })
+    .sort((a, b) => a.minuteValue - b.minuteValue)
+    .map(({ minuteValue: _minuteValue, ...row }) => row);
 }
 
 /** Normaliza a resposta de fetchFixtureDetail() para LiveEvent — usado só para o refresh on-demand
