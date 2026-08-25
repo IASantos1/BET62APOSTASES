@@ -376,6 +376,16 @@ interface SportmonksLiveFixture {
   league?: SportmonksLeague;
   scores?: SportmonksLiveScore[];
   periods?: SportmonksLivePeriod[];
+  // ⚠️ NÃO confirmado por amostra real neste endpoint em concreto (a amostra real de
+  // /livescores/inplay usada para confirmar o resto desta interface não incluía `events`) — pedido
+  // aqui na mesma porque `events.type` já se confirmou combinável com outros includes em
+  // /fixtures/{id} (mesmo recurso "Fixture" nos dois endpoints, ver rate_limit.requested_entity).
+  // Serve só para detectSuspendedReason() abaixo (pedido explícito do utilizador: mostrar "Grande
+  // Chance"/"Revisão VAR" em vez de "Suspenso" genérico no mercado principal, MESMO sem a
+  // Sportmonks confirmar o motivo da suspensão — é uma leitura NOSSA do evento mais recente, não
+  // um campo da API) — se este include não for aceite aqui, `events` fica undefined e o mercado
+  // suspenso mostra só "Suspenso" como já mostrava antes, nunca quebra.
+  events?: SportmonksMatchEvent[];
 }
 
 /** GET /livescores/inplay — forma CONFIRMADA (ver comentário acima). Devolve diretamente todos os
@@ -383,7 +393,7 @@ interface SportmonksLiveFixture {
  * não precisa de nenhuma janela de datas nem de decidir "já começou" pela hora. */
 export async function fetchLivescoresInplay(): Promise<SportmonksLiveFixture[]> {
   const data = await sportmonksFetch<{ data: SportmonksLiveFixture[] }>("/livescores/inplay", {
-    include: "league.country;participants;periods;scores",
+    include: "league.country;participants;periods;scores;events.type",
   });
   return data.data ?? [];
 }
@@ -421,6 +431,9 @@ export function normalizeLiveFixture(fixture: SportmonksLiveFixture, odds: LiveO
   const activePeriod = periods.find((p) => p.ended === null) ?? periods[periods.length - 1];
   const minuteOrPeriod = activePeriod ? `${activePeriod.minutes}'` : "";
 
+  const finalOdds = finalizeMarketOrder(odds);
+  const suspendedReason = finalOdds[0] && !finalOdds[0].isActive ? detectSuspendedReason(fixture.events) : undefined;
+
   return {
     id: `sportmonks:${fixture.id}`,
     sport: "football",
@@ -431,7 +444,8 @@ export function normalizeLiveFixture(fixture: SportmonksLiveFixture, odds: LiveO
     awayScore,
     minuteOrPeriod,
     status: "live",
-    odds: finalizeMarketOrder(odds),
+    odds: finalOdds,
+    suspendedReason,
     updatedAt: new Date().toISOString(),
     source: "sportmonks",
     country: fixture.league?.country?.iso2,
@@ -446,10 +460,14 @@ interface SportmonksFixtureState {
 // Mirassol). `type.developer_name` CONFIRMADOS nessa amostra: "GOAL" (golo, `result` traz o
 // placar acumulado tipo "1-0"), "SUBSTITUTION" (`player_name`/`related_player_name` são os dois
 // jogadores envolvidos — direção IN/OUT nunca confirmada por nenhum campo explícito, por isso
-// mostrados lado a lado sem assumir qual saiu/entrou), "YELLOWCARD". Outros type_id (ex: 10 "Var",
-// visto numa amostra anterior sem `events.type` incluído) ficam sem tradução, mostrados com o nome
-// tal como vier. `minute`/`extra_minute` CONFIRMADOS (ex: minute:45, extra_minute:4 = "45+4'",
-// tempo adicionado).
+// mostrados lado a lado sem assumir qual saiu/entrou), "YELLOWCARD". `type_id:10` = revisão VAR —
+// CONFIRMADO por DUAS amostras reais distintas (fixture 19788356: `info:"Offside"`,
+// `addition:"Goal Disallowed"`, golo anulado; fixture 19622037: `addition:"Var"`, sem outro
+// detalhe), ambas com `sub_type_id:1512` — nenhuma das duas trouxe `events.type` incluído, por
+// isso identifica-se pelo `type_id` numérico (não pelo nome, nunca visto), e o texto usa
+// `addition` para distinguir "revisão em curso"/"sem detalhe" de "golo anulado". Outros type_id
+// não reconhecidos ficam sem tradução, mostrados com o nome tal como vier. `minute`/`extra_minute`
+// CONFIRMADOS (ex: minute:45, extra_minute:4 = "45+4'", tempo adicionado).
 interface SportmonksEventPlayer {
   display_name: string;
   name: string;
@@ -463,6 +481,7 @@ interface SportmonksMatchEvent {
   type_id: number;
   player_name?: string | null;
   related_player_name?: string | null;
+  addition?: string | null;
   minute: number;
   extra_minute?: number | null;
   player?: SportmonksEventPlayer | null;
@@ -508,12 +527,36 @@ export async function fetchFixtureDetail(fixtureId: number): Promise<SportmonksF
 
 export interface MatchEventRow {
   minute: string; // "76'" ou "45+4'" (tempo adicionado)
-  kind: "goal" | "yellowcard" | "redcard" | "substitution" | "other";
+  kind: "goal" | "yellowcard" | "redcard" | "substitution" | "var" | "other";
   label: string;
-  playerName: string;
+  playerName?: string; // ausente em eventos sem jogador associado (ex: revisão VAR), nunca "?"
   relatedPlayerName?: string; // só substituições — o outro jogador envolvido, sem assumir direção
   team: string;
   isHome: boolean;
+}
+
+const VAR_EVENT_TYPE_ID = 10; // CONFIRMADO (ver comentário de SportmonksMatchEvent acima)
+
+/**
+ * Motivo mostrado no mercado principal suspenso ("Suspenso" → "Grande Chance"/"Revisão VAR") —
+ * pedido EXPLÍCITO do utilizador, por escolha deliberada dele mesmo sabendo que a Sportmonks NUNCA
+ * confirmou nenhum campo com o motivo real de uma suspensão (só o sinal genérico `stopped`, ver
+ * comentário de LiveSelection em types.ts): "a documentação fornece os dados e a gente recria
+ * aqui a forma que a gente quer que apareça". Esta função é essa recriação — olha para o evento
+ * mais recente do jogo (por minuto, depois minuto+tempo adicionado) e devolve "goal" se foi um
+ * golo (developer_name "GOAL", confirmado), "var" se foi uma revisão VAR (type_id 10, confirmado —
+ * ver VAR_EVENT_TYPE_ID acima), ou undefined para qualquer outro caso, incluindo sem eventos
+ * disponíveis (endpoint sem `events`, ou combinação de include não suportada) — nunca inventa um
+ * motivo sem ter pelo menos um evento real para se basear; o mercado mostra "Suspenso" genérico
+ * nesse caso, como já mostrava antes desta função existir.
+ */
+function detectSuspendedReason(events: SportmonksMatchEvent[] | undefined): "goal" | "var" | undefined {
+  if (!events?.length) return undefined;
+  const minuteValue = (ev: SportmonksMatchEvent) => ev.minute * 100 + (ev.extra_minute ?? 0);
+  const mostRecent = [...events].sort((a, b) => minuteValue(b) - minuteValue(a))[0]!;
+  if (mostRecent.type_id === VAR_EVENT_TYPE_ID) return "var";
+  if (mostRecent.type?.developer_name === "GOAL") return "goal";
+  return undefined;
 }
 
 const EVENT_KIND_BY_DEVELOPER_NAME: Record<string, MatchEventRow["kind"]> = {
@@ -529,20 +572,24 @@ const EVENT_LABEL_PT: Record<string, string> = {
   SUBSTITUTION: "Substituição",
 };
 
-/** Linha do tempo do jogo (golos/cartões/substituições), ordenada por minuto — usa os mesmos
- * `participants` já normalizados noutras funções deste módulo para saber a equipa/lado de cada
- * evento. Sem `events` na resposta (jogo sem esta informação disponível), devolve lista vazia. */
+/** Linha do tempo do jogo (golos/cartões/substituições/revisões VAR), ordenada por minuto — usa os
+ * mesmos `participants` já normalizados noutras funções deste módulo para saber a equipa/lado de
+ * cada evento. Sem `events` na resposta (jogo sem esta informação disponível), devolve lista vazia. */
 export function getMatchTimeline(fixture: SportmonksFixtureDetail): MatchEventRow[] {
   return (fixture.events ?? [])
     .map((ev) => {
       const developerName = ev.type?.developer_name ?? "";
       const team = fixture.participants?.find((p) => p.id === ev.participant_id);
+      const isVar = ev.type_id === VAR_EVENT_TYPE_ID;
+      const kind: MatchEventRow["kind"] = isVar ? "var" : EVENT_KIND_BY_DEVELOPER_NAME[developerName] ?? "other";
+      const label = isVar ? (ev.addition === "Goal Disallowed" ? "Golo Anulado (VAR)" : "Revisão VAR") : EVENT_LABEL_PT[developerName] ?? ev.type?.name ?? "Evento";
+      const playerName = ev.player?.display_name ?? ev.player_name ?? undefined;
       return {
         minute: ev.extra_minute ? `${ev.minute}+${ev.extra_minute}'` : `${ev.minute}'`,
         minuteValue: ev.minute * 100 + (ev.extra_minute ?? 0),
-        kind: EVENT_KIND_BY_DEVELOPER_NAME[developerName] ?? "other",
-        label: EVENT_LABEL_PT[developerName] ?? ev.type?.name ?? "Evento",
-        playerName: ev.player?.display_name ?? ev.player_name ?? "?",
+        kind,
+        label,
+        playerName,
         relatedPlayerName: developerName === "SUBSTITUTION" ? (ev.related_player_name ?? undefined) : undefined,
         team: team?.name ?? "",
         isHome: team?.meta?.location === "home",
@@ -571,6 +618,9 @@ export function normalizeFixtureDetail(fixture: SportmonksFixtureDetail): LiveEv
   const activePeriod = periods.find((p) => p.ended === null) ?? periods[periods.length - 1];
   const minuteOrPeriod = !isScheduled && activePeriod ? `${activePeriod.minutes}'` : "";
 
+  const finalOdds = finalizeMarketOrder(groupOddsIntoMarkets(fixture.odds));
+  const suspendedReason = finalOdds[0] && !finalOdds[0].isActive ? detectSuspendedReason(fixture.events) : undefined;
+
   return {
     id: `sportmonks:${fixture.id}`,
     sport: "football",
@@ -586,7 +636,8 @@ export function normalizeFixtureDetail(fixture: SportmonksFixtureDetail): LiveEv
     // raro de reabrir mesmo no instante em que termina fica coberto pelo merge do frontend, que
     // nunca troca mercados já mostrados por uma resposta mais pobre.
     status: isScheduled ? "scheduled" : "live",
-    odds: finalizeMarketOrder(groupOddsIntoMarkets(fixture.odds)),
+    odds: finalOdds,
+    suspendedReason,
     updatedAt: new Date().toISOString(),
     source: "sportmonks",
     startTime: startTimeIso,

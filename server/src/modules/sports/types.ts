@@ -104,4 +104,12 @@ export interface LiveEvent {
   startTime?: string; // ISO timestamp — kickoff time, present for scheduled (pré-jogo) events
   country?: string; // ISO 2-letter code (e.g. "CO", "GB"); "" for international/qualifier competitions
   statistics?: LiveStatistics; // yellow/red cards, corners — only when the bookmaker provides them
+  // Motivo mostrado no mercado principal quando suspenso ("Suspenso" → "Grande Chance"/"Revisão
+  // VAR") — só Sportmonks (ver detectSuspendedReason em sportmonks/client.ts). NÃO é um campo da
+  // API: nenhum provedor confirma o motivo real de uma suspensão (ver aviso em LiveSelection
+  // acima), isto é uma leitura nossa do evento mais recente do jogo, pedido explícito do
+  // utilizador ("a documentação fornece os dados e a gente recria aqui a forma que a gente quer
+  // que apareça"). undefined = sem eventos disponíveis para decidir, ou motivo não reconhecido —
+  // o frontend mostra "Suspenso" genérico nesse caso.
+  suspendedReason?: "goal" | "var";
 }

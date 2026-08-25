@@ -572,6 +572,17 @@ function quickPick(event, key, selection) {
   event.currentTarget.classList.toggle("picked");
 }
 
+// Rótulo do mercado principal suspenso — "Suspenso" genérico, ou "Grande Chance"/"Revisão VAR"
+// quando `e.suspendedReason` vem preenchido (Sportmonks, ver detectSuspendedReason() no backend,
+// sportmonks/client.ts — NÃO é um dado confirmado da API, é uma leitura nossa do evento mais
+// recente do jogo, pedido explícito do utilizador). Jogos sem este campo (Pulsescore, ou
+// Sportmonks sem eventos disponíveis) continuam a mostrar só "Suspenso", como sempre.
+function primarySuspendedLabel(e) {
+  if (e.suspendedReason === "goal") return "Grande Chance";
+  if (e.suspendedReason === "var") return "Revisão VAR";
+  return "Suspenso";
+}
+
 // As 3 odds 1x2 do cartão compacto ficavam invisíveis assim que o mercado era suspenso (VAR,
 // pênalti, cartão...), porque só entradas ativas (activeSelectionEntries) chegavam a aparecer —
 // pedido explícito para NUNCA sumirem: agora mostram-se sempre, ativas clicáveis e suspensas
@@ -579,7 +590,7 @@ function quickPick(event, key, selection) {
 // renderMarketGroups acima) em vez de desaparecer.
 function quickOddsHtml(e, group, isLive) {
   if (!group?.selections) return "";
-  if (!group.isActive) return '<div class="lc-odds"><div class="suspended" style="flex:3">Suspenso</div></div>';
+  if (!group.isActive) return `<div class="lc-odds"><div class="suspended" style="flex:3">${primarySuspendedLabel(e)}</div></div>`;
   const entries = orderedSelectionEntries(group.selections).slice(0, 3);
   if (!entries.length) return "";
   return `<div class="lc-odds">${entries
@@ -2845,11 +2856,11 @@ async function renderTeamForm(e) {
   }
 }
 
-// Linha do tempo do jogo (golos/cartões/substituições) via Sportmonks (só jogos da Sportmonks —
-// ver GET /events/:id/timeline) — sem equivalente para jogos da Pulsescore, esses devolvem lista
-// vazia do backend e caem na mensagem "sem dados" abaixo, nunca um erro.
+// Linha do tempo do jogo (golos/cartões/substituições/revisões VAR) via Sportmonks (só jogos da
+// Sportmonks — ver GET /events/:id/timeline) — sem equivalente para jogos da Pulsescore, esses
+// devolvem lista vazia do backend e caem na mensagem "sem dados" abaixo, nunca um erro.
 let timelineLoadedForEventId = null;
-const TIMELINE_EVENT_ICON = { goal: "⚽", yellowcard: "🟨", redcard: "🟥", substitution: "🔄", other: "•" };
+const TIMELINE_EVENT_ICON = { goal: "⚽", yellowcard: "🟨", redcard: "🟥", substitution: "🔄", var: "📺", other: "•" };
 async function renderTimeline(e) {
   const el = document.getElementById("stats-body-timeline");
   if (e.sport !== "football") {
@@ -2873,7 +2884,7 @@ async function renderTimeline(e) {
           <div class="timeline-row">
             <span class="timeline-minute">${ev.minute}</span>
             <span class="timeline-icon">${TIMELINE_EVENT_ICON[ev.kind] || "•"}</span>
-            <span class="timeline-text">${ev.label}: ${ev.playerName}${ev.relatedPlayerName ? ` <span style="color:var(--muted)">↔ ${ev.relatedPlayerName}</span>` : ""} <span style="color:var(--muted)">(${ev.team})</span></span>
+            <span class="timeline-text">${ev.label}${ev.playerName ? `: ${ev.playerName}` : ""}${ev.relatedPlayerName ? ` <span style="color:var(--muted)">↔ ${ev.relatedPlayerName}</span>` : ""} <span style="color:var(--muted)">(${ev.team})</span></span>
           </div>`
           )
           .join("")}
@@ -3073,6 +3084,10 @@ function translateMarketBaseName(m, sport) {
   }
   if (/draw no bet/i.test(m)) return "Empate Anula Aposta";
   if (/double chance/i.test(m)) return "Dupla Hipótese";
+  // "To Qualify" — CONFIRMADO numa amostra real da Sportmonks (Bodø/Glimt vs NEC, eliminatória
+  // europeia a duas mãos): quem passa à ronda seguinte, distinto de "Resultado Final" (quem ganha
+  // ESTE jogo) — teste antes desse, para não cair lá por engano.
+  if (/to qualify/i.test(m)) return "Vencedor da Eliminatória";
   // "full.?time" (não só "full time") — confirmado numa amostra real da Sportmonks em produção:
   // o mercado principal (1X2) chama-se "Fulltime Result", uma só palavra, sem espaço.
   if (/match odds|\b1x2\b|to win|winner|money.?line|full.?time result|3.?way|match winner/i.test(m)) return "Resultado Final";
@@ -3284,7 +3299,7 @@ function renderMarketGroups(e) {
       const marketNamePt = translateMarketDisplayName(group.market, e.sport, Object.keys(group.selections || {}), e.home, e.away, group.line);
       if (group === primaryMarket && !group.isActive) {
         return `<div class="market-group"><h4>${marketNamePt}</h4><div class="selection-row">
-          <div class="selection-btn suspended"><span class="sel-odd">Suspenso</span></div>
+          <div class="selection-btn suspended"><span class="sel-odd">${primarySuspendedLabel(e)}</span></div>
         </div></div>`;
       }
       const rows = orderedSelectionEntries(group.selections)
