@@ -346,9 +346,11 @@ export async function fetchFixturesBetween(
 //   cada lado já visível nos eventos).
 // A amostra real NÃO incluía odds (include usado pelo utilizador: league.country;events;periods;
 // participants;round;scores, sem odds.market/odds.bookmaker) — este módulo também não as pede
-// aqui, por prudência (nunca confirmado que este endpoint aceita esse include). Em vez disso,
-// sportmonks/live.ts usa as odds já obtidas por fetchFixturesBetween (essa sim CONFIRMADA a trazer
-// odds mesmo para jogos já começados — has_odds:true, 1425 odds numa amostra real).
+// aqui. As odds ao vivo vêm de fetchInplayOddsForFixture() (GET /odds/inplay/fixtures/{id}, ver
+// abaixo) — CONFIRMADO como o endpoint certo por diagnoseLiveOddsMovement() (as odds de
+// fetchFixturesBetween/fetchFixtureDetail ficam congeladas desde antes do apito inicial; este
+// endpoint tem `latest_bookmaker_update` a variar ao longo do jogo inteiro, prova real de que
+// atualiza mesmo).
 interface SportmonksLiveScore {
   participant_id: number;
   score: { goals: number; participant: "home" | "away" };
@@ -383,6 +385,24 @@ export async function fetchLivescoresInplay(): Promise<SportmonksLiveFixture[]> 
     include: "league.country;participants;periods;scores",
   });
   return data.data ?? [];
+}
+
+/**
+ * GET /odds/inplay/fixtures/{id} — CONFIRMADO por uma amostra real completa colada pelo utilizador
+ * (várias odds do mesmo jogo com `latest_bookmaker_update` espalhado entre 19:00 e 19:38, ao longo
+ * do jogo inteiro — prova de que ESTE endpoint atualiza mesmo durante o jogo, ao contrário de
+ * GET /fixtures/{id}, cujas odds confirmaram-se congeladas desde antes do apito inicial, ver
+ * diagnoseLiveOddsMovement()). Devolve uma lista PLANA de odds (não aninhada em fixture), cada uma
+ * já com `market`/`bookmaker` incluídos — forma compatível com `SportmonksOdd` já usado no resto
+ * do módulo (`groupOddsIntoMarkets`/`finalizeMarketOrder` reutilizados tal como estão). Labels
+ * aqui confirmaram-se "1"/"X"/"2" para o mercado principal (não "Home"/"Draw"/"Away" como em
+ * fetchFixturesBetween) — já cobertos por HOME_DRAW_AWAY_PRIORITY (ver withCanonicalOutcomeOrder).
+ */
+export async function fetchInplayOddsForFixture(fixtureId: number): Promise<LiveOdds[]> {
+  const data = await sportmonksFetch<{ data: SportmonksOdd[] }>(`/odds/inplay/fixtures/${fixtureId}`, {
+    include: "market;bookmaker",
+  });
+  return finalizeMarketOrder(groupOddsIntoMarkets(data.data));
 }
 
 /** Normaliza uma fixture do /livescores/inplay para LiveEvent — `odds` vem de fora (ver comentário
