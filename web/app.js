@@ -572,6 +572,17 @@ function quickPick(event, key, selection) {
   event.currentTarget.classList.toggle("picked");
 }
 
+// Rótulo do mercado principal suspenso — "Suspenso" genérico, ou "Grande Chance"/"Revisão VAR"
+// quando `e.suspendedReason` vem preenchido (Sportmonks, ver detectSuspendedReason() no backend,
+// sportmonks/client.ts — NÃO é um dado confirmado da API, é uma leitura nossa do evento mais
+// recente do jogo, pedido explícito do utilizador). Jogos sem este campo (Pulsescore, ou
+// Sportmonks sem eventos disponíveis) continuam a mostrar só "Suspenso", como sempre.
+function primarySuspendedLabel(e) {
+  if (e.suspendedReason === "goal") return "Grande Chance";
+  if (e.suspendedReason === "var") return "Revisão VAR";
+  return "Suspenso";
+}
+
 // As 3 odds 1x2 do cartão compacto ficavam invisíveis assim que o mercado era suspenso (VAR,
 // pênalti, cartão...), porque só entradas ativas (activeSelectionEntries) chegavam a aparecer —
 // pedido explícito para NUNCA sumirem: agora mostram-se sempre, ativas clicáveis e suspensas
@@ -579,7 +590,7 @@ function quickPick(event, key, selection) {
 // renderMarketGroups acima) em vez de desaparecer.
 function quickOddsHtml(e, group, isLive) {
   if (!group?.selections) return "";
-  if (!group.isActive) return '<div class="lc-odds"><div class="suspended" style="flex:3">Suspenso</div></div>';
+  if (!group.isActive) return `<div class="lc-odds"><div class="suspended" style="flex:3">${primarySuspendedLabel(e)}</div></div>`;
   const entries = orderedSelectionEntries(group.selections).slice(0, 3);
   if (!entries.length) return "";
   return `<div class="lc-odds">${entries
@@ -3284,7 +3295,7 @@ function renderMarketGroups(e) {
       const marketNamePt = translateMarketDisplayName(group.market, e.sport, Object.keys(group.selections || {}), e.home, e.away, group.line);
       if (group === primaryMarket && !group.isActive) {
         return `<div class="market-group"><h4>${marketNamePt}</h4><div class="selection-row">
-          <div class="selection-btn suspended"><span class="sel-odd">Suspenso</span></div>
+          <div class="selection-btn suspended"><span class="sel-odd">${primarySuspendedLabel(e)}</span></div>
         </div></div>`;
       }
       const rows = orderedSelectionEntries(group.selections)
