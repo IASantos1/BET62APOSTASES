@@ -275,22 +275,31 @@ export async function fetchFixturesBetween(
 }
 
 /**
- * Diagnóstico (ver routes.ts, GET /api/sports/sportmonks-live-debug) — pedido explícito do
- * utilizador de migrar também o Ao Vivo de futebol para a Sportmonks. Ainda NUNCA se confirmou
- * uma amostra real de um jogo A DECORRER: a única forma de fixture vista até agora foi sempre de
- * jogos por começar ou já terminados (ver aviso no comentário do módulo) — por isso
- * `normalizeFixture()` nunca assume "ao vivo" pelo `state_id`, só compara a hora. Esta função
- * devolve a fixture BRUTA (sem normalizar, todos os campos tal como a Sportmonks manda) do
- * primeiro jogo de hoje cuja hora de início já passou — candidato a estar "a decorrer" — para se
- * poder ver o `state_id` real nesse estado, se há algum campo de placar ao vivo, e se as odds
- * continuam presentes/atualizadas depois do apito inicial. Sem isso, migrar o Ao Vivo arriscaria
- * ficar sem odds nem placar durante os jogos.
+ * Diagnóstico (ver routes.ts, GET /api/sports/sportmonks-live-debug) — duas amostras BRUTAS
+ * (sem normalizar, todos os campos tal como a Sportmonks manda), num único pedido:
+ *
+ * 1. `startedSample`: o jogo de hoje cuja hora de início já passou mais recentemente — candidato
+ *    a estar "a decorrer" agora. Pedido explícito do utilizador de migrar também o Ao Vivo de
+ *    futebol para a Sportmonks. Ainda NUNCA se confirmou uma amostra real de um jogo A DECORRER
+ *    (as únicas vistas até agora eram sempre de jogos por começar ou já terminados) — por isso
+ *    `normalizeFixture()` nunca assume "ao vivo" pelo `state_id`, só compara a hora. Preciso de
+ *    ver aqui o `state_id` real nesse estado, se há algum campo de placar ao vivo, e se as odds
+ *    continuam presentes depois do apito inicial.
+ * 2. `scheduledSample`: um jogo ainda por começar — para confirmar, campo a campo, PORQUE cerca de
+ *    metade das entradas de mercados como "Alternative Goal Line"/"Team Total Goals" não têm
+ *    `total`/`handicap` preenchido (confirmado a analisar uma amostra real de 198 jogos: 1089/2235
+ *    "Alternative Goal Line" com linha, 0/1858 "Team Total Goals" com linha) — sem essa linha em
+ *    lado nenhum, `groupOddsIntoMarkets()` não tem como mostrar o "Mais de 2.5"/"Menos de 2.5" real
+ *    (reportado pelo utilizador: "mais/menos tem de aparecer 0.5 1.5 2.5... e não estão a
+ *    aparecer"). Preciso de ver se `market_description` (ou outro campo ainda não usado) tem a
+ *    linha nesses casos, antes de mudar `groupOddsIntoMarkets()`/`normalizeFixture()` às cegas.
  */
 export async function fetchTodayRawFixtureForLiveDiagnosis(): Promise<{
   fetchedAt: string;
   totalFixturesToday: number;
   candidatesAlreadyStarted: number;
-  sample: SportmonksFixtureWithLeague | null;
+  startedSample: SportmonksFixtureWithLeague | null;
+  scheduledSample: SportmonksFixtureWithLeague | null;
 }> {
   const today = new Date().toISOString().slice(0, 10);
   const data = await sportmonksFetch<{ data: SportmonksFixtureWithLeague[] }>(`/fixtures/between/${today}/${today}`, {
@@ -304,10 +313,12 @@ export async function fetchTodayRawFixtureForLiveDiagnosis(): Promise<{
     const iso = `${f.starting_at.trim().replace(" ", "T")}Z`;
     return new Date(iso).getTime() <= now;
   });
+  const scheduled = fixtures.filter((f) => !started.includes(f));
   // O jogo cuja hora de início está mais próxima de agora (mas já passou) — o melhor candidato a
   // estar mesmo a decorrer neste preciso momento, em vez de já ter terminado há horas.
-  const sample = started.sort((a, b) => b.starting_at.localeCompare(a.starting_at))[0] ?? null;
-  return { fetchedAt: new Date().toISOString(), totalFixturesToday: fixtures.length, candidatesAlreadyStarted: started.length, sample };
+  const startedSample = started.sort((a, b) => b.starting_at.localeCompare(a.starting_at))[0] ?? null;
+  const scheduledSample = scheduled.sort((a, b) => a.starting_at.localeCompare(b.starting_at))[0] ?? null;
+  return { fetchedAt: new Date().toISOString(), totalFixturesToday: fixtures.length, candidatesAlreadyStarted: started.length, startedSample, scheduledSample };
 }
 
 const roundCache = new Map<number, { events: LiveEvent[]; fetchedAt: number }>();
