@@ -7,6 +7,7 @@ import { hybridSportsService } from "./modules/sports/hybridService";
 import { seedDefaultAliases } from "./modules/sports/mapping/aliasStore";
 import { settleEventFinished, checkEarlySettlement, sweepStaleBets } from "./modules/betting/settlement";
 import { sweepExpiredPromotions, seedRecommendedLaunchPromotion } from "./modules/promotions/service";
+import { startSportmonksPrematchBackgroundRefresh } from "./modules/sports/sportmonks/prematch";
 import type { LiveEvent } from "./modules/sports/types";
 
 const app = createApp();
@@ -14,6 +15,12 @@ const server = http.createServer(app);
 
 attachSportsWebsocketGateway(server);
 hybridSportsService.start();
+// Só arranca se o futebol estiver mesmo a usar a Sportmonks e a chave estiver configurada — caso
+// contrário getSportmonksFootballPrematch() nunca é chamada e este pré-aquecimento seria só
+// pedidos a falhar (SPORTMONKS_API_KEY em falta) de 40 em 40s sem propósito nenhum.
+if (env.FOOTBALL_PROVIDER === "sportmonks" && env.SPORTMONKS_API_KEY) {
+  startSportmonksPrematchBackgroundRefresh();
+}
 seedDefaultAliases().catch((err) => logger.warn({ err }, "Mapping: falha ao semear aliases por omissão"));
 seedRecommendedLaunchPromotion().catch((err) => logger.warn({ err }, "Promotions: falha ao semear a promoção de lançamento"));
 
