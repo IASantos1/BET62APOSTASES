@@ -56,6 +56,19 @@ const envSchema = z.object({
   API_FOOTBALL_PROVIDER: z.enum(["direct", "rapidapi"]).default("direct"),
   API_FOOTBALL_RAPIDAPI_HOST: z.string().default("api-football-v1.p.rapidapi.com"),
 
+  // --- Sportmonks (só futebol: placar/odds/estatísticas — substituto opcional da Pulsescore +
+  // API-Football só para este desporto, pedido explícito do utilizador, ver sportmonks/client.ts) ---
+  // Interruptor deliberado (não um "remover" definitivo) — "suspender" a Pulsescore para futebol
+  // foi o pedido, por isso continua tudo implementado e pronto a reativar só mudando esta
+  // variável de volta, sem alterações de código. Os outros 7 desportos NUNCA passam pela
+  // Sportmonks, ficam sempre na Pulsescore.
+  FOOTBALL_PROVIDER: z.enum(["pulsescore", "sportmonks"]).default("pulsescore"),
+  SPORTMONKS_API_KEY: z.string().default(""),
+  SPORTMONKS_BASE_URL: z.string().default("https://api.sportmonks.com/v3/football"),
+  // bet365 (id 2) — confirmado na amostra real enviada pelo utilizador (rounds/{id}?...&filters=
+  // bookmakers:2). Sem uma segunda amostra de outra bookmaker, fica como único bookmaker usado.
+  SPORTMONKS_BOOKMAKER_ID: z.coerce.number().default(2),
+
   // --- Documentos KYC (upload de documento pessoal + extrato bancário) ---
   // Caminho local (relativo à raiz do processo) onde os ficheiros ficam guardados — NEEDS
   // VALIDATION antes de produção: sem um volume persistente do Railway montado neste caminho,

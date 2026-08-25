@@ -792,6 +792,47 @@ duplicar** o que a principal já tem — só preenche o que está mesmo em falta
   25 ids de bookmaker não confirmados precisam de validação com pedidos reais antes de se saber
   quais realmente preenchem mercados na prática.
 
+## Sportmonks (substituto opcional da Pulsescore só para futebol)
+
+Pedido explícito do utilizador: "suspender" (não remover) a Pulsescore só para futebol e usar a
+Sportmonks em vez disso — cobertura de "todas as ligas" e "vários mercados". Interruptor
+`FOOTBALL_PROVIDER` em `env.ts` (`pulsescore` por omissão — nada muda até ser mudado
+explicitamente para `sportmonks`). Os outros 7 desportos NUNCA passam pela Sportmonks.
+
+**✅ Confirmado por duas amostras reais idênticas coladas pelo utilizador** (`GET /rounds/{id}?
+include=fixtures.odds.market;fixtures.odds.bookmaker;fixtures.participants;league.country&
+filters=markets:X;bookmakers:2`): forma da ronda/fixture/odd/participante — ver comentário
+completo em `sportmonks/client.ts`. Testado com uma reprodução exata dessa amostra: liga,
+equipas (via `participants[].meta.location`), e as três odds 1X2 saem todas corretas.
+
+**⚠️ NÃO confirmado com amostra real** (implementado contra os padrões documentados publicamente
+da Sportmonks v3, nunca testados contra a chave real deste projeto — rede deste ambiente de build
+bloqueia `api.sportmonks.com`):
+- Autenticação via `?api_token=` na query string.
+- `GET /leagues?include=currentSeason.currentRound` para descobrir a ronda atual de cada liga —
+  necessário para "todas as ligas" numa lista só, já que a Sportmonks organiza por
+  ronda/liga, ao contrário da lista plana da Pulsescore.
+- Qualquer mercado além do `market_id:1` (1X2) — a amostra só veio filtrada a esse mercado; outros
+  mercados devem funcionar pela mesma forma (`odds[].market.name` usado diretamente, sem tabela de
+  tradução, tal como o `rawName` da Pulsescore), mas nunca vistos numa resposta real.
+- Classificação de estado do jogo (`state_id`): sem uma amostra de um jogo por começar/a decorrer
+  (a única amostra recebida foi sempre de uma ronda já terminada), `normalizeFixture()` NUNCA
+  assume "ao vivo" — só compara `starting_at` com a hora atual para decidir "agendado" vs.
+  "terminado", em vez de inventar significado para um enum não confirmado.
+
+**Deliberadamente NÃO migrado**: o Ao Vivo de futebol (`hybridService.ts`) continua sempre na
+Pulsescore, mesmo com `FOOTBALL_PROVIDER=sportmonks`. A primeira amostra que o utilizador mostrou
+para "ao vivo" (`GET /livescores/inplay?include=...`) não tinha odds nenhumas — só depois de
+questionado é que confirmou o endpoint certo, mas esse (`/rounds/{id}`) é de pré-jogo por ronda,
+não um feed ao vivo. Sem uma amostra real de um endpoint ao vivo COM odds, migrar o Ao Vivo
+deixaria o futebol sem poder apostar durante os jogos — por isso fica por fazer até haver essa
+amostra.
+
+Ficheiros: `sportmonks/client.ts` (cliente + normalizador `LiveEvent`), `sportmonks/prematch.ts`
+(junta todas as ligas numa lista plana, dois níveis de cache — ligas/ronda-atual 1h, jogos+odds de
+cada ronda 45s), `prematch/service.ts::getPrematchEvents()` (desvia só o futebol quando o
+interruptor está ligado).
+
 ## Ordenação de desportos (Pré-jogo e Destaques)
 
 `web/app.js::SPORT_ORDER` fixa a ordem "futebol primeiro" (depois ténis, basquete, o resto pela
