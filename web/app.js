@@ -2511,16 +2511,19 @@ function switchStatsTab(tab) {
   document.getElementById("stats-tab-teamstats").classList.toggle("active", tab === "teamstats");
   document.getElementById("stats-tab-table").classList.toggle("active", tab === "table");
   document.getElementById("stats-tab-topscorers").classList.toggle("active", tab === "topscorers");
+  document.getElementById("stats-tab-form").classList.toggle("active", tab === "form");
   document.getElementById("stats-body-prob").classList.toggle("hidden", tab !== "prob");
   document.getElementById("stats-body-h2h").classList.toggle("hidden", tab !== "h2h");
   document.getElementById("stats-body-teamstats").classList.toggle("hidden", tab !== "teamstats");
   document.getElementById("stats-body-table").classList.toggle("hidden", tab !== "table");
   document.getElementById("stats-body-topscorers").classList.toggle("hidden", tab !== "topscorers");
+  document.getElementById("stats-body-form").classList.toggle("hidden", tab !== "form");
   if (tab === "prob") renderWinProbability(currentMarketEvent);
   if (tab === "h2h") renderH2H(currentMarketEvent);
   if (tab === "teamstats") renderTeamStats(currentMarketEvent);
   if (tab === "table") renderStandings(currentMarketEvent);
   if (tab === "topscorers") renderTopscorers(currentMarketEvent);
+  if (tab === "form") renderTeamForm(currentMarketEvent);
 }
 
 function renderWinProbabilityBars(el, entries, advice) {
@@ -2738,6 +2741,63 @@ async function renderTopscorers(e) {
       </div>`;
   } catch {
     el.innerHTML = '<div class="empty-note">Não foi possível carregar os artilheiros</div>';
+  }
+}
+
+// Forma recente/próximos jogos das duas equipas via Sportmonks (só jogos da Sportmonks — ver GET
+// /events/:id/form) — mesma disciplina das abas acima: jogos da Pulsescore vêm com home/away
+// null do backend e caem na mensagem "sem dados", nunca um erro.
+let teamFormLoadedForEventId = null;
+function formBadge(result) {
+  if (!result) return '<span class="form-badge form-badge-none">?</span>';
+  return `<span class="form-badge form-badge-${result}">${result}</span>`;
+}
+function renderTeamFormColumn(name, form) {
+  if (!form || (!form.recent.length && !form.upcoming.length)) {
+    return `<div class="form-team"><div class="form-team-name">${name}</div><div class="empty-note">Sem dados de forma</div></div>`;
+  }
+  const badges = form.recent.map((m) => formBadge(m.result)).join("");
+  const recentRows = form.recent
+    .map(
+      (m) => `
+      <div class="standings-row">
+        <span class="st-team">${formBadge(m.result)} ${m.isHome ? "vs" : "@"} ${m.opponent}</span><span class="st-pts">${m.score ?? ""}</span>
+      </div>`
+    )
+    .join("");
+  const upcomingRows = form.upcoming
+    .map(
+      (m) => `
+      <div class="standings-row">
+        <span class="st-team">${m.isHome ? "vs" : "@"} ${m.opponent}</span><span class="st-pj">${new Date(m.date).toLocaleDateString("pt-PT", { timeZone: BET62_TIMEZONE })}</span>
+      </div>`
+    )
+    .join("");
+  return `
+    <div class="form-team">
+      <div class="form-team-name">${name} <span class="form-badges">${badges}</span></div>
+      <div class="standings-table">${recentRows || '<div class="empty-note">Sem jogos recentes</div>'}</div>
+      ${form.upcoming.length ? `<div class="form-section-label">Próximos jogos</div><div class="standings-table">${upcomingRows}</div>` : ""}
+    </div>`;
+}
+async function renderTeamForm(e) {
+  const el = document.getElementById("stats-body-form");
+  if (e.sport !== "football") {
+    el.innerHTML = '<div class="empty-note">Forma disponível só para futebol, por agora</div>';
+    return;
+  }
+  if (teamFormLoadedForEventId === e.id) return;
+  el.innerHTML = '<div class="empty-note">A carregar…</div>';
+  try {
+    const { home, away } = await Bet62Api.getTeamForm(e.id);
+    teamFormLoadedForEventId = e.id;
+    if (!home && !away) {
+      el.innerHTML = '<div class="empty-note">Sem dados de forma disponíveis para este jogo</div>';
+      return;
+    }
+    el.innerHTML = renderTeamFormColumn(e.home, home) + renderTeamFormColumn(e.away, away);
+  } catch {
+    el.innerHTML = '<div class="empty-note">Não foi possível carregar a forma das equipas</div>';
   }
 }
 

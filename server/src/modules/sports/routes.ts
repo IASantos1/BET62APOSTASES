@@ -15,6 +15,7 @@ import {
   fetchInplayOddsForFixture,
   fetchTodayRawFixtureForLiveDiagnosis,
   getStandingsByRound,
+  getTeamFormForFixture,
   getTopscorersBySeason,
   normalizeFixtureDetail,
   normalizeStandingsRow,
@@ -427,6 +428,24 @@ router.get(
 
     const entries = await getTopscorersBySeason(ids.seasonId);
     res.json({ topscorers: entries.map(normalizeTopscorerEntry) });
+  })
+);
+
+// Forma recente/próximos jogos das duas equipas — só futebol, só jogos da Sportmonks (GET
+// /schedules/teams/{teamId}, ver sportmonks/client.ts). Jogos da Pulsescore devolvem home/away
+// null, nunca um erro — mesma disciplina "nunca inventa dados" das rotas acima.
+router.get(
+  "/events/:id/form",
+  asyncHandler(async (req, res) => {
+    const event = findCachedEvent(req.params.id);
+    if (!event) throw Errors.notFound("Evento não encontrado");
+    if (event.sport !== "football" || !req.params.id.startsWith("sportmonks:")) return res.json({ home: null, away: null });
+
+    const fixtureId = Number(req.params.id.slice("sportmonks:".length));
+    if (!Number.isFinite(fixtureId)) return res.json({ home: null, away: null });
+
+    const form = await getTeamFormForFixture(fixtureId).catch(() => ({ home: null, away: null }));
+    res.json(form);
   })
 );
 

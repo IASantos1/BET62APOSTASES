@@ -744,6 +744,24 @@ export async function resolveRoundAndSeasonId(fixtureId: number): Promise<{ roun
   return resolved;
 }
 
+const fixtureTeamIdsCache = new Map<number, { homeTeamId: number; awayTeamId: number }>();
+
+/** IDs (Sportmonks) das duas equipas de uma fixture — mesma fonte/cache permanente de
+ * resolveRoundAndSeasonId acima (GET /fixtures/{id}, `participants[].id` + `meta.location`, já
+ * CONFIRMADO desde normalizeFixtureDetail()). Usado por getTeamFormForFixture() abaixo para saber
+ * de que duas equipas pedir o calendário (/schedules/teams/{id}). */
+async function resolveTeamIds(fixtureId: number): Promise<{ homeTeamId: number; awayTeamId: number } | null> {
+  const cached = fixtureTeamIdsCache.get(fixtureId);
+  if (cached) return cached;
+  const detail = await fetchFixtureDetail(fixtureId);
+  const home = detail.participants?.find((p) => p.meta?.location === "home");
+  const away = detail.participants?.find((p) => p.meta?.location === "away");
+  if (!home || !away) return null;
+  const resolved = { homeTeamId: home.id, awayTeamId: away.id };
+  fixtureTeamIdsCache.set(fixtureId, resolved);
+  return resolved;
+}
+
 // --- Classificação (/standings/rounds/{roundId}) — CONFIRMADO por uma amostra real completa
 // colada pelo utilizador (ronda 396700, Brasileirão Série A, 20 equipas, Palmeiras 1º com 48pts).
 // Forma de cada linha: `{id, league_id, season_id, stage_id, round_id, participant_id, position,
@@ -929,4 +947,126 @@ export function normalizeTopscorerEntry(entry: SportmonksTopscorerEntry): Topsco
     team: entry.participant?.name ?? `Equipa ${entry.participant_id}`,
     teamLogo: entry.participant?.image_path,
   };
+}
+
+// --- Forma recente/próximos jogos de uma equipa (/schedules/teams/{teamId}) — CONFIRMADO por uma
+// amostra real completa colada pelo utilizador (São Paulo, id 3496): pedido SEM nenhum `include`
+// (a Sportmonks já devolve tudo por omissão neste endpoint). Forma: um array de "estágios"
+// (`{id, name (ex: "Regular Season", "Group Stage", "8th Finals"), rounds: [{fixtures: [...]}],
+// aggregates: [{fixtures: [...]}]}`) — competições de liga usam `rounds`, competições de
+// mata-mata (ex: Sudamericana) usam `aggregates` (confronto ida/volta); a MESMA fixture pode
+// aparecer nos dois arrays dentro do mesmo estágio (confirmado na amostra), por isso agrupa-se por
+// `id` ao juntar tudo. Cada fixture já traz `participants` com `meta.winner` (true/false/null) e
+// `meta.location`, e `scores` com entradas `description: "CURRENT"` — a mesma forma já usada em
+// SportmonksParticipant/SportmonksLiveScore no resto do módulo. Jogos ainda não disputados vêm com
+// `result_info: null` e `scores: []`; jogos já disputados trazem os dois preenchidos — usa-se
+// `result_info` (campo auto-descritivo, nunca `state_id`) para separar "já jogado" de "por jogar".
+interface SportmonksScheduleFixture {
+  id: number;
+  starting_at: string;
+  result_info?: string | null;
+  participants?: SportmonksParticipant[];
+  scores?: SportmonksLiveScore[];
+}
+interface SportmonksScheduleRound {
+  fixtures?: SportmonksScheduleFixture[];
+}
+interface SportmonksScheduleAggregate {
+  fixtures?: SportmonksScheduleFixture[];
+}
+interface SportmonksScheduleStage {
+  id: number;
+  name: string;
+  rounds?: SportmonksScheduleRound[];
+  aggregates?: SportmonksScheduleAggregate[];
+}
+
+async function fetchTeamSchedule(teamId: number): Promise<SportmonksScheduleStage[]> {
+  const data = await sportmonksFetch<{ data: SportmonksScheduleStage[] }>(`/schedules/teams/${teamId}`);
+  return data.data ?? [];
+}
+
+function flattenScheduleFixtures(stages: SportmonksScheduleStage[]): SportmonksScheduleFixture[] {
+  const byId = new Map<number, SportmonksScheduleFixture>();
+  for (const stage of stages) {
+    for (const round of stage.rounds ?? []) for (const fixture of round.fixtures ?? []) byId.set(fixture.id, fixture);
+    for (const aggregate of stage.aggregates ?? []) for (const fixture of aggregate.fixtures ?? []) byId.set(fixture.id, fixture);
+  }
+  return [...byId.values()];
+}
+
+export interface TeamFormMatch {
+  fixtureId: number;
+  date: string;
+  opponent: string;
+  isHome: boolean;
+  result?: "V" | "E" | "D"; // só em jogos já disputados
+  score?: string; // "2-1" (equipa própria primeiro), só em jogos já disputados
+}
+
+const TEAM_FORM_MATCHES_COUNT = 5;
+
+function buildTeamForm(teamId: number, stages: SportmonksScheduleStage[]): { recent: TeamFormMatch[]; upcoming: TeamFormMatch[] } {
+  const recent: TeamFormMatch[] = [];
+  const upcoming: TeamFormMatch[] = [];
+
+  for (const fixture of flattenScheduleFixtures(stages)) {
+    const own = fixture.participants?.find((p) => p.id === teamId);
+    const opponent = fixture.participants?.find((p) => p.id !== teamId);
+    if (!own || !opponent) continue;
+    const isHome = own.meta?.location === "home";
+
+    if (fixture.result_info) {
+      const currentScores = (fixture.scores ?? []).filter((s) => s.description === "CURRENT");
+      const ownGoals = currentScores.find((s) => s.participant_id === teamId)?.score.goals;
+      const oppGoals = currentScores.find((s) => s.participant_id === opponent.id)?.score.goals;
+      let result: "V" | "E" | "D" | undefined;
+      if (own.meta?.winner === true) result = "V";
+      else if (opponent.meta?.winner === true) result = "D";
+      else if (own.meta?.winner === false && opponent.meta?.winner === false) result = "E";
+      recent.push({
+        fixtureId: fixture.id,
+        date: fixture.starting_at,
+        opponent: opponent.name,
+        isHome,
+        result,
+        score: ownGoals != null && oppGoals != null ? `${ownGoals}-${oppGoals}` : undefined,
+      });
+    } else {
+      upcoming.push({ fixtureId: fixture.id, date: fixture.starting_at, opponent: opponent.name, isHome });
+    }
+  }
+
+  recent.sort((a, b) => b.date.localeCompare(a.date));
+  upcoming.sort((a, b) => a.date.localeCompare(b.date));
+  return { recent: recent.slice(0, TEAM_FORM_MATCHES_COUNT), upcoming: upcoming.slice(0, TEAM_FORM_MATCHES_COUNT) };
+}
+
+const teamFormCache = new Map<number, { data: { recent: TeamFormMatch[]; upcoming: TeamFormMatch[] }; fetchedAt: number }>();
+const TEAM_FORM_CACHE_TTL_MS = 5 * 60_000;
+
+/** Últimos e próximos jogos de UMA equipa (Sportmonks team id), com cache curta (mesmo padrão de
+ * getStandingsByRound/getTopscorersBySeason acima). */
+export async function getTeamForm(teamId: number): Promise<{ recent: TeamFormMatch[]; upcoming: TeamFormMatch[] }> {
+  const cached = teamFormCache.get(teamId);
+  if (cached && Date.now() - cached.fetchedAt < TEAM_FORM_CACHE_TTL_MS) return cached.data;
+  const stages = await fetchTeamSchedule(teamId);
+  const data = buildTeamForm(teamId, stages);
+  teamFormCache.set(teamId, { data, fetchedAt: Date.now() });
+  return data;
+}
+
+/** Forma recente/próximos jogos das DUAS equipas de uma fixture — resolve os IDs Sportmonks das
+ * equipas (resolveTeamIds acima) e pede o calendário de cada uma em paralelo. Sem os IDs
+ * resolvidos, devolve null para as duas (nunca inventa dados de outra equipa). */
+export async function getTeamFormForFixture(
+  fixtureId: number
+): Promise<{ home: { recent: TeamFormMatch[]; upcoming: TeamFormMatch[] } | null; away: { recent: TeamFormMatch[]; upcoming: TeamFormMatch[] } | null }> {
+  const teamIds = await resolveTeamIds(fixtureId);
+  if (!teamIds) return { home: null, away: null };
+  const [home, away] = await Promise.all([
+    getTeamForm(teamIds.homeTeamId).catch(() => null),
+    getTeamForm(teamIds.awayTeamId).catch(() => null),
+  ]);
+  return { home, away };
 }

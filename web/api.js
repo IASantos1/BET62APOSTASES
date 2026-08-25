@@ -372,6 +372,9 @@ const Bet62Api = (() => {
     /** @param {string} eventId */
     getTopscorers: (eventId) =>
       request(`/sports/events/${encodeURIComponent(eventId)}/topscorers`, { auth: false }),
+    /** @param {string} eventId */
+    getTeamForm: (eventId) =>
+      request(`/sports/events/${encodeURIComponent(eventId)}/form`, { auth: false }),
 
     // Cassino
     /**
