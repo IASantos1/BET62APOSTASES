@@ -11,28 +11,32 @@ import { fetchFixturesBetween, fetchLeaguesWithCurrentRound, getRoundEvents } fr
  * caminho principal.
  */
 const CACHE_TTL_MS = 45_000; // mesmo TTL já usado para o pré-jogo da Pulsescore
-const PREMATCH_WINDOW_DAYS = 10; // dias à frente a cobrir — sem confirmação do período ideal da Sportmonks, valor razoável
+const PREMATCH_WINDOW_DAYS = 5; // dias à frente a cobrir — reduzido de 10 para 5 (payload menor,
+// mais rápido); sem confirmação do período ideal da Sportmonks, valor razoável, pode subir depois
+// de confirmado que o endpoint responde bem.
 let cache: { events: LiveEvent[]; fetchedAt: number } | null = null;
 
-function dateRangeFromToday(): { start: string; end: string } {
+function dateRangeFromToday(days: number): { start: string; end: string } {
   const now = new Date();
   const start = now.toISOString().slice(0, 10);
-  const end = new Date(now.getTime() + PREMATCH_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
+  const end = new Date(now.getTime() + days * 86_400_000).toISOString().slice(0, 10);
   return { start, end };
 }
 
 export async function getSportmonksFootballPrematch(): Promise<LiveEvent[]> {
   if (cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS) return cache.events;
 
-  const { start, end } = dateRangeFromToday();
+  const { start, end } = dateRangeFromToday(PREMATCH_WINDOW_DAYS);
   const events = await fetchFixturesBetween(start, end);
   const scheduled = events.filter((e) => e.status === "scheduled");
   cache = { events: scheduled, fetchedAt: Date.now() };
   return scheduled;
 }
 
-/** Diagnóstico (ver routes.ts, GET /api/sports/sportmonks-debug) — corre a mesma lógica de
- * produção mas devolve os números em cada etapa, para se ver onde a contagem cai a zero. */
+/** Diagnóstico (ver routes.ts, GET /api/sports/sportmonks-debug) — janela pequena (2 dias) e só 2
+ * páginas: o objetivo aqui é só provar rapidamente que /fixtures/between responde mesmo, não
+ * obter a lista completa (isso é o que getSportmonksFootballPrematch() faz, com mais margem). Um
+ * pedido sem limite nenhum foi o que ficou preso "só a carregar" em produção. */
 export async function getSportmonksFootballPrematchDiagnosis(): Promise<{
   dateRange: { start: string; end: string };
   totalFixturesFound: number;
@@ -40,17 +44,17 @@ export async function getSportmonksFootballPrematchDiagnosis(): Promise<{
   sampleFixture: LiveEvent | null;
   diagnosis: string;
 }> {
-  const { start, end } = dateRangeFromToday();
-  const events = await fetchFixturesBetween(start, end);
+  const { start, end } = dateRangeFromToday(2);
+  const events = await fetchFixturesBetween(start, end, { maxPages: 2 });
   const scheduled = events.filter((e) => e.status === "scheduled");
 
   let diagnosis: string;
   if (events.length === 0) {
-    diagnosis = `0 jogos encontrados entre ${start} e ${end} em todas as ligas — verificar se /fixtures/between existe mesmo no plano da conta (endpoint não confirmado por amostra real).`;
+    diagnosis = `0 jogos encontrados entre ${start} e ${end} (só as 2 primeiras páginas, para ser rápido) — verificar se /fixtures/between existe mesmo no plano da conta (endpoint não confirmado por amostra real).`;
   } else if (scheduled.length === 0) {
-    diagnosis = `${events.length} jogos encontrados, mas nenhum com status "scheduled" (todos já começaram/terminaram) — improvável para um intervalo de ${PREMATCH_WINDOW_DAYS} dias à frente, sinal de possível problema na classificação de status.`;
+    diagnosis = `${events.length} jogos encontrados, mas nenhum com status "scheduled" (todos já começaram/terminaram) — sinal de possível problema na classificação de status.`;
   } else {
-    diagnosis = `${scheduled.length} jogos agendados encontrados — a funcionar.`;
+    diagnosis = `${scheduled.length} jogos agendados encontrados (amostra de 2 páginas/2 dias) — a funcionar.`;
   }
 
   return { dateRange: { start, end }, totalFixturesFound: events.length, scheduledFixtures: scheduled.length, sampleFixture: events[0] ?? null, diagnosis };
