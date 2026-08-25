@@ -143,6 +143,7 @@ const AdminApi = (() => {
     resetFixtureMapping: (id) => request(`/admin/mapping/fixtures/${id}`, { method: "DELETE" }),
 
     getApiFootballStatus: () => request("/admin/apifootball/status"),
+    getSportmonksStatus: () => request("/admin/sportmonks/status"),
 
     listMappingAliases: () => request("/admin/mapping/aliases"),
     createMappingAlias: (alias, canonicalName, sport) => request("/admin/mapping/aliases", { method: "POST", body: { alias, canonicalName, sport } }),
@@ -1143,8 +1144,13 @@ const AdminApp = (() => {
           )
           .join("")}
       </div>
-      <div id="apifootball-status-box">
-        <button class="btn small outline" onclick="AdminApp.testApiFootballStatus()">Testar ligação API-Football</button>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <div id="apifootball-status-box">
+          <button class="btn small outline" onclick="AdminApp.testApiFootballStatus()">Testar ligação API-Football</button>
+        </div>
+        <div id="sportmonks-status-box">
+          <button class="btn small outline" onclick="AdminApp.testSportmonksStatus()">Testar ligação Sportmonks</button>
+        </div>
       </div>
     </div>`;
   }
@@ -1167,6 +1173,31 @@ const AdminApp = (() => {
           d.reachedNetwork === false
             ? "API_FOOTBALL_KEY não configurada no servidor (nunca chegou a tentar ligar)"
             : `API-Football respondeu ${d.upstreamStatus ?? "?"}: ${esc((d.upstreamBody || data.message || "").slice(0, 200))}`;
+        box.innerHTML = `<span class="badge bad">Falhou</span> <span class="muted">${reason}</span>`;
+      }
+    } catch (err) {
+      box.innerHTML = `<span class="badge bad">Falhou</span> <span class="muted">${esc(err.message || "erro desconhecido")}</span>`;
+    }
+  }
+
+  // Testa só a 1ª página de /leagues?include=currentSeason.currentRound — a peça da Sportmonks
+  // ainda sem amostra real confirmada (ver docs/SPORTS_DATA.md). "reachedNetwork:false" =
+  // SPORTMONKS_API_KEY vazia no servidor; upstreamStatus/upstreamBody = o que a Sportmonks
+  // respondeu de facto.
+  async function testSportmonksStatus() {
+    const box = document.getElementById("sportmonks-status-box");
+    if (!box) return;
+    box.innerHTML = `<span class="muted">A testar…</span>`;
+    try {
+      const data = await AdminApi.getSportmonksStatus();
+      if (data.ok) {
+        box.innerHTML = `<span class="badge ${data.withCurrentRound > 0 ? "ok" : "warn"}">Ligado</span> <span class="muted">${data.totalOnPage} ligas na 1ª página · ${data.withCurrentRound} com ronda atual</span>`;
+      } else {
+        const d = data.details || {};
+        const reason =
+          d.reachedNetwork === false
+            ? "SPORTMONKS_API_KEY não configurada no servidor (nunca chegou a tentar ligar)"
+            : `Sportmonks respondeu ${d.upstreamStatus ?? "?"}: ${esc((d.upstreamBody || data.message || "").slice(0, 200))}`;
         box.innerHTML = `<span class="badge bad">Falhou</span> <span class="muted">${reason}</span>`;
       }
     } catch (err) {
@@ -1587,7 +1618,7 @@ const AdminApp = (() => {
     loadPromotions, openPromotionForm, submitPromotionForm,
     loadDeposits,
     loadCasino, syncCasino, showCasinoAgentInfo,
-    setMappingTab, loadMappingTeams, openCorrectTeam, submitCorrectTeam, testApiFootballStatus,
+    setMappingTab, loadMappingTeams, openCorrectTeam, submitCorrectTeam, testApiFootballStatus, testSportmonksStatus,
     loadMappingLeagues, openCorrectLeague, submitCorrectLeague,
     loadMappingFixtures, openCorrectFixture, submitCorrectFixture, resetMapping,
     loadMappingAliases, submitCreateAlias, deleteAlias,

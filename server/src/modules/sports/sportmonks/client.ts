@@ -216,6 +216,26 @@ interface SportmonksLeagueWithCurrentRound extends SportmonksLeague {
   currentSeason?: { currentRound?: { id: number } };
 }
 
+/** Diagnóstico — só a 1ª página de /leagues, sem paginar tudo, para o admin (ver
+ * admin/routes.ts, GET /admin/sportmonks/status) conseguir ver rapidamente a forma real da
+ * resposta (ou o erro real) sem esperar pelas até 20 páginas de fetchLeaguesWithCurrentRound(). */
+export async function fetchLeaguesFirstPageRaw(): Promise<{
+  totalOnPage: number;
+  withCurrentRound: number;
+  sample: SportmonksLeagueWithCurrentRound | null;
+}> {
+  const data = await sportmonksFetch<{ data: SportmonksLeagueWithCurrentRound[]; pagination?: { has_more?: boolean } }>("/leagues", {
+    include: "currentSeason.currentRound",
+    page: 1,
+  });
+  const leagues = data.data ?? [];
+  return {
+    totalOnPage: leagues.length,
+    withCurrentRound: leagues.filter((l) => l.currentSeason?.currentRound?.id).length,
+    sample: leagues[0] ?? null,
+  };
+}
+
 export async function fetchLeaguesWithCurrentRound(): Promise<Array<{ leagueId: number; roundId: number }>> {
   const pairs: Array<{ leagueId: number; roundId: number }> = [];
   let page = 1;
