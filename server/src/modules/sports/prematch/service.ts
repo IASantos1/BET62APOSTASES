@@ -34,7 +34,17 @@ export async function getPrematchEvents(sport: Sport): Promise<PrematchResult> {
     // utilizador foi enviando (futebol, beisebol, voleibol, MMA, hóquei de gelo, ténis,
     // basquete) vieram de /events e são consistentemente ricas em mercados (até ~30 por jogo);
     // /leagues nunca foi confirmado com a mesma riqueza, apesar de ter a mesma forma de dados.
-    const all = await fetchEventsFlat(sport, { maxPages: 2 });
+    //
+    // Futebol tem um catálogo MUITO maior que os outros 7 desportos (muito mais ligas/jogos em
+    // simultâneo — ver docs/SPORTS_DATA.md, "cobertura de mercados muito maior" para futebol) e
+    // a ordem dos eventos devolvida pela Pulsescore não é garantida por proximidade do início
+    // (a própria doc já confirmou ordem arbitrária para mercados; o mesmo risco aplica-se aqui).
+    // Com só 2 páginas (50 eventos) — suficiente para os outros desportos, cujo catálogo total é
+    // muito menor — os poucos jogos "scheduled" de futebol podem simplesmente não caber nas
+    // primeiras 50 entradas devolvidas, mostrando "sem jogos" mesmo havendo muitos agendados.
+    // Prioridade explícita do utilizador é o futebol carregar bem — mais páginas só para ele.
+    const maxPages = sport === "football" ? 8 : 2;
+    const all = await fetchEventsFlat(sport, { maxPages });
     const scheduled = all.filter((e) => e.status === "scheduled");
     cache.set(cacheKey, { events: scheduled, fetchedAt: Date.now() });
     return { events: scheduled, source: "pulsescore" };
