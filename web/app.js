@@ -2768,6 +2768,26 @@ const MARKET_FILTER_CATEGORIES = {
 // não têm, um mercado que não bata em nenhuma categoria só aparece em "Todos".
 const FOOTBALL_CATCHALL_LABEL = "Especiais";
 
+// Ordem de EXIBIÇÃO dos chips de futebol na barra de filtros — pedido explícito do utilizador
+// ("Todos, Bet Builder, Resultado, Ambas Marcam, Mais/menos, handicap, 1T, 2T, Placar Exatos,
+// Escanteio, Cartões, Marcador, Especial"). DIFERENTE da ordem em MARKET_FILTER_CATEGORIES.football
+// acima, que é a ordem de CLASSIFICAÇÃO (tem de manter "1º Tempo"/"2º Tempo" antes dos outros, para
+// "1st Half Corners" cair em "1º Tempo" e não em "Escanteios" — ver comentário de
+// MARKET_FILTER_CATEGORIES). Esta lista só decide a posição dos chips, nunca a prioridade de
+// classificação — tem de ter exatamente os mesmos rótulos que MARKET_FILTER_CATEGORIES.football.
+const FOOTBALL_FILTER_DISPLAY_ORDER = [
+  "Resultado",
+  "Ambas Marcam",
+  "Mais/Menos",
+  "Handicap",
+  "1º Tempo",
+  "2º Tempo",
+  "Placar Exato",
+  "Escanteios",
+  "Cartões",
+  "Marcador",
+];
+
 let selectedMarketFilter = null; // null = "Todos"
 
 // ====================== TRADUÇÃO DE MERCADOS/SELEÇÕES ======================
@@ -3002,7 +3022,9 @@ function renderMarketFilterBar(e) {
   }
   const labels = ["Todos"];
   if (e.sport === "football") labels.push(BET_BUILDER_LABEL);
-  labels.push(...categories.map((c) => c.label));
+  // Futebol usa a ordem de EXIBIÇÃO pedida pelo utilizador (FOOTBALL_FILTER_DISPLAY_ORDER),
+  // independente da ordem de CLASSIFICAÇÃO em categories — ver comentário nas duas constantes.
+  labels.push(...(e.sport === "football" ? FOOTBALL_FILTER_DISPLAY_ORDER : categories.map((c) => c.label)));
   if (e.sport === "football") labels.push(FOOTBALL_CATCHALL_LABEL);
   el.innerHTML = labels
     .map((label) =>
