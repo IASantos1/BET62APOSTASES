@@ -1191,7 +1191,14 @@ const AdminApp = (() => {
     try {
       const data = await AdminApi.getSportmonksStatus();
       if (data.ok) {
-        box.innerHTML = `<span class="badge ${data.withCurrentRound > 0 ? "ok" : "warn"}">Ligado</span> <span class="muted">${data.totalOnPage} ligas na 1ª página · ${data.withCurrentRound} com ronda atual</span>`;
+        const summary = `<span class="badge ${data.withCurrentRound > 0 ? "ok" : "warn"}">Ligado</span> <span class="muted">${data.totalOnPage} ligas na 1ª página · ${data.withCurrentRound} com ronda atual</span>`;
+        // Sem nenhuma ronda atual encontrada: mostra a amostra bruta da 1ª liga para se perceber
+        // a forma real da resposta (currentSeason ausente? rounds vazio? nenhum is_current?).
+        const sampleHtml =
+          data.withCurrentRound === 0 && data.sample
+            ? `<pre style="white-space:pre-wrap;word-break:break-all;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:.75rem;margin-top:8px;max-height:300px;overflow:auto">${esc(JSON.stringify(data.sample, null, 2))}</pre>`
+            : "";
+        box.innerHTML = `<div>${summary}${sampleHtml}</div>`;
       } else {
         const d = data.details || {};
         const reason =
