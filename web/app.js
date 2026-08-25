@@ -2510,14 +2510,17 @@ function switchStatsTab(tab) {
   document.getElementById("stats-tab-h2h").classList.toggle("active", tab === "h2h");
   document.getElementById("stats-tab-teamstats").classList.toggle("active", tab === "teamstats");
   document.getElementById("stats-tab-table").classList.toggle("active", tab === "table");
+  document.getElementById("stats-tab-topscorers").classList.toggle("active", tab === "topscorers");
   document.getElementById("stats-body-prob").classList.toggle("hidden", tab !== "prob");
   document.getElementById("stats-body-h2h").classList.toggle("hidden", tab !== "h2h");
   document.getElementById("stats-body-teamstats").classList.toggle("hidden", tab !== "teamstats");
   document.getElementById("stats-body-table").classList.toggle("hidden", tab !== "table");
+  document.getElementById("stats-body-topscorers").classList.toggle("hidden", tab !== "topscorers");
   if (tab === "prob") renderWinProbability(currentMarketEvent);
   if (tab === "h2h") renderH2H(currentMarketEvent);
   if (tab === "teamstats") renderTeamStats(currentMarketEvent);
   if (tab === "table") renderStandings(currentMarketEvent);
+  if (tab === "topscorers") renderTopscorers(currentMarketEvent);
 }
 
 function renderWinProbabilityBars(el, entries, advice) {
@@ -2697,6 +2700,44 @@ async function renderStandings(e) {
       </div>`;
   } catch {
     el.innerHTML = '<div class="empty-note">Não foi possível carregar a classificação</div>';
+  }
+}
+
+// Artilheiros da época via Sportmonks (só jogos da Sportmonks — ver GET /events/:id/topscorers)
+// — sem equivalente para jogos da Pulsescore/API-Football, esses devolvem lista vazia do backend
+// e caem na mensagem "sem dados" abaixo, nunca um erro.
+let topscorersLoadedForEventId = null;
+async function renderTopscorers(e) {
+  const el = document.getElementById("stats-body-topscorers");
+  if (e.sport !== "football") {
+    el.innerHTML = '<div class="empty-note">Artilheiros disponíveis só para futebol, por agora</div>';
+    return;
+  }
+  if (topscorersLoadedForEventId === e.id) return;
+  el.innerHTML = '<div class="empty-note">A carregar…</div>';
+  try {
+    const { topscorers } = await Bet62Api.getTopscorers(e.id);
+    topscorersLoadedForEventId = e.id;
+    if (!topscorers || !topscorers.length) {
+      el.innerHTML = '<div class="empty-note">Sem artilheiros disponíveis para esta competição</div>';
+      return;
+    }
+    el.innerHTML = `
+      <div class="standings-table">
+        <div class="standings-row standings-header">
+          <span class="st-rank">#</span><span class="st-team">Jogador</span><span class="st-pts">Golos</span>
+        </div>
+        ${topscorers
+          .map(
+            (r) => `
+          <div class="standings-row">
+            <span class="st-rank">${r.rank}</span><span class="st-team">${r.playerName} <span style="color:var(--muted)">— ${r.team}</span></span><span class="st-pts">${r.goals}</span>
+          </div>`
+          )
+          .join("")}
+      </div>`;
+  } catch {
+    el.innerHTML = '<div class="empty-note">Não foi possível carregar os artilheiros</div>';
   }
 }
 

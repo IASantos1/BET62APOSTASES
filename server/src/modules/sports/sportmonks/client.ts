@@ -114,6 +114,7 @@ interface SportmonksParticipant {
 interface SportmonksFixture {
   id: number;
   league_id: number;
+  season_id: number;
   round_id: number;
   state_id: number;
   name: string;
@@ -442,6 +443,8 @@ interface SportmonksFixtureState {
 }
 interface SportmonksFixtureDetail {
   id: number;
+  round_id?: number; // CONFIRMADO numa amostra real desta MESMA fixture (19621839, ver comentário do módulo)
+  season_id?: number; // idem — usado para /topscorers/seasons/{id} (ver getTopscorersBySeason abaixo)
   starting_at: string;
   state?: SportmonksFixtureState;
   participants?: SportmonksParticipant[];
@@ -714,4 +717,216 @@ export async function fetchLeaguesWithCurrentRound(): Promise<Array<{ leagueId: 
     page += 1;
   }
   return pairs;
+}
+
+// --- round_id/season_id de uma fixture — CONFIRMADOS por amostras reais de TRÊS endpoints
+// diferentes da Sportmonks, todos partilhando o mesmo recurso base "Fixture" (mesmo
+// `rate_limit.requested_entity`, ver aviso no comentário do módulo): a fixture 19621839
+// (/fixtures/{id}, São Paulo vs Bragantino) trouxe `"season_id": 26763, ..., "round_id": 396698`
+// como campos simples, sem precisar de nenhum `include` especial — o mesmo aconteceu numa fixture
+// de /livescores/inplay (19622025, `"season_id": 26763, "round_id": 396717`). Por isso
+// `fetchFixtureDetail()` (GET /fixtures/{id}) já chega para descobrir os dois de qualquer jogo da
+// Sportmonks, sem pedidos extra — usado por resolveRoundAndSeasonId() abaixo para ligar a
+// Classificação e os Artilheiros a um jogo específico.
+const fixtureRoundSeasonCache = new Map<number, { roundId: number; seasonId: number }>();
+
+/** round_id/season_id de uma fixture não mudam depois de agendada — cache permanente (sem TTL,
+ * ao contrário das outras caches deste módulo), para não repetir GET /fixtures/{id} sempre que se
+ * abre a Classificação ou os Artilheiros do mesmo jogo. Sem os dois confirmados na resposta,
+ * devolve null — nunca inventa um round/season a partir de outro jogo. */
+export async function resolveRoundAndSeasonId(fixtureId: number): Promise<{ roundId: number; seasonId: number } | null> {
+  const cached = fixtureRoundSeasonCache.get(fixtureId);
+  if (cached) return cached;
+  const detail = await fetchFixtureDetail(fixtureId);
+  if (!detail.round_id || !detail.season_id) return null;
+  const resolved = { roundId: detail.round_id, seasonId: detail.season_id };
+  fixtureRoundSeasonCache.set(fixtureId, resolved);
+  return resolved;
+}
+
+// --- Classificação (/standings/rounds/{roundId}) — CONFIRMADO por uma amostra real completa
+// colada pelo utilizador (ronda 396700, Brasileirão Série A, 20 equipas, Palmeiras 1º com 48pts).
+// Forma de cada linha: `{id, league_id, season_id, stage_id, round_id, participant_id, position,
+// points, result, details: [{type_id, value, type: {id, name, code, developer_name, model_type,
+// stat_group}}], participant: {id, name, short_code, image_path}}`. `details` traz uma entrada por
+// estatística — identificada pelo `type.developer_name` (nunca pela posição no array, que a
+// amostra real não garante fixa); os nomes confirmados usados abaixo (OVERALL_MATCHES,
+// OVERALL_WINS, OVERALL_DRAWS, OVERALL_LOST, OVERALL_SCORED, OVERALL_CONCEDED,
+// OVERALL_GOAL_DIFFERENCE, EXPECTED_POINTS) vieram todos dessa mesma amostra.
+interface SportmonksStandingDetailType {
+  id: number;
+  name: string;
+  developer_name: string;
+}
+interface SportmonksStandingDetail {
+  type_id: number;
+  value: number;
+  type?: SportmonksStandingDetailType;
+}
+interface SportmonksStandingParticipant {
+  id: number;
+  name: string;
+  short_code?: string;
+  image_path?: string;
+}
+interface SportmonksStandingRow {
+  id: number;
+  league_id: number;
+  season_id: number;
+  round_id: number;
+  participant_id: number;
+  position: number;
+  points: number;
+  result?: string;
+  details?: SportmonksStandingDetail[];
+  participant?: SportmonksStandingParticipant;
+}
+
+async function fetchStandingsByRound(roundId: number): Promise<SportmonksStandingRow[]> {
+  const data = await sportmonksFetch<{ data: SportmonksStandingRow[] }>(`/standings/rounds/${roundId}`, {
+    include: "stage;league;details.type;participant",
+  });
+  return data.data ?? [];
+}
+
+const standingsCache = new Map<number, { rows: SportmonksStandingRow[]; fetchedAt: number }>();
+const STANDINGS_CACHE_TTL_MS = 5 * 60_000; // mesmo TTL já usado para a classificação da API-Football
+
+/** Classificação de UMA ronda, com cache curta (mesmo padrão de getRoundEvents acima). */
+export async function getStandingsByRound(roundId: number): Promise<SportmonksStandingRow[]> {
+  const cached = standingsCache.get(roundId);
+  if (cached && Date.now() - cached.fetchedAt < STANDINGS_CACHE_TTL_MS) return cached.rows;
+  const rows = await fetchStandingsByRound(roundId);
+  standingsCache.set(roundId, { rows, fetchedAt: Date.now() });
+  return rows;
+}
+
+export interface StandingsTableRow {
+  rank: number;
+  team: string;
+  teamLogo?: string;
+  points: number;
+  played?: number;
+  win?: number;
+  draw?: number;
+  lose?: number;
+  goalsFor?: number;
+  goalsAgainst?: number;
+  goalsDiff?: number;
+  expectedPoints?: number;
+}
+
+function standingDetailValue(row: SportmonksStandingRow, developerName: string): number | undefined {
+  return row.details?.find((d) => d.type?.developer_name === developerName)?.value;
+}
+
+/** Normaliza uma linha de /standings/rounds/{id} para o formato consumido pelo frontend — mesmos
+ * nomes de campo já usados pela rota equivalente da API-Football (GET /events/:id/standings),
+ * para o frontend (renderStandings() em app.js) não precisar de saber qual das duas fontes está a
+ * usar. */
+export function normalizeStandingsRow(row: SportmonksStandingRow): StandingsTableRow {
+  return {
+    rank: row.position,
+    team: row.participant?.name ?? `Equipa ${row.participant_id}`,
+    teamLogo: row.participant?.image_path,
+    points: row.points,
+    played: standingDetailValue(row, "OVERALL_MATCHES"),
+    win: standingDetailValue(row, "OVERALL_WINS"),
+    draw: standingDetailValue(row, "OVERALL_DRAWS"),
+    lose: standingDetailValue(row, "OVERALL_LOST"),
+    goalsFor: standingDetailValue(row, "OVERALL_SCORED"),
+    goalsAgainst: standingDetailValue(row, "OVERALL_CONCEDED"),
+    goalsDiff: standingDetailValue(row, "OVERALL_GOAL_DIFFERENCE"),
+    expectedPoints: standingDetailValue(row, "EXPECTED_POINTS"),
+  };
+}
+
+// --- Artilheiros (/topscorers/seasons/{seasonId}) — CONFIRMADO por uma amostra real completa
+// colada pelo utilizador (época 26763, Brasileirão Série A, filtro `seasontopscorerTypes:208`).
+// `type_id:208` = "Goal Topscorer", CONFIRMADO na própria amostra (`type.name`) — o único
+// ranking (golos) alguma vez confirmado; outros rankings (ex: assistências) teriam outro type_id
+// nunca visto, por isso não se expõe escolha de tipo. Forma de cada entrada: `{id, season_id,
+// player_id, position (posição no ranking), total (golos), participant_id, participant: {id,
+// name, short_code, image_path}, player: {id, display_name, name, image_path, date_of_birth,
+// height, weight, nationality: {name, image_path}, position: {name}}}`. A paginação real é por
+// cursor (`pagination.next_cursor`), nunca confirmada a funcionar com `page` — por isso só se pede
+// a 1ª página (50 entradas por omissão, já mais do que suficiente para um top 10/20 de artilheiros).
+interface SportmonksTopscorerNationality {
+  name: string;
+  image_path?: string;
+}
+interface SportmonksTopscorerPosition {
+  name: string;
+}
+interface SportmonksTopscorerPlayer {
+  id: number;
+  display_name: string;
+  name: string;
+  image_path?: string;
+  nationality?: SportmonksTopscorerNationality;
+  position?: SportmonksTopscorerPosition;
+}
+interface SportmonksTopscorerParticipant {
+  id: number;
+  name: string;
+  short_code?: string;
+  image_path?: string;
+}
+interface SportmonksTopscorerEntry {
+  id: number;
+  season_id: number;
+  player_id: number;
+  position: number;
+  total: number;
+  participant_id: number;
+  participant?: SportmonksTopscorerParticipant;
+  player?: SportmonksTopscorerPlayer;
+}
+
+const GOAL_TOPSCORER_TYPE_ID = 208; // CONFIRMADO ("Goal Topscorer", ver comentário acima)
+
+async function fetchTopscorersBySeason(seasonId: number): Promise<SportmonksTopscorerEntry[]> {
+  const data = await sportmonksFetch<{ data: SportmonksTopscorerEntry[] }>(`/topscorers/seasons/${seasonId}`, {
+    include: "type;participant;player.nationality;player.position;season.league",
+    filters: `seasontopscorerTypes:${GOAL_TOPSCORER_TYPE_ID}`,
+  });
+  return data.data ?? [];
+}
+
+const topscorersCache = new Map<number, { entries: SportmonksTopscorerEntry[]; fetchedAt: number }>();
+const TOPSCORERS_CACHE_TTL_MS = 5 * 60_000;
+
+/** Artilheiros de UMA época, com cache curta (mesmo padrão de getStandingsByRound acima). */
+export async function getTopscorersBySeason(seasonId: number): Promise<SportmonksTopscorerEntry[]> {
+  const cached = topscorersCache.get(seasonId);
+  if (cached && Date.now() - cached.fetchedAt < TOPSCORERS_CACHE_TTL_MS) return cached.entries;
+  const entries = await fetchTopscorersBySeason(seasonId);
+  topscorersCache.set(seasonId, { entries, fetchedAt: Date.now() });
+  return entries;
+}
+
+export interface TopscorerRow {
+  rank: number;
+  goals: number;
+  playerName: string;
+  playerPhoto?: string;
+  nationality?: string;
+  nationalityFlag?: string;
+  position?: string;
+  team: string;
+  teamLogo?: string;
+}
+
+export function normalizeTopscorerEntry(entry: SportmonksTopscorerEntry): TopscorerRow {
+  return {
+    rank: entry.position,
+    goals: entry.total,
+    playerName: entry.player?.display_name ?? entry.player?.name ?? `Jogador ${entry.player_id}`,
+    playerPhoto: entry.player?.image_path,
+    nationality: entry.player?.nationality?.name,
+    nationalityFlag: entry.player?.nationality?.image_path,
+    position: entry.player?.position?.name,
+    team: entry.participant?.name ?? `Equipa ${entry.participant_id}`,
+    teamLogo: entry.participant?.image_path,
+  };
 }

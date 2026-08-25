@@ -14,7 +14,12 @@ import {
   fetchFixtureDetail,
   fetchInplayOddsForFixture,
   fetchTodayRawFixtureForLiveDiagnosis,
+  getStandingsByRound,
+  getTopscorersBySeason,
   normalizeFixtureDetail,
+  normalizeStandingsRow,
+  normalizeTopscorerEntry,
+  resolveRoundAndSeasonId,
 } from "./sportmonks/client";
 import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
@@ -363,14 +368,26 @@ router.get(
   })
 );
 
-// Classificação da liga do evento — só futebol. Resolve a liga pelo motor de mapeamento
-// (mapping/service.ts::resolveLeagueForEvent) em vez de pesquisar o nome a cada pedido.
+// Classificação da liga do evento — só futebol. Jogos da Sportmonks (id "sportmonks:...") usam a
+// classificação NATIVA da Sportmonks (GET /standings/rounds/{roundId}, ver sportmonks/client.ts) —
+// mais rica (inclui Expected Points/xPTS) e sem depender do motor de mapeamento por nome. Os
+// restantes (Pulsescore) continuam a usar a API-Football, resolvendo a liga pelo motor de
+// mapeamento (mapping/service.ts::resolveLeagueForEvent) em vez de pesquisar o nome a cada pedido.
 router.get(
   "/events/:id/standings",
   asyncHandler(async (req, res) => {
     const event = findCachedEvent(req.params.id);
     if (!event) throw Errors.notFound("Evento não encontrado");
     if (event.sport !== "football") return res.json({ standings: [] });
+
+    if (req.params.id.startsWith("sportmonks:")) {
+      const fixtureId = Number(req.params.id.slice("sportmonks:".length));
+      const ids = Number.isFinite(fixtureId) ? await resolveRoundAndSeasonId(fixtureId).catch(() => null) : null;
+      if (!ids) return res.json({ standings: [] });
+      const rows = await getStandingsByRound(ids.roundId);
+      return res.json({ standings: rows.map(normalizeStandingsRow) });
+    }
+
     const league = await resolveLeagueForEvent(event);
     if (!league) return res.json({ standings: [] });
     const data = await getStandings(league.leagueId, league.season);
@@ -390,6 +407,26 @@ router.get(
         form: r.form,
       })),
     });
+  })
+);
+
+// Artilheiros da época — só futebol, só jogos da Sportmonks (GET /topscorers/seasons/{seasonId},
+// ver sportmonks/client.ts). Sem equivalente ligado nesta app para a API-Football, por isso jogos
+// da Pulsescore devolvem sempre lista vazia (nunca um erro) — mesma disciplina "nunca inventa
+// dados" já usada nas outras rotas derivadas acima.
+router.get(
+  "/events/:id/topscorers",
+  asyncHandler(async (req, res) => {
+    const event = findCachedEvent(req.params.id);
+    if (!event) throw Errors.notFound("Evento não encontrado");
+    if (event.sport !== "football" || !req.params.id.startsWith("sportmonks:")) return res.json({ topscorers: [] });
+
+    const fixtureId = Number(req.params.id.slice("sportmonks:".length));
+    const ids = Number.isFinite(fixtureId) ? await resolveRoundAndSeasonId(fixtureId).catch(() => null) : null;
+    if (!ids) return res.json({ topscorers: [] });
+
+    const entries = await getTopscorersBySeason(ids.seasonId);
+    res.json({ topscorers: entries.map(normalizeTopscorerEntry) });
   })
 );
 
