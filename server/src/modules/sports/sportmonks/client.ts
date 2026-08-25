@@ -42,13 +42,33 @@ function assertConfigured() {
   }
 }
 
+// Sem isto, um pedido lento/preso à Sportmonks (ex: /fixtures/between com uma janela grande de
+// dias, muitos jogos em todas as ligas) prendia o pedido inteiro do utilizador indefinidamente —
+// foi o que aconteceu em produção com GET /api/sports/sportmonks-debug a ficar "só a carregar".
+// 15s chega para uma página normal; se exceder, falha a ESSA página em vez de nunca responder.
+const SPORTMONKS_REQUEST_TIMEOUT_MS = 15_000;
+
 async function sportmonksFetch<T>(path: string, params: Record<string, string | number> = {}): Promise<T> {
   assertConfigured();
   const url = new URL(`${env.SPORTMONKS_BASE_URL}${path}`);
   url.searchParams.set("api_token", env.SPORTMONKS_API_KEY);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
 
-  const res = await fetch(url, { headers: { accept: "application/json" } });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SPORTMONKS_REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { accept: "application/json" }, signal: controller.signal });
+  } catch (err) {
+    const timedOut = err instanceof Error && err.name === "AbortError";
+    logger.warn({ path, timedOut }, "Sportmonks: pedido falhou antes de resposta (rede ou timeout)");
+    throw Errors.internal(`Falha ao contactar a Sportmonks (${path})`, {
+      upstreamStatus: null,
+      upstreamBody: timedOut ? `sem resposta em ${SPORTMONKS_REQUEST_TIMEOUT_MS / 1000}s` : String(err).slice(0, 200),
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!res.ok) {
     const body = await res.text();
     logger.error({ status: res.status, body: body.slice(0, 500), path }, "Erro na Sportmonks");
@@ -211,14 +231,18 @@ interface SportmonksFixtureWithLeague extends SportmonksFixture {
 export async function fetchFixturesBetween(
   startDateISO: string,
   endDateISO: string,
-  opts: { marketIds?: number[] } = {}
+  opts: { marketIds?: number[]; maxPages?: number } = {}
 ): Promise<LiveEvent[]> {
   const filters: string[] = [`bookmakers:${env.SPORTMONKS_BOOKMAKER_ID}`];
   if (opts.marketIds?.length) filters.push(`markets:${opts.marketIds.join(",")}`);
 
   const events: LiveEvent[] = [];
   let page = 1;
-  const maxPages = 30; // pode ser muitos jogos num intervalo de dias, todas as ligas
+  // 8 por omissão (não 30) — cada página já traz odds+participantes+liga de TODAS as ligas para
+  // aquele intervalo, um payload pesado; 30 páginas em série foi o que fez o diagnóstico ficar
+  // preso "só a carregar" em produção (sem timeout nenhum antes desta correção — ver
+  // SPORTMONKS_REQUEST_TIMEOUT_MS acima). Chamador pode pedir mais explicitamente se precisar.
+  const maxPages = opts.maxPages ?? 8;
   while (page <= maxPages) {
     const data = await sportmonksFetch<{ data: SportmonksFixtureWithLeague[]; pagination?: { has_more?: boolean } }>(
       `/fixtures/between/${startDateISO}/${endDateISO}`,
