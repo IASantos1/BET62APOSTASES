@@ -2868,7 +2868,9 @@ function translateMarketBaseName(m, sport) {
   }
   if (/draw no bet/i.test(m)) return "Empate Anula Aposta";
   if (/double chance/i.test(m)) return "Dupla Hipótese";
-  if (/match odds|\b1x2\b|to win|winner|money.?line|full time result|3.?way|match winner/i.test(m)) return "Resultado Final";
+  // "full.?time" (não só "full time") — confirmado numa amostra real da Sportmonks em produção:
+  // o mercado principal (1X2) chama-se "Fulltime Result", uma só palavra, sem espaço.
+  if (/match odds|\b1x2\b|to win|winner|money.?line|full.?time result|3.?way|match winner/i.test(m)) return "Resultado Final";
   return null;
 }
 
@@ -2918,12 +2920,20 @@ function marketSelectionsLookPlausible(basePt, selectionLabels, home, away) {
   return true; // sem vocabulário fixo confirmado para esta categoria — sem validação adicional
 }
 
-function translateMarketDisplayName(rawName, sport, selectionLabels, home, away) {
+// `line` (linha numérica de Handicap/Total — ex: -1.5, 2.5) é opcional e só passado por quem já a
+// tem à mão (ver LiveOdds.line em types.ts). Necessário porque a Pulsescore sempre embutia esse
+// número em texto — no nome bruto do mercado (ex: "Handicap +1.5", capturado pelo regex do
+// Over/Under acima) ou na própria seleção (ex: "Home -1.5", tratado em translateSelectionLabel) —
+// mas a Sportmonks manda a linha SÓ no campo numérico separado, nunca em texto nenhum. Sem isto,
+// vários jogos do mesmo mercado com linhas diferentes (ex: Handicap -1, Handicap +2, Cantos
+// Mais/Menos 8.5, Mais/Menos 9.5...) ficavam todos com o cabeçalho idêntico e pareciam
+// duplicados/errados — reportado pelo utilizador como "tudo com valores errados".
+function translateMarketDisplayName(rawName, sport, selectionLabels, home, away, line) {
   if (!rawName) return rawName;
   const base = translateMarketBaseName(rawName, sport);
-  if (!base) return rawName; // não reconhecido — mantém o nome original em inglês
-  if (!marketSelectionsLookPlausible(base, selectionLabels, home, away)) return rawName;
-  return base + extractPeriodSuffix(rawName);
+  const plausible = base && marketSelectionsLookPlausible(base, selectionLabels, home, away);
+  const name = plausible ? base + extractPeriodSuffix(rawName) : rawName; // não reconhecido/implausível — mantém o nome original
+  return typeof line === "number" && !/\d/.test(name) ? `${name} (${line})` : name;
 }
 
 const SELECTION_WORD_MAP = {
@@ -3052,7 +3062,7 @@ function renderMarketGroups(e) {
       // mostra-se um único botão a cobrir a linha toda. O rótulo do mercado (group.market) pode
       // vir "Match Odds", "Grande Chance" ou até "Revisão VAR" consoante o bookmaker/desporto —
       // por isso a decisão compara o próprio grupo, não o texto do nome.
-      const marketNamePt = translateMarketDisplayName(group.market, e.sport, Object.keys(group.selections || {}), e.home, e.away);
+      const marketNamePt = translateMarketDisplayName(group.market, e.sport, Object.keys(group.selections || {}), e.home, e.away, group.line);
       if (group === primaryMarket && !group.isActive) {
         return `<div class="market-group"><h4>${marketNamePt}</h4><div class="selection-row">
           <div class="selection-btn suspended"><span class="sel-odd">Suspenso</span></div>
@@ -3073,7 +3083,7 @@ function renderMarketGroups(e) {
           }
           const key = `${e.id}|${group.market}|${label}`;
           const picked = betslipSelections.has(key);
-          const selection = { eventId: e.id, sport: e.sport, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
+          const selection = { eventId: e.id, sport: e.sport, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league, line: group.line };
           // Setas de subida/descida só em Ao Vivo — no pré-jogo o valor não costuma mudar
           // ao ponto de justificar o indicador, e não foi pedido para essa página.
           const arrow = isLive ? oddsArrowHtml(key, sel.odd) : "";
@@ -3395,7 +3405,7 @@ function renderBetslipPanel() {
       <div class="bs-row ${rowClass}">
         <div class="bs-row-info">
           <div class="bs-row-teams">${s.home || ""}${s.away ? " vs " + s.away : ""}</div>
-          <div class="bs-row-sel">${translateMarketDisplayName(s.market, s.sport, [s.selection], s.home, s.away)}: <b>${translateSelectionLabel(s.selection)}</b> @ ${Number(s.odd).toFixed(2)}</div>
+          <div class="bs-row-sel">${translateMarketDisplayName(s.market, s.sport, [s.selection], s.home, s.away, s.line)}: <b>${translateSelectionLabel(s.selection)}</b> @ ${Number(s.odd).toFixed(2)}</div>
           ${badgeHtml}
         </div>
         <div class="bs-row-actions">
