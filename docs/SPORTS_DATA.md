@@ -847,19 +847,30 @@ relayada pelo utilizador, nunca adivinhado):
    aparecer". Corrigido com `findCachedEvent()` (novo helper em `routes.ts`), que também procura em
    `getSportmonksEventById()` quando o id começa por `sportmonks:`.
 
-**Deliberadamente NÃO migrado**: o Ao Vivo de futebol (`hybridService.ts`) continua sempre na
-Pulsescore, mesmo com `FOOTBALL_PROVIDER=sportmonks`. A primeira amostra que o utilizador mostrou
-para "ao vivo" (`GET /livescores/inplay?include=...`) não tinha odds nenhumas — só depois de
-questionado é que confirmou o endpoint certo, mas esse (`/rounds/{id}`) é de pré-jogo por ronda,
-não um feed ao vivo. Sem uma amostra real de um endpoint ao vivo COM odds, migrar o Ao Vivo
-deixaria o futebol sem poder apostar durante os jogos — por isso fica por fazer até haver essa
-amostra.
+**Ao Vivo de futebol — MIGRADO** (pedido explícito do utilizador, confirmado com uma amostra real
+completa de `GET /livescores/inplay?include=league.country;events;periods;participants;round;
+scores`): este endpoint devolve diretamente todos os jogos de futebol a decorrer agora, de todas
+as ligas, com placar (`scores`, entrada `description:"CURRENT"` por participante `home`/`away`) e
+relógio (`periods`, o período com `ended:null` tem `minutes`/`seconds` a decorrer). NÃO tem odds
+nesta amostra — as odds do Ao Vivo vêm de `getSportmonksEventById()` (o mesmo cache do pré-jogo,
+que já confirmou trazer odds mesmo para jogos já começados). `state_id` não é um valor único para
+"a decorrer" (a amostra trouxe 2 e 22 em três jogos ao vivo) — não se tenta interpretar, confia-se
+só na presença na lista deste endpoint.
 
-Ficheiros: `sportmonks/client.ts` (cliente + normalizador `LiveEvent` + `fetchFixturesBetween`),
-`sportmonks/prematch.ts` (junta todas as ligas numa lista plana com `fetchFixturesBetween`, cache
-de 45s pré-aquecida em segundo plano, fatia por dia e expõe `getSportmonksEventById()`),
-`prematch/service.ts::getPrematchEvents(sport, date?)` (desvia só o futebol quando o interruptor
-está ligado, passa `date` adiante).
+`hybridService.ts` (REST) e `wsClient.ts` (WebSocket) passam a ignorar "football" quando
+`FOOTBALL_PROVIDER=sportmonks`, para a Pulsescore não competir com o poller da Sportmonks
+(`sportmonks/live.ts`, 20s) pelo mesmo snapshot em `hybridSportsService`. O poller alimenta
+`hybridSportsService.applyExternalSnapshot("football", events)` — o mesmo ponto de entrada da
+Pulsescore, por isso o WebSocket gateway e a liquidação automática de apostas (ligados aos eventos
+genéricos `event`/`remove`) continuam a funcionar sem alterações nenhumas.
+
+Ficheiros: `sportmonks/client.ts` (cliente + normalizadores `LiveEvent`, `fetchFixturesBetween` e
+`fetchLivescoresInplay`/`normalizeLiveFixture`), `sportmonks/prematch.ts` (junta todas as ligas numa
+lista plana com `fetchFixturesBetween`, cache de 45s pré-aquecida em segundo plano, fatia por dia e
+expõe `getSportmonksEventById()` — agora também guarda jogos já começados, para o Ao Vivo lhes ir
+buscar as odds), `sportmonks/live.ts` (poller do Ao Vivo), `prematch/service.ts::
+getPrematchEvents(sport, date?)` (desvia só o futebol quando o interruptor está ligado, passa
+`date` adiante).
 
 ## Ordenação de desportos (Pré-jogo e Destaques)
 

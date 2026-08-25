@@ -291,6 +291,94 @@ export async function fetchFixturesBetween(
   return events;
 }
 
+// --- Ao Vivo (/livescores/inplay) — CONFIRMADO por uma amostra real completa colada pelo
+// utilizador (pedido explícito de migrar o Ao Vivo de futebol para a Sportmonks, ver
+// sportmonks/live.ts para a lógica de polling/fusão com as odds). Forma real:
+// `{data: [{id, league_id, state_id, name, starting_at, result_info, participants: [...],
+// league: {...}, periods: [{id, type_id, started, ended, ticking, sort_order, description,
+// time_added, period_length, minutes, seconds}], scores: [{participant_id, score: {goals,
+// participant: "home"|"away"}, description}]}]}`. Duas coisas confirmadas importantes:
+// - `state_id` NÃO é um valor único para "a decorrer" — a amostra real trouxe 2 e 22 em três
+//   jogos todos a decorrer (com `periods` a "ticking" e sem `result_info`) — por isso não se
+//   tenta interpretar o valor aqui, só se confia na presença na lista (o próprio endpoint já só
+//   devolve jogos ao vivo, ao contrário de fetchFixturesBetween).
+// - `scores` tem várias entradas por jogo (por período: "1ST_HALF", "2ND_HALF", "2ND_HALF_ONLY"),
+//   mas a entrada com `description: "CURRENT"` é sempre o placar atual, uma por participante
+//   ("home"/"away") — confirmado a bater com o resto da amostra (ex: 1-1 num jogo com um golo de
+//   cada lado já visível nos eventos).
+// A amostra real NÃO incluía odds (include usado pelo utilizador: league.country;events;periods;
+// participants;round;scores, sem odds.market/odds.bookmaker) — este módulo também não as pede
+// aqui, por prudência (nunca confirmado que este endpoint aceita esse include). Em vez disso,
+// sportmonks/live.ts usa as odds já obtidas por fetchFixturesBetween (essa sim CONFIRMADA a trazer
+// odds mesmo para jogos já começados — has_odds:true, 1425 odds numa amostra real).
+interface SportmonksLiveScore {
+  participant_id: number;
+  score: { goals: number; participant: "home" | "away" };
+  description: string; // "CURRENT" é o que interessa aqui — as outras são placares por período
+}
+interface SportmonksLivePeriod {
+  ended: number | null; // null = este período ainda está a decorrer
+  ticking: boolean;
+  sort_order: number;
+  description?: string; // "1st-half" | "2nd-half" | ...
+  minutes: number;
+  seconds: number;
+}
+interface SportmonksLiveFixture {
+  id: number;
+  league_id: number;
+  state_id: number;
+  name: string;
+  starting_at: string;
+  result_info?: string | null;
+  participants?: SportmonksParticipant[];
+  league?: SportmonksLeague;
+  scores?: SportmonksLiveScore[];
+  periods?: SportmonksLivePeriod[];
+}
+
+/** GET /livescores/inplay — forma CONFIRMADA (ver comentário acima). Devolve diretamente todos os
+ * jogos de futebol a decorrer agora, de todas as ligas — ao contrário de fetchFixturesBetween(),
+ * não precisa de nenhuma janela de datas nem de decidir "já começou" pela hora. */
+export async function fetchLivescoresInplay(): Promise<SportmonksLiveFixture[]> {
+  const data = await sportmonksFetch<{ data: SportmonksLiveFixture[] }>("/livescores/inplay", {
+    include: "league.country;participants;periods;scores",
+  });
+  return data.data ?? [];
+}
+
+/** Normaliza uma fixture do /livescores/inplay para LiveEvent — `odds` vem de fora (ver comentário
+ * acima), obtidas por quem chama através do cache já existente de fetchFixturesBetween. */
+export function normalizeLiveFixture(fixture: SportmonksLiveFixture, odds: LiveOdds[]): LiveEvent | null {
+  const home = fixture.participants?.find((p) => p.meta?.location === "home");
+  const away = fixture.participants?.find((p) => p.meta?.location === "away");
+  if (!home || !away) return null; // sem as duas equipas identificadas, não é um jogo utilizável
+
+  const currentScores = (fixture.scores ?? []).filter((s) => s.description === "CURRENT");
+  const homeScore = currentScores.find((s) => s.score.participant === "home")?.score.goals;
+  const awayScore = currentScores.find((s) => s.score.participant === "away")?.score.goals;
+
+  const periods = fixture.periods ?? [];
+  const activePeriod = periods.find((p) => p.ended === null) ?? periods[periods.length - 1];
+  const minuteOrPeriod = activePeriod ? `${activePeriod.minutes}'` : "";
+
+  return {
+    id: `sportmonks:${fixture.id}`,
+    sport: "football",
+    league: fixture.league?.name ?? "Futebol",
+    home: home.name,
+    away: away.name,
+    homeScore,
+    awayScore,
+    minuteOrPeriod,
+    status: "live",
+    odds: orderSportmonksMarketsWithPrimaryFirst(odds),
+    updatedAt: new Date().toISOString(),
+    source: "sportmonks",
+    country: fixture.league?.country?.iso2,
+  };
+}
+
 /**
  * Diagnóstico (ver routes.ts, GET /api/sports/sportmonks-live-debug) — duas amostras BRUTAS
  * (sem normalizar, todos os campos tal como a Sportmonks manda), num único pedido:

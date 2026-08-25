@@ -65,12 +65,18 @@ class HybridSportsService extends EventEmitter {
   private async pollOnce() {
     const wsCovered = pulsescoreWs.activeSports();
     const live = new Set<Sport>();
+    // Futebol Ao Vivo passa a ser dono exclusivo da Sportmonks quando o interruptor está ligado
+    // (ver sportmonks/live.ts) — a Pulsescore (REST aqui e WebSocket em wsClient.ts) tem de parar
+    // de tocar em "football" para as duas fontes não ficarem a substituir o snapshot uma da
+    // outra a cada ciclo (25s Pulsescore vs. o intervalo do poller da Sportmonks).
+    const sportmonksOwnsFootball = env.FOOTBALL_PROVIDER === "sportmonks";
 
     try {
       const liveSports = await fetchLiveSportsUnionAllBookmakers();
       for (const sport of liveSports) live.add(sport);
 
       for (const sport of live) {
+        if (sportmonksOwnsFootball && sport === "football") continue;
         if (wsCovered.has(sport)) continue; // já coberto pelo WebSocket, REST duplicaria
         try {
           const events = await fetchLiveEvents(sport, { maxPages: 2 });
@@ -85,6 +91,7 @@ class HybridSportsService extends EventEmitter {
 
     // Desportos sem eventos ao vivo agora (nem via REST nem via WebSocket) ficam vazios.
     for (const sport of ALL_SPORTS) {
+      if (sportmonksOwnsFootball && sport === "football") continue; // não apagar o snapshot da Sportmonks
       if (!live.has(sport) && !wsCovered.has(sport)) this.applySportSnapshot(sport, []);
     }
   }
@@ -129,6 +136,15 @@ class HybridSportsService extends EventEmitter {
   private ingest(evt: LiveEvent) {
     this.events.set(evt.id, evt);
     this.emit("event", evt);
+  }
+
+  /** Ponto de entrada para fontes ao vivo externas ao par WS/REST da Pulsescore — usado pelo
+   * poller de Ao Vivo da Sportmonks (só futebol, quando FOOTBALL_PROVIDER=sportmonks, ver
+   * sportmonks/live.ts) para injetar o snapshot sem duplicar a lógica de remoção com margem já
+   * feita em applySportSnapshot() (liquidação de apostas, WS gateway, etc. continuam a funcionar
+   * exatamente da mesma forma, os eventos 'event'/'remove' não distinguem a fonte). */
+  applyExternalSnapshot(sport: Sport, events: LiveEvent[]) {
+    this.applySportSnapshot(sport, events);
   }
 
   snapshot(sport?: Sport): LiveEvent[] {
