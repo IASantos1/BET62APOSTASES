@@ -496,6 +496,62 @@ export function normalizeFixtureDetail(fixture: SportmonksFixtureDetail): LiveEv
 }
 
 /**
+ * Diagnóstico (ver routes.ts, GET /api/sports/sportmonks-odds-movement-debug) — pedido explícito
+ * do utilizador ("odds em ao vivo não está funcionando", "continuam paradas/iguais" mesmo depois
+ * da cache de 15s e do refresh on-demand ao abrir o jogo). Antes de mexer mais em código, esta
+ * função responde a uma pergunta em falta: a Sportmonks está mesmo a mandar valores DIFERENTES
+ * para o mesmo jogo ao vivo ao longo do tempo através deste endpoint (GET /fixtures/{id}), ou o
+ * has_odds:true/has_premium_odds:true só significa "há odds" (o snapshot de pré-jogo, congelado
+ * desde o apito inicial) sem estas se atualizarem durante o jogo? Pega no primeiro jogo ao vivo
+ * agora, pede as suas odds duas vezes com um intervalo, e compara o mercado principal (Fulltime
+ * Result) valor a valor — nunca assumido, sempre confirmado com uma amostra real.
+ */
+export async function diagnoseLiveOddsMovement(waitMs = 8_000): Promise<{
+  fixtureId: number | null;
+  fixtureName: string | null;
+  waitedMs: number;
+  snapshot1: Record<string, number> | null;
+  snapshot2: Record<string, number> | null;
+  changed: boolean | null;
+  diagnosis: string;
+}> {
+  const live = await fetchLivescoresInplay();
+  if (!live.length) {
+    return { fixtureId: null, fixtureName: null, waitedMs: 0, snapshot1: null, snapshot2: null, changed: null, diagnosis: "Nenhum jogo ao vivo neste momento — tentar de novo durante um jogo a decorrer." };
+  }
+  const fixture = live[0]!;
+
+  const snapshotOf = async (): Promise<Record<string, number>> => {
+    const detail = await fetchFixtureDetail(fixture.id);
+    const primary = groupOddsIntoMarkets(detail.odds).find((m) => /full.?time result/i.test(m.market));
+    const out: Record<string, number> = {};
+    if (primary) for (const [label, sel] of Object.entries(primary.selections)) out[label] = sel.odd;
+    return out;
+  };
+
+  const snapshot1 = await snapshotOf();
+  await new Promise((resolve) => setTimeout(resolve, waitMs));
+  const snapshot2 = await snapshotOf();
+
+  const keys = new Set([...Object.keys(snapshot1), ...Object.keys(snapshot2)]);
+  let changed = false;
+  for (const k of keys) {
+    if (snapshot1[k] !== snapshot2[k]) changed = true;
+  }
+
+  let diagnosis: string;
+  if (!Object.keys(snapshot1).length && !Object.keys(snapshot2).length) {
+    diagnosis = `Este jogo (${fixture.name}) não devolveu nenhuma odd de Fulltime Result em nenhuma das duas vezes — o problema pode ser falta de odds mesmo, não movimento.`;
+  } else if (changed) {
+    diagnosis = `Os valores MUDARAM entre os dois pedidos (${waitMs / 1000}s de intervalo) — a Sportmonks está mesmo a atualizar as odds ao vivo, o problema deve estar do nosso lado (cache/refresh).`;
+  } else {
+    diagnosis = `Os valores ficaram EXATAMENTE IGUAIS nos dois pedidos (${waitMs / 1000}s de intervalo) — sinal de que este endpoint pode não estar a devolver odds atualizadas durante o jogo (pode ser só o snapshot de pré-jogo congelado), não é um problema da nossa cache.`;
+  }
+
+  return { fixtureId: fixture.id, fixtureName: fixture.name, waitedMs: waitMs, snapshot1, snapshot2, changed, diagnosis };
+}
+
+/**
  * Diagnóstico (ver routes.ts, GET /api/sports/sportmonks-live-debug) — duas amostras BRUTAS
  * (sem normalizar, todos os campos tal como a Sportmonks manda), num único pedido:
  *

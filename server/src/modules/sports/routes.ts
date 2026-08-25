@@ -9,7 +9,7 @@ import { getHeadToHead, getPredictions, getStandings, type HeadToHeadMatch } fro
 import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent, getFullFixtureMapping } from "./mapping/service";
 import { getUnifiedMatchData } from "./unified/service";
 import { getSportmonksEventById, getSportmonksFootballPrematchDiagnosis } from "./sportmonks/prematch";
-import { fetchFixtureDetail, fetchTodayRawFixtureForLiveDiagnosis, normalizeFixtureDetail } from "./sportmonks/client";
+import { diagnoseLiveOddsMovement, fetchFixtureDetail, fetchTodayRawFixtureForLiveDiagnosis, normalizeFixtureDetail } from "./sportmonks/client";
 import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
 import { Errors } from "../../lib/errors";
 import { logger } from "../../lib/logger";
@@ -52,6 +52,24 @@ router.get(
   asyncHandler(async (_req, res) => {
     try {
       const result = await fetchTodayRawFixtureForLiveDiagnosis();
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      res.json({ ok: false, message: err instanceof Error ? err.message : "Erro desconhecido" });
+    }
+  })
+);
+
+// Diagnóstico temporário — pedido explícito do utilizador ("odds em ao vivo não está funcionando",
+// mesmo depois da cache de 15s e do refresh on-demand ao abrir o jogo). Pede as odds do mesmo jogo
+// ao vivo duas vezes com um intervalo (por omissão 8s) e diz se os valores mudaram — responde de
+// vez se a Sportmonks está mesmo a atualizar odds ao vivo através deste endpoint, ou se o
+// problema está noutro sítio. `?waitMs=15000` para um intervalo maior.
+router.get(
+  "/sportmonks-odds-movement-debug",
+  asyncHandler(async (req, res) => {
+    const waitMs = typeof req.query.waitMs === "string" && Number.isFinite(Number(req.query.waitMs)) ? Number(req.query.waitMs) : undefined;
+    try {
+      const result = await diagnoseLiveOddsMovement(waitMs);
       res.json({ ok: true, ...result });
     } catch (err) {
       res.json({ ok: false, message: err instanceof Error ? err.message : "Erro desconhecido" });
