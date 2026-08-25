@@ -218,6 +218,44 @@ function orderSportmonksMarketsWithPrimaryFirst(markets: LiveOdds[]): LiveOdds[]
   return ordered;
 }
 
+// Junta as várias linhas do MESMO mercado (ex: "Alternative Goal Line" 0.5, 1.5, 2.5...) para
+// ficarem lado a lado, ordenadas por linha ascendente, em vez de espalhadas pela lista consoante a
+// ordem arbitrária em que a Sportmonks as manda — reportado pelo utilizador ("0.5 tá em cima, 1.5
+// tá lá embaixo... vamos alinhar para que cada mercado esteja dentro de cada mercado"). Agrupa por
+// NOME exato do mercado (ao contrário do sortNumericMarketFamilies() da Pulsescore, em
+// pulsescore/client.ts, que extrai o número do NOME em texto — a Sportmonks não embute o número
+// no nome nem na seleção, ver aviso em translateMarketDisplayName no frontend, por isso agrupa-se
+// pelo nome e ordena-se pelo campo `line` estruturado, muito mais fiável do que tentar extrair um
+// número de um texto que não o tem). Mantém a posição de cada GRUPO onde o seu primeiro membro
+// apareceu — nunca reordena grupos diferentes entre si, só as linhas dentro do mesmo grupo. Linhas
+// sem `line` definido (ver aviso "Team Total Goals" nunca a trazer) ficam no fim do grupo, mas
+// continuam agrupadas com as restantes do mesmo mercado.
+function sortSportmonksMarketFamilies(markets: LiveOdds[]): LiveOdds[] {
+  const groups = new Map<string, LiveOdds[]>();
+  const firstSeenOrder: string[] = [];
+  for (const m of markets) {
+    if (!groups.has(m.market)) {
+      groups.set(m.market, []);
+      firstSeenOrder.push(m.market);
+    }
+    groups.get(m.market)!.push(m);
+  }
+  const result: LiveOdds[] = [];
+  for (const name of firstSeenOrder) {
+    const group = groups.get(name)!;
+    if (group.length > 1) group.sort((a, b) => (a.line ?? Infinity) - (b.line ?? Infinity));
+    result.push(...group);
+  }
+  return result;
+}
+
+/** Ordem final aplicada aos mercados de um jogo da Sportmonks — mercado principal primeiro, depois
+ * as várias linhas de cada mercado agrupadas e ordenadas. Usada tanto no pré-jogo (normalizeFixture
+ * abaixo) como no Ao Vivo (normalizeLiveFixture, mais abaixo). */
+function finalizeMarketOrder(odds: LiveOdds[]): LiveOdds[] {
+  return sortSportmonksMarketFamilies(orderSportmonksMarketsWithPrimaryFirst(odds));
+}
+
 function normalizeFixture(fixture: SportmonksFixture, league: SportmonksLeague | undefined): LiveEvent | null {
   const home = fixture.participants?.find((p) => p.meta?.location === "home");
   const away = fixture.participants?.find((p) => p.meta?.location === "away");
@@ -240,7 +278,7 @@ function normalizeFixture(fixture: SportmonksFixture, league: SportmonksLeague |
     // confirmado. A classificação Pré-jogo/Ao Vivo real fica por wiring futuro quando houver uma
     // amostra real de state_id de um jogo a decorrer.
     status: hasKickedOff ? "finished" : "scheduled",
-    odds: orderSportmonksMarketsWithPrimaryFirst(groupOddsIntoMarkets(fixture.odds)),
+    odds: finalizeMarketOrder(groupOddsIntoMarkets(fixture.odds)),
     updatedAt: new Date().toISOString(),
     source: "sportmonks",
     startTime: startTimeIso,
@@ -372,7 +410,7 @@ export function normalizeLiveFixture(fixture: SportmonksLiveFixture, odds: LiveO
     awayScore,
     minuteOrPeriod,
     status: "live",
-    odds: orderSportmonksMarketsWithPrimaryFirst(odds),
+    odds: finalizeMarketOrder(odds),
     updatedAt: new Date().toISOString(),
     source: "sportmonks",
     country: fixture.league?.country?.iso2,
