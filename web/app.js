@@ -2845,11 +2845,11 @@ async function renderTeamForm(e) {
   }
 }
 
-// Linha do tempo do jogo (golos/cartões/substituições) via Sportmonks (só jogos da Sportmonks —
-// ver GET /events/:id/timeline) — sem equivalente para jogos da Pulsescore, esses devolvem lista
-// vazia do backend e caem na mensagem "sem dados" abaixo, nunca um erro.
+// Linha do tempo do jogo (golos/cartões/substituições/revisões VAR) via Sportmonks (só jogos da
+// Sportmonks — ver GET /events/:id/timeline) — sem equivalente para jogos da Pulsescore, esses
+// devolvem lista vazia do backend e caem na mensagem "sem dados" abaixo, nunca um erro.
 let timelineLoadedForEventId = null;
-const TIMELINE_EVENT_ICON = { goal: "⚽", yellowcard: "🟨", redcard: "🟥", substitution: "🔄", other: "•" };
+const TIMELINE_EVENT_ICON = { goal: "⚽", yellowcard: "🟨", redcard: "🟥", substitution: "🔄", var: "📺", other: "•" };
 async function renderTimeline(e) {
   const el = document.getElementById("stats-body-timeline");
   if (e.sport !== "football") {
@@ -2873,7 +2873,7 @@ async function renderTimeline(e) {
           <div class="timeline-row">
             <span class="timeline-minute">${ev.minute}</span>
             <span class="timeline-icon">${TIMELINE_EVENT_ICON[ev.kind] || "•"}</span>
-            <span class="timeline-text">${ev.label}: ${ev.playerName}${ev.relatedPlayerName ? ` <span style="color:var(--muted)">↔ ${ev.relatedPlayerName}</span>` : ""} <span style="color:var(--muted)">(${ev.team})</span></span>
+            <span class="timeline-text">${ev.label}${ev.playerName ? `: ${ev.playerName}` : ""}${ev.relatedPlayerName ? ` <span style="color:var(--muted)">↔ ${ev.relatedPlayerName}</span>` : ""} <span style="color:var(--muted)">(${ev.team})</span></span>
           </div>`
           )
           .join("")}

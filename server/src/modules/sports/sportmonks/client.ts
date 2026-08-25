@@ -446,10 +446,14 @@ interface SportmonksFixtureState {
 // Mirassol). `type.developer_name` CONFIRMADOS nessa amostra: "GOAL" (golo, `result` traz o
 // placar acumulado tipo "1-0"), "SUBSTITUTION" (`player_name`/`related_player_name` são os dois
 // jogadores envolvidos — direção IN/OUT nunca confirmada por nenhum campo explícito, por isso
-// mostrados lado a lado sem assumir qual saiu/entrou), "YELLOWCARD". Outros type_id (ex: 10 "Var",
-// visto numa amostra anterior sem `events.type` incluído) ficam sem tradução, mostrados com o nome
-// tal como vier. `minute`/`extra_minute` CONFIRMADOS (ex: minute:45, extra_minute:4 = "45+4'",
-// tempo adicionado).
+// mostrados lado a lado sem assumir qual saiu/entrou), "YELLOWCARD". `type_id:10` = revisão VAR —
+// CONFIRMADO por DUAS amostras reais distintas (fixture 19788356: `info:"Offside"`,
+// `addition:"Goal Disallowed"`, golo anulado; fixture 19622037: `addition:"Var"`, sem outro
+// detalhe), ambas com `sub_type_id:1512` — nenhuma das duas trouxe `events.type` incluído, por
+// isso identifica-se pelo `type_id` numérico (não pelo nome, nunca visto), e o texto usa
+// `addition` para distinguir "revisão em curso"/"sem detalhe" de "golo anulado". Outros type_id
+// não reconhecidos ficam sem tradução, mostrados com o nome tal como vier. `minute`/`extra_minute`
+// CONFIRMADOS (ex: minute:45, extra_minute:4 = "45+4'", tempo adicionado).
 interface SportmonksEventPlayer {
   display_name: string;
   name: string;
@@ -463,6 +467,7 @@ interface SportmonksMatchEvent {
   type_id: number;
   player_name?: string | null;
   related_player_name?: string | null;
+  addition?: string | null;
   minute: number;
   extra_minute?: number | null;
   player?: SportmonksEventPlayer | null;
@@ -508,13 +513,15 @@ export async function fetchFixtureDetail(fixtureId: number): Promise<SportmonksF
 
 export interface MatchEventRow {
   minute: string; // "76'" ou "45+4'" (tempo adicionado)
-  kind: "goal" | "yellowcard" | "redcard" | "substitution" | "other";
+  kind: "goal" | "yellowcard" | "redcard" | "substitution" | "var" | "other";
   label: string;
-  playerName: string;
+  playerName?: string; // ausente em eventos sem jogador associado (ex: revisão VAR), nunca "?"
   relatedPlayerName?: string; // só substituições — o outro jogador envolvido, sem assumir direção
   team: string;
   isHome: boolean;
 }
+
+const VAR_EVENT_TYPE_ID = 10; // CONFIRMADO (ver comentário de SportmonksMatchEvent acima)
 
 const EVENT_KIND_BY_DEVELOPER_NAME: Record<string, MatchEventRow["kind"]> = {
   GOAL: "goal",
@@ -529,20 +536,24 @@ const EVENT_LABEL_PT: Record<string, string> = {
   SUBSTITUTION: "Substituição",
 };
 
-/** Linha do tempo do jogo (golos/cartões/substituições), ordenada por minuto — usa os mesmos
- * `participants` já normalizados noutras funções deste módulo para saber a equipa/lado de cada
- * evento. Sem `events` na resposta (jogo sem esta informação disponível), devolve lista vazia. */
+/** Linha do tempo do jogo (golos/cartões/substituições/revisões VAR), ordenada por minuto — usa os
+ * mesmos `participants` já normalizados noutras funções deste módulo para saber a equipa/lado de
+ * cada evento. Sem `events` na resposta (jogo sem esta informação disponível), devolve lista vazia. */
 export function getMatchTimeline(fixture: SportmonksFixtureDetail): MatchEventRow[] {
   return (fixture.events ?? [])
     .map((ev) => {
       const developerName = ev.type?.developer_name ?? "";
       const team = fixture.participants?.find((p) => p.id === ev.participant_id);
+      const isVar = ev.type_id === VAR_EVENT_TYPE_ID;
+      const kind: MatchEventRow["kind"] = isVar ? "var" : EVENT_KIND_BY_DEVELOPER_NAME[developerName] ?? "other";
+      const label = isVar ? (ev.addition === "Goal Disallowed" ? "Golo Anulado (VAR)" : "Revisão VAR") : EVENT_LABEL_PT[developerName] ?? ev.type?.name ?? "Evento";
+      const playerName = ev.player?.display_name ?? ev.player_name ?? undefined;
       return {
         minute: ev.extra_minute ? `${ev.minute}+${ev.extra_minute}'` : `${ev.minute}'`,
         minuteValue: ev.minute * 100 + (ev.extra_minute ?? 0),
-        kind: EVENT_KIND_BY_DEVELOPER_NAME[developerName] ?? "other",
-        label: EVENT_LABEL_PT[developerName] ?? ev.type?.name ?? "Evento",
-        playerName: ev.player?.display_name ?? ev.player_name ?? "?",
+        kind,
+        label,
+        playerName,
         relatedPlayerName: developerName === "SUBSTITUTION" ? (ev.related_player_name ?? undefined) : undefined,
         team: team?.name ?? "",
         isHome: team?.meta?.location === "home",
