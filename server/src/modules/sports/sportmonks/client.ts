@@ -185,6 +185,22 @@ function groupOddsIntoMarkets(odds: SportmonksOdd[] | undefined): LiveOdds[] {
   return result;
 }
 
+// A ordem das odds que a Sportmonks manda é arbitrária (não vem já com o 1X2 primeiro) — sem
+// isto, o cartão de pré-visualização (Destaques/lista de pré-jogo, que só mostra `odds[0]`, mesmo
+// padrão do orderMarketsWithPrimaryFirst() da Pulsescore em pulsescore/client.ts) acabava por
+// mostrar um mercado qualquer (ex: "Golos Ímpar/Par (Cartões)", "Marcador a Qualquer Momento") em
+// vez do 1X2 — reportado pelo utilizador com um screenshot real da página Destaques a mostrar
+// exatamente isso. "Fulltime Result" é o nome CONFIRMADO do mercado principal numa amostra real
+// de produção (ver comentário do módulo).
+function orderSportmonksMarketsWithPrimaryFirst(markets: LiveOdds[]): LiveOdds[] {
+  const primaryIdx = markets.findIndex((m) => /full.?time result/i.test(m.market));
+  if (primaryIdx <= 0) return markets;
+  const ordered = [...markets];
+  const [primary] = ordered.splice(primaryIdx, 1);
+  ordered.unshift(primary!);
+  return ordered;
+}
+
 function normalizeFixture(fixture: SportmonksFixture, league: SportmonksLeague | undefined): LiveEvent | null {
   const home = fixture.participants?.find((p) => p.meta?.location === "home");
   const away = fixture.participants?.find((p) => p.meta?.location === "away");
@@ -207,7 +223,7 @@ function normalizeFixture(fixture: SportmonksFixture, league: SportmonksLeague |
     // confirmado. A classificação Pré-jogo/Ao Vivo real fica por wiring futuro quando houver uma
     // amostra real de state_id de um jogo a decorrer.
     status: hasKickedOff ? "finished" : "scheduled",
-    odds: groupOddsIntoMarkets(fixture.odds),
+    odds: orderSportmonksMarketsWithPrimaryFirst(groupOddsIntoMarkets(fixture.odds)),
     updatedAt: new Date().toISOString(),
     source: "sportmonks",
     startTime: startTimeIso,
