@@ -149,6 +149,22 @@ export async function fetchRoundWithOdds(roundId: number, opts: { marketIds?: nu
   });
 }
 
+// Ordem CANÓNICA fixa (Casa, Empate, Fora) para grupos Home/Draw/Away (ou 1/X/2) — confirmado
+// numa amostra real de um jogo AO VIVO (Sabah vs Hapoel Be'er Sheva, Fulltime Result) que a
+// Sportmonks manda as odds em ordem arbitrária ("Draw, Home, Away", não "Home, Draw, Away"); como
+// `selections` abaixo é um objeto simples (a ordem das chaves = ordem de inserção), isso saía
+// direto para o ecrã fora de ordem — reportado pelo utilizador ("o certo é Casa Empate Fora"). Só
+// reordena quando o CONJUNTO de labels do grupo é reconhecidamente um destes (todas as labels
+// batem no mapa, sem repetidas) — qualquer outro mercado (Over/Under, nomes de jogador/equipa,
+// Dupla Hipótese...) fica exatamente na ordem em que veio, para não arriscar baralhar algo que
+// não se reconhece com confiança.
+const HOME_DRAW_AWAY_PRIORITY: Record<string, number> = { home: 0, "1": 0, draw: 1, tie: 1, x: 1, away: 2, "2": 2 };
+function withCanonicalOutcomeOrder(group: SportmonksOdd[]): SportmonksOdd[] {
+  const labels = group.map((o) => o.label.trim().toLowerCase());
+  if (!labels.every((l) => l in HOME_DRAW_AWAY_PRIORITY) || new Set(labels).size !== labels.length) return group;
+  return [...group].sort((a, b) => HOME_DRAW_AWAY_PRIORITY[a.label.trim().toLowerCase()]! - HOME_DRAW_AWAY_PRIORITY[b.label.trim().toLowerCase()]!);
+}
+
 /** Agrupa as odds de uma fixture por mercado (market_id + total/handicap, para separar linhas
  * diferentes do mesmo mercado — ex: "Over/Under 2.5" vs "Over/Under 3.5" — mesma lógica já usada
  * para a Pulsescore em sortNumericMarketFamilies(), ver pulsescore/client.ts). */
@@ -164,7 +180,8 @@ function groupOddsIntoMarkets(odds: SportmonksOdd[] | undefined): LiveOdds[] {
   }
 
   const result: LiveOdds[] = [];
-  for (const group of groups.values()) {
+  for (const rawGroup of groups.values()) {
+    const group = withCanonicalOutcomeOrder(rawGroup);
     const first = group[0]!;
     const selections: Record<string, LiveSelection> = {};
     for (const odd of group) {
