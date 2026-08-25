@@ -234,22 +234,44 @@ function findCurrentRoundId(league: SportmonksLeagueWithRounds): number | undefi
 
 /** Diagnóstico — só a 1ª página de /leagues, sem paginar tudo, para o admin (ver
  * admin/routes.ts, GET /admin/sportmonks/status) conseguir ver rapidamente a forma real da
- * resposta (ou o erro real) sem esperar pelas até 20 páginas de fetchLeaguesWithCurrentRound(). */
+ * resposta (ou o erro real) sem esperar pelas até 20 páginas de fetchLeaguesWithCurrentRound().
+ * `diagnosis` aponta em português a que nível exato a cadeia currentSeason -> rounds ->
+ * is_current está a falhar (sem depender de copiar/colar o JSON bruto, difícil no telemóvel). */
 export async function fetchLeaguesFirstPageRaw(): Promise<{
   totalOnPage: number;
+  withCurrentSeason: number;
+  withRounds: number;
+  totalRoundsSeen: number;
+  roundsWithIsCurrentTrue: number;
   withCurrentRound: number;
   sample: SportmonksLeagueWithRounds | null;
+  diagnosis: string;
 }> {
   const data = await sportmonksFetch<{ data: SportmonksLeagueWithRounds[]; pagination?: { has_more?: boolean } }>("/leagues", {
     include: "currentSeason.rounds",
     page: 1,
   });
   const leagues = data.data ?? [];
-  return {
-    totalOnPage: leagues.length,
-    withCurrentRound: leagues.filter((l) => findCurrentRoundId(l)).length,
-    sample: leagues[0] ?? null,
-  };
+  const withCurrentSeason = leagues.filter((l) => l.currentSeason).length;
+  const withRounds = leagues.filter((l) => (l.currentSeason?.rounds?.length ?? 0) > 0).length;
+  const totalRoundsSeen = leagues.reduce((sum, l) => sum + (l.currentSeason?.rounds?.length ?? 0), 0);
+  const roundsWithIsCurrentTrue = leagues.reduce((sum, l) => sum + (l.currentSeason?.rounds?.filter((r) => r.is_current).length ?? 0), 0);
+  const withCurrentRound = leagues.filter((l) => findCurrentRoundId(l)).length;
+
+  let diagnosis: string;
+  if (leagues.length === 0) {
+    diagnosis = "A Sportmonks devolveu 0 ligas nesta página — verificar se a chave/plano dá acesso a /leagues.";
+  } else if (withCurrentSeason === 0) {
+    diagnosis = "Nenhuma das ligas tem 'currentSeason' preenchido — este include pode não ser o nome certo, ou estas ligas não têm época ativa agora.";
+  } else if (withRounds === 0) {
+    diagnosis = `${withCurrentSeason} de ${leagues.length} ligas têm currentSeason, mas nenhuma tem 'rounds' preenchido — 'currentSeason.rounds' pode não estar a incluir mesmo as rondas.`;
+  } else if (roundsWithIsCurrentTrue === 0) {
+    diagnosis = `${totalRoundsSeen} rondas encontradas no total (em ${withRounds} ligas), mas nenhuma tem is_current:true — pode ser que estas 25 ligas estejam todas fora de época agora, ou o campo venha com outro nome.`;
+  } else {
+    diagnosis = `${withCurrentRound} ligas com ronda atual encontrada — a funcionar.`;
+  }
+
+  return { totalOnPage: leagues.length, withCurrentSeason, withRounds, totalRoundsSeen, roundsWithIsCurrentTrue, withCurrentRound, sample: leagues[0] ?? null, diagnosis };
 }
 
 export async function fetchLeaguesWithCurrentRound(): Promise<Array<{ leagueId: number; roundId: number }>> {
