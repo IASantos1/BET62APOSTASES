@@ -3792,13 +3792,15 @@ const MARKET_FILTER_CATEGORIES = {
     { label: "Mais/Menos", test: (m) => /over\/?under|total (goals|points|games|runs|corners|cards)|\bo\/u\b|mais\s*\/?\s*menos/i.test(m) },
     { label: "Handicap", test: (m) => /handicap|\bspread\b|asian handicap|\bah\b/i.test(m) },
     { label: "1º Tempo", test: (m) => {
-      if (!/1st half|first half|half.?time|\bht\b|\b1t\b/i.test(m)) return false;
-      if (/(full time|\bft\b|\b1x2\b|match winner|3.?way|three.?way|\bresult\b|money.?line|draw no bet|double chance|both teams|correct score|btts)/i.test(m)) return false;
+      const s = String(m ?? "");
+      if (!/1st half|first half|half.?time|\bht\b|\b1t\b/i.test(s)) return false;
+      if (/(full time|\bft\b|\b1x2\b|match winner|3.?way|three.?way|\bresult\b|money.?line|draw no bet|double chance|both teams|correct score|btts)/i.test(s)) return false;
       return true;
     }},
     { label: "2º Tempo", test: (m) => {
-      if (!/2nd half|second half|\b2ht\b|\b2t\b/i.test(m)) return false;
-      if (/(full time|\bft\b|\b1x2\b|match winner|3.?way|three.?way|\bresult\b|money.?line|draw no bet|double chance|both teams|correct score|btts)/i.test(m)) return false;
+      const s = String(m ?? "");
+      if (!/2nd half|second half|\b2ht\b|\b2t\b/i.test(s)) return false;
+      if (/(full time|\bft\b|\b1x2\b|match winner|3.?way|three.?way|\bresult\b|money.?line|draw no bet|double chance|both teams|correct score|btts)/i.test(s)) return false;
       return true;
     }},
     { label: "Placar Exato", test: (m) => /correct score|exact score|placar\s*exato|resultado\s*exato/i.test(m) },
@@ -4208,19 +4210,32 @@ function selectMarketFilter(label) {
 // uma barra de chips onde cada mercado deve ter um único sítio. Sem categoria batida, cai no
 // balde "Especiais" do futebol; nos restantes desportos (sem balde definido) fica sem
 // categoria (null) — só visível em "Todos".
+// IMPORTANTE 2026-08-26 — ESTA FUNÇÃO NUNCA PODE LANÇAR.
+// Classificar mercados é uma operação de display; se uma regex rebentar por marketName ser
+// null/undefined/objeto mal formado, a página de futebol fica "carregando infinito" (loading
+// spinner nunca fecha). Coerção String() + try/catch garante fallback limpo para categoria.
 function classifyMarket(sport, marketName) {
   const categories = MARKET_FILTER_CATEGORIES[sport];
   if (!categories) return null;
-  const match = categories.find((c) => c.test(marketName));
-  if (match) return match.label;
+  const s = String(marketName ?? "");
+  try {
+    const match = categories.find((c) => c.test(s));
+    if (match) return match.label;
+  } catch {
+    // anomalia: regex rebentou ou categoria tem erro sintático. Fallback silencioso —
+    // melhor mostrar em "Especiais" (football) / sem categoria do que parar a página.
+  }
   return sport === "football" ? FOOTBALL_CATCHALL_LABEL : null;
 }
 // Devolve só os grupos de mercado que pertencem à categoria escolhida (ou todos, sem filtro
 // selecionado).
+// Garantia anti-crash: se e.odds for null/undefined (evento ainda sem odds em deploy), retorna []
+// em vez de throw "Cannot read properties of undefined (reading 'filter')".
 function filterMarketGroups(e) {
+  if (!e.odds || !Array.isArray(e.odds)) return [];
   if (!selectedMarketFilter) return e.odds;
   if (!MARKET_FILTER_CATEGORIES[e.sport]) return e.odds;
-  return e.odds.filter((g) => classifyMarket(e.sport, g.market) === selectedMarketFilter);
+  return e.odds.filter((g) => classifyMarket(e.sport, g && g.market) === selectedMarketFilter);
 }
 
 // Linha de seleções de UM mercado bruto (`group`) — extraído do antigo renderMarketGroups() para
@@ -4440,7 +4455,8 @@ function patchLiveMarketGroups(e) {
 // arriscar uma tabela com rótulos errados a fingir ser jogadores.
 function buildMarketDisplayGroups(e) {
   const groups = filterMarketGroups(e);
-  const primaryMarket = e.odds[0];
+  if (!groups || !groups.length) return []; // <-- anti-crash: sem odds = sem mercados, não continua
+  const primaryMarket = e.odds && e.odds[0];
   const sport = e.sport;
   const order = sport === "football" ? FOOTBALL_FILTER_DISPLAY_ORDER : (MARKET_FILTER_CATEGORIES[sport] || []).map((c) => c.label);
   const rank = (label) => {
@@ -4451,6 +4467,7 @@ function buildMarketDisplayGroups(e) {
   const byMergeKey = new Map();
   const result = [];
   for (const group of groups) {
+    if (!group) continue;
     const category = classifyMarket(sport, group.market);
     let entry = byMergeKey.get(group.market);
     if (!entry) {
@@ -4460,12 +4477,15 @@ function buildMarketDisplayGroups(e) {
     }
     entry.lines.push(group);
   }
-  for (const entry of result) entry.isPrimary = entry.lines.includes(primaryMarket);
+  // primaryMarket pode ser undefined se e.odds estiver vazio mas groups vier de
+  // filterMarketGroups (selectedMarketFilter filtrou odds). includes() com undefined safe.
+  for (const entry of result) entry.isPrimary = !!(primaryMarket && entry.lines.includes(primaryMarket));
 
-  // O mercado principal (1X2 real, sempre e.odds[0] — ver orderMarketsWithPrimaryFirst no
-  // backend) fica sempre em primeiro lugar, mesmo antes de qualquer critério de categoria —
-  // pedido explícito do utilizador ("Resultado Final tem de aparecer no topo de todos").
-  result.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || rank(a.category) - rank(b.category));
+  try {
+    result.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || rank(a.category) - rank(b.category));
+  } catch {
+    // sort anomalia (NaN rank, etc.) → mantemos ordem original em vez de crashar.
+  }
   return result;
 }
 
