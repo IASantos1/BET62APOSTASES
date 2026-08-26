@@ -3967,6 +3967,56 @@ function translateMarketBaseName(m, sport) {
 // qualquer outro caso — nunca arrisca liquidar mal. Aqui o "custo" de falhar a validação é só
 // mostrar o nome em inglês em vez de um rótulo em português enganador, mas a disciplina é a
 // mesma: nunca confiar só na palavra-chave do nome do mercado.
+//
+// P3 — RELAXAMENTO 2026-08-26 (antes era EVERY 100% das labels, 1 label má → nome bruto).
+// Motivo: Sportmonks frequentemente manda 1 label de 10 num formato ligeiramente diferente
+// (ex: "1 / X" com espaços, "1:0" em vez de "1-0", nomes de equipa com hífen, etc.). A antiga
+// validação EVERY era demasiado conservadora e fazia TODO o mercado aparecer em inglês por 1
+// exceção. Novo comportamento: pelo menos 75% das labels + pelo menos 2 labels válidas.
+// Exceção: categorias de 2/3 seleções (BTTS, 1X2, Empate Anula Aposta) mantêm 100% — são tão
+// poucas que uma label errada muda totalmente o sentido.
+function countMatches(labels, predicate) {
+  let n = 0;
+  for (const l of labels) if (predicate(l)) n++;
+  return n;
+}
+const MAJORITY_RATIO = 0.75;
+function majorityMatches(labels, predicate) {
+  if (!labels.length) return true;
+  const hits = countMatches(labels, predicate);
+  return hits >= Math.max(2, Math.ceil(labels.length * MAJORITY_RATIO));
+}
+// P4 — Normaliza formatos de placar exato para o padrão "X-Y" antes de regex.
+// Formatos vistos na prática: "1-0" (padrão), "1:0" (Sportmonks), "1 0" (espaço), "1–0" (en-dash),
+// "1—0" (em-dash), "1x0" (letra x), "1.X" (mal formado) → todos viram "1-0".
+function normalizeCorrectScoreLabel(raw) {
+  return String(raw)
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/[:–—xX.]/g, "-")
+    .replace(/-+/g, "-");
+}
+function isCorrectScoreFormat(raw) {
+  return /^\d+-\d+$/.test(normalizeCorrectScoreLabel(raw));
+}
+// Helper para Home/Away com optional handicap (P1 já formatou no backend Sportmonks, mas
+// Pulsescore por vezes envia "Home -1.5" ou "Away +1"; manter compatível e também aceitar
+// nomes próprios de equipa (full match).
+function isHdaSide(l, homeL, awayL) {
+  const sideWords = /^(1|2|home|away|casa|fora)(\s|$|[+-])/i.test(l);
+  const isTeam = (homeL && l === homeL) || (awayL && l === awayL);
+  return sideWords || isTeam;
+}
+// Dupla Hipótese: formatos compactos ("1x", "X2"), "Equipa or/and Equipa", "Equipa + Empate"
+// (forma menos frequente mas comum em ligas menores).
+function isDoubleChanceFormat(l) {
+  const compact = l.replace(/\s+/g, "").toLowerCase();
+  if (["1x", "x1", "x2", "2x", "12"].includes(compact)) return true;
+  if (/^.+\s+(and|or|e|ou)\s+.+$/i.test(l)) return true;
+  if (/^(.+)\s*\+\s*(draw|empate)$/i.test(l)) return true;
+  return false;
+}
+
 function marketSelectionsLookPlausible(basePt, selectionLabels, home, away) {
   if (!selectionLabels || !selectionLabels.length) return true; // nada para validar
   const norm = (s) => String(s).trim().toLowerCase();
@@ -3974,43 +4024,34 @@ function marketSelectionsLookPlausible(basePt, selectionLabels, home, away) {
   const homeL = home ? norm(home) : null;
   const awayL = away ? norm(away) : null;
 
+  // — Categorias pequenas (2–3 seleções): mantemos 100% porque uma label errada destrói o sentido —
   if (basePt === "Ambas as Equipas Marcam" || basePt === "Haverá Tie-Break") {
     return labels.every((l) => /^(yes|sim|no|não|nao)$/.test(l));
   }
-  if (basePt === "Cantos Ímpar/Par" || basePt === "Cartões Ímpar/Par" || basePt === "Golos Ímpar/Par") {
-    return labels.every((l) => /^(odd|even|ímpar|impar|par)$/.test(l));
-  }
-  if (basePt === "Resultado Exato" || basePt === "Resultado Exato (Prolongamento)") {
-    return labels.every((l) => /^\d+\s*[-–—:]\s*\d+$/.test(l));
+  if (basePt === "Empate Anula Aposta") {
+    return labels.length === 2 && labels.every((l) => isHdaSide(l, homeL, awayL) && !/x|draw|tie|empate/i.test(l));
   }
   if (basePt === "Resultado Final" || basePt === "Resultado (Prolongamento)") {
-    // 1X2 é sempre a 3 vias (casa/empate/fora) — um mercado real de só 2 vias (ex: "Casa"/"Fora"
-    // sem Empate) não é "Resultado Final" mesmo que cada rótulo individual bata no vocabulário
-    // (esses mesmos rótulos também batem em "Empate Anula Aposta", 2 vias por definição). Sem
-    // isto, um mercado 2 vias diferente (nunca confirmado o que é de facto) caía aqui só por
-    // coincidência de vocabulário, e aparecia como um "Resultado Final" duplicado e sem sentido —
-    // reportado pelo utilizador como "vários Resultado Final, não sabemos de qual". Falhando esta
-    // validação, mostra-se o nome bruto original em vez de um título enganador.
-    const hasDraw = labels.some((l) => ["x", "draw", "empate"].includes(l));
-    return labels.length >= 3 && hasDraw && labels.every((l) => ["1", "x", "2", "home", "away", "draw", "empate", "casa", "fora"].includes(l) || l === homeL || l === awayL);
+    // 1X2 continua 100% e 3 vias c/ empate — é o mercado mais importante do boletim, não arriscamos.
+    const hdaWords = (l) => /^(1|x|2|home|away|draw|tie|empate|casa|fora)$/.test(l) || l === homeL || l === awayL;
+    const hasDraw = labels.some((l) => ["x", "draw", "tie", "empate"].includes(l));
+    return labels.length >= 3 && hasDraw && labels.every(hdaWords);
   }
-  if (basePt === "Empate Anula Aposta") {
-    // Draw No Bet é sempre a 2 vias (casa/fora), NUNCA inclui empate — o oposto do 1X2 acima.
-    return labels.length === 2 && labels.every((l) => ["1", "2", "home", "away", "casa", "fora"].includes(l) || l === homeL || l === awayL);
+
+  // — Categorias numerosas (≥4+ labels): maioria 75% min 2 matches —
+  if (basePt === "Cantos Ímpar/Par" || basePt === "Cartões Ímpar/Par" || basePt === "Golos Ímpar/Par") {
+    return majorityMatches(labels, (l) => /^(odd|even|ímpar|impar|par)$/.test(l));
+  }
+  if (basePt === "Resultado Exato" || basePt === "Resultado Exato (Prolongamento)") {
+    return majorityMatches(labels, isCorrectScoreFormat);
   }
   if (basePt === "Dupla Hipótese") {
-    // "and" (Pulsescore) e "or" (Sportmonks, confirmado numa amostra real: "Abha or Draw") são os
-    // dois formatos vistos — ver mesmo ajuste em translateSelectionLabel() e em
-    // resolveDoubleChance() no backend (settlementRules.ts).
-    return labels.every((l) => {
-      const compact = l.replace(/\s+/g, "");
-      return ["1x", "x1", "x2", "2x", "12"].includes(compact) || /^.+\s+(and|or)\s+.+$/i.test(l);
-    });
+    return majorityMatches(labels, isDoubleChanceFormat);
   }
   if (basePt === "Total da Equipa" || /^mais\/menos de/i.test(basePt)) {
-    return labels.every((l) => /over|under|mais|menos/.test(l));
+    return majorityMatches(labels, (l) => /\b(over|under|mais|menos)\b/.test(l));
   }
-  return true; // sem vocabulário fixo confirmado para esta categoria — sem validação adicional
+  return true; // sem vocabulário fixo confirmado — sem validação adicional
 }
 
 // `line` (linha numérica de Handicap/Total — ex: -1.5, 2.5) é opcional e só passado por quem já a

@@ -175,6 +175,42 @@ function withCanonicalOutcomeOrder(group: SportmonksOdd[]): SportmonksOdd[] {
   return [...group].sort((a, b) => HOME_DRAW_AWAY_PRIORITY[a.label.trim().toLowerCase()]! - HOME_DRAW_AWAY_PRIORITY[b.label.trim().toLowerCase()]!);
 }
 
+/** P1 — Labels estruturadas para Sportmonks (igual qualidade Pulsescore).
+ *  A Sportmonks manda `label` limpa ("Over", "Home") e o número da linha SÓ em `total`/`handicap`
+ *  (campos separados). Sem isto, o botão no frontend aparecia como "Mais de" / "Casa" SEM o valor
+ *  da linha — a confusão #1 do utilizador ("odds sem descrição correta").
+ *  Handicap: `"Home" + handicap=-1.5` → `"Home -1.5"` (mantém sinal, zero vira 0 para +0.25 etc.).
+ *  Over/Under: `"Over" + total=2.5` → `"Over 2.5"`.
+ *  Total da Equipa / Outros com total: anexa número à label se a label ainda não o tiver.
+ *  Labels 1/X/2 / Home/Draw/Away / nomes de jogador / placares exatos / Sim/Não passam iguais. */
+function enrichLabelWithLine(odd: SportmonksOdd): { displayKey: string; canonical: string } {
+  const baseLabel = odd.label ?? "";
+  const trimmed = baseLabel.trim();
+  const lower = trimmed.toLowerCase();
+  const lineNum = odd.total != null ? Number(odd.total) : odd.handicap != null ? Number(odd.handicap) : NaN;
+
+  if (!Number.isFinite(lineNum) || /\d/.test(trimmed)) {
+    return { displayKey: baseLabel, canonical: baseLabel };
+  }
+
+  if (/^(over|under|mais|menos)\b/i.test(lower)) {
+    const prefix = trimmed;
+    return { displayKey: baseLabel, canonical: `${prefix} ${lineNum}` };
+  }
+
+  if (/^(home|away|casa|fora)\b/i.test(lower) && odd.handicap != null) {
+    const prefix = trimmed;
+    const sign = lineNum >= 0 ? "+" : "";
+    return { displayKey: baseLabel, canonical: `${prefix} ${sign}${lineNum}` };
+  }
+
+  if (odd.total != null && /^team\b|\btotal\b/i.test(lower)) {
+    return { displayKey: baseLabel, canonical: `${trimmed} ${lineNum}` };
+  }
+
+  return { displayKey: baseLabel, canonical: baseLabel };
+}
+
 /** Agrupa as odds de uma fixture por mercado (market_id + total/handicap, para separar linhas
  * diferentes do mesmo mercado — ex: "Over/Under 2.5" vs "Over/Under 3.5" — mesma lógica já usada
  * para a Pulsescore em sortNumericMarketFamilies(), ver pulsescore/client.ts). */
@@ -197,7 +233,8 @@ function groupOddsIntoMarkets(odds: SportmonksOdd[] | undefined): LiveOdds[] {
     for (const odd of group) {
       const value = Number(odd.value);
       if (Number.isNaN(value)) continue;
-      selections[odd.label] = { odd: value, isActive: !odd.stopped, canonicalName: odd.label };
+      const enriched = enrichLabelWithLine(odd);
+      selections[enriched.displayKey] = { odd: value, isActive: !odd.stopped, canonicalName: enriched.canonical };
     }
     if (!Object.keys(selections).length) continue;
     result.push({
@@ -212,20 +249,60 @@ function groupOddsIntoMarkets(odds: SportmonksOdd[] | undefined): LiveOdds[] {
   return result;
 }
 
+// P2 — Conjunto múltiplo de nomes canónicos do mercado principal (igual Pulsescore).
+// Antes: 1 regex único `/full.?time result/i` que falhava para muitos nomes regionais / livros alternativos.
+// Agora: testa PRIMEIRO o canonicalMarket (developer_name) por palavras-chave — o developer_name é
+// muito mais estável do que o nome de exibição — e só depois usa regex no nome de exibição.
+const PRIMARY_CANONICAL_TOKENS = /(^|_)(match_winner|fulltime_result|result|match_odds|1x2|three_way|3way|full_time)(_|$)/i;
+const PRIMARY_DISPLAY_REGEXES: RegExp[] = [
+  /full.?time\s*result/i,
+  /(^|\s)1x2($|\s)/i,
+  /match\s*odds/i,
+  /resultado\s*final/i,
+  /resultado\s*(1.?x.?2|3.?vias)/i,
+  /(^|\s)3.?way($|\s)/i,
+  /three.?way/i,
+  /full.?time\s*1x2/i,
+  /1x2\s*full.?time/i,
+  /tempo\s*inteiro\s*resultado/i,
+  /ft\s*result/i,
+];
+function isPrimaryMarketName(market: LiveOdds): boolean {
+  if (market.canonicalMarket && PRIMARY_CANONICAL_TOKENS.test(market.canonicalMarket)) return true;
+  for (const re of PRIMARY_DISPLAY_REGEXES) if (re.test(market.market)) return true;
+  return false;
+}
+
+// Fallback empate-last (igual Pulsescore orderMarketsWithPrimaryFirst): se NENHUM dos nomes acima
+// for reconhecido, evita que um mercado com "Tie" / "Empate" fique por acidente em primeiro (ex:
+// Handicap 3-vias misturado com Moneyline). Pulsescore já tem `hasTieSelection() + withTie/withoutTie`.
+function hasDrawSelection(m: LiveOdds): boolean {
+  const labels = Object.keys(m.selections);
+  return labels.some((l) => ["x", "draw", "tie", "empate"].includes(l.trim().toLowerCase()));
+}
+
 // A ordem das odds que a Sportmonks manda é arbitrária (não vem já com o 1X2 primeiro) — sem
 // isto, o cartão de pré-visualização (Destaques/lista de pré-jogo, que só mostra `odds[0]`, mesmo
 // padrão do orderMarketsWithPrimaryFirst() da Pulsescore em pulsescore/client.ts) acabava por
 // mostrar um mercado qualquer (ex: "Golos Ímpar/Par (Cartões)", "Marcador a Qualquer Momento") em
 // vez do 1X2 — reportado pelo utilizador com um screenshot real da página Destaques a mostrar
-// exatamente isso. "Fulltime Result" é o nome CONFIRMADO do mercado principal numa amostra real
-// de produção (ver comentário do módulo).
+// exatamente isso.
 function orderSportmonksMarketsWithPrimaryFirst(markets: LiveOdds[]): LiveOdds[] {
-  const primaryIdx = markets.findIndex((m) => /full.?time result/i.test(m.market));
-  if (primaryIdx <= 0) return markets;
-  const ordered = [...markets];
-  const [primary] = ordered.splice(primaryIdx, 1);
-  ordered.unshift(primary!);
-  return ordered;
+  const primaryIdx = markets.findIndex(isPrimaryMarketName);
+  if (primaryIdx > 0) {
+    const ordered = [...markets];
+    const [primary] = ordered.splice(primaryIdx, 1);
+    ordered.unshift(primary!);
+    return ordered;
+  }
+  if (primaryIdx === 0) return markets;
+
+  // Fallback: nenhum principal reconhecido. Empurra para trás os mercados que têm Empate como
+  // seleção mas número de seleções != 3. Um 1X2 verdadeiro deve ter CASA / EMPATE / FORA (3).
+  const withoutDrawFirst = markets.filter((m) => !hasDrawSelection(m) || Object.keys(m.selections).length === 3);
+  const withDrawAfter = markets.filter((m) => hasDrawSelection(m) && Object.keys(m.selections).length !== 3);
+  if (withoutDrawFirst.length === 0) return markets;
+  return [...withoutDrawFirst, ...withDrawAfter];
 }
 
 // Junta as várias linhas do MESMO mercado (ex: "Alternative Goal Line" 0.5, 1.5, 2.5...) para
