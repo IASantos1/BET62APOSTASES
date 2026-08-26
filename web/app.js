@@ -3794,13 +3794,20 @@ const MARKET_FILTER_CATEGORIES = {
     { label: "1º Tempo", test: (m) => {
       const s = String(m ?? "");
       if (!/1st half|first half|half.?time|\bht\b|\b1t\b/i.test(s)) return false;
-      if (/(full time|\bft\b|\b1x2\b|match winner|3.?way|three.?way|\bresult\b|money.?line|draw no bet|double chance|both teams|correct score|btts)/i.test(s)) return false;
+      // ANTI-FALSO-POSITIVO CORRIGIDO 2026-08-26:
+      // APENAS rejeita se o nome do mercado tiver EXPLICITAMENTE "Full Time" (FT) ou
+      // "Match Odds" (mercado principal de resultado completo).
+      // NÃO rejeitamos por ter "Result" genérico — isso fazia "Half Time Result"
+      // (mercado legítimo de 1º Tempo) cair em "Especiais" e aparecer no FIM da lista.
+      // Exemplo que deve ser REJEITADO: "Full Time Result HT/FT" (é 1X2, "half" está só info).
+      // Exemplo que deve PASSAR:   "Half Time Result" (é 1º Tempo → Resultado ao intervalo).
+      if (/(full time|\bft\b|match odds|full.?time.?1x2)/i.test(s)) return false;
       return true;
     }},
     { label: "2º Tempo", test: (m) => {
       const s = String(m ?? "");
       if (!/2nd half|second half|\b2ht\b|\b2t\b/i.test(s)) return false;
-      if (/(full time|\bft\b|\b1x2\b|match winner|3.?way|three.?way|\bresult\b|money.?line|draw no bet|double chance|both teams|correct score|btts)/i.test(s)) return false;
+      if (/(full time|\bft\b|match odds|full.?time.?1x2)/i.test(s)) return false;
       return true;
     }},
     { label: "Placar Exato", test: (m) => /correct score|exact score|placar\s*exato|resultado\s*exato/i.test(m) },
@@ -4453,12 +4460,75 @@ function patchLiveMarketGroups(e) {
 // "seleção") ainda não está confirmada. Até haver uma amostra real completa, cada mercado
 // "Marcador" aparece como qualquer outro — nome traduzido, seleções tal como vêm — em vez de
 // arriscar uma tabela com rótulos errados a fingir ser jogadores.
+// Devolve true se um grupo de odds parecer ser o 1X2 principal (Resultado Final) do jogo.
+// Criterios: 3 selecoes exatas (Casa/Empate/Fora) ou 2 selecoes Moneyline; ou nome raw contenha
+// FT/Full Time/Result/1x2/Match Odds; OU labels sejam 1/X/2 ou Home/Draw/Away.
+// Usado quando o backend põe odds[0] = Handicap (acontece em livros parciais / Pulsescore livros
+// pequenos) — neste caso o isPrimary do backend é FALSO e o Handicap ia para o topo, bug grave.
+// DETEÇÃO INDEPENDENTE do backend para eliminar esse risco.
+function looksLikePrimaryMarket(group) {
+  if (!group) return false;
+  const m = String(group.market ?? "").toLowerCase();
+  // Nome que diretamente bate no principal (caso mais frequente).
+  if (/match odds|\b1x2\b|full time result|full.?time.?1x2|\bft\s*result\b|resultado\s*final|tempo\s*inteiro|\bft result\b|money.?line/i.test(m)) return true;
+  const labels = Object.keys(group.selections || {});
+  const labelsNorm = labels.map((l) => String(l).trim().toLowerCase());
+  const uniq = new Set(labelsNorm);
+  // 1X2 3-vias padrão.
+  const classicHda = ["home", "draw", "away"];
+  const numericHda = ["1", "x", "2"];
+  const hdaWords = /^(1|home|casa|draw|tie|empate|x|away|fora|2)$/;
+  if (uniq.size === 3 && classicHda.every((w) => uniq.has(w))) return true;
+  if (uniq.size === 3 && numericHda.every((w) => uniq.has(w))) return true;
+  if (uniq.size === 3 && labelsNorm.every((l) => hdaWords.test(l))) return true;
+  // Moneyline 2-vias (Casa/Fora, sem empate) — também é considerado principal na
+  // categoria "Resultado", aparece a seguir ao 1X2 se existir.
+  if (uniq.size === 2 && ["home", "away"].every((w) => uniq.has(w) || uniq.has(w === "home" ? "casa" : "fora"))) return true;
+  return false;
+}
+
+// Ordem estável DENTRO da mesma categoria de mercado (2 entries com o mesmo rank).
+// Objetivo: no grupo "Resultado", o 1X2 real ficar sempre o PRIMEIRO da categoria.
+// Prioridades retornam números MENORES = aparecem primeiro.
+function secondaryRank(entry) {
+  if (!entry || !entry.lines || !entry.lines.length) return 9999;
+  const first = entry.lines[0];
+  const m = String(entry.market ?? "").toLowerCase();
+  // 1. 1X2 principal (mais importante de todos) — deteção por seleções OU por nome.
+  if (entry.lines.some(looksLikePrimaryMarket)) return 0;
+  if (/full.?time result|\bft result\b|match odds|\b1x2\b|tempo\s*inteiro|resultado\s*final/i.test(m)) return 0;
+  // 2. Draw No Bet / Empate Anula Aposta.
+  if (/draw no bet|\bdnb\b|empate anula/i.test(m)) return 5;
+  // 3. Double Chance / Dupla Hipótese.
+  if (/double chance|dupla hip[óo]tese/i.test(m)) return 8;
+  // 4. To Win Both Halves / Either Half.
+  if (/to win both halves/i.test(m)) return 10;
+  if (/to win either half/i.test(m)) return 11;
+  // 5. Result + BTTS / Result + Marcador (são compostos mas continuam Resultado).
+  if (/both teams to score.*result|result.*both teams|result.*btts|resultado\s*\+\s*ambas/i.test(m)) return 15;
+  // 6. Half-Time / Full-Time (resultado duplo).
+  if (/half.?time.?\/.?full.?time|ht.?\/.?ft/i.test(m)) return 20;
+  // 7. Win To Nil / Clean Sheet (relacionados com "vencer a zero").
+  if (/win to nil|clean sheet|a zero/i.test(m)) return 25;
+  // 8. Winning Margin / Margem de Vitória.
+  if (/winning margin|margin of victory|margem de vit[óo]ria/i.test(m)) return 30;
+  // 9. Nas categorias de números (Mais/Menos, Handicap), ordenar por linha ASC.
+  const firstLine = typeof first.line === "number" ? first.line : NaN;
+  if (Number.isFinite(firstLine)) return 50 + firstLine * 100;
+  // 10. Por nome alfabético fallback — evita aleatoriedade entre itens iguais.
+  return 100;
+}
+
 function buildMarketDisplayGroups(e) {
   const groups = filterMarketGroups(e);
-  if (!groups || !groups.length) return []; // <-- anti-crash: sem odds = sem mercados, não continua
-  const primaryMarket = e.odds && e.odds[0];
+  if (!groups || !groups.length) return [];
+  const primaryMarketCandidate = e.odds && e.odds[0];
   const sport = e.sport;
-  const order = sport === "football" ? FOOTBALL_FILTER_DISPLAY_ORDER : (MARKET_FILTER_CATEGORIES[sport] || []).map((c) => c.label);
+  // Fix D: Garantir "Especiais" é SEMPRE o último lugar (rank MAX) mesmo que o array ordem
+  // cresça no futuro.
+  const baseOrder = sport === "football" ? FOOTBALL_FILTER_DISPLAY_ORDER : (MARKET_FILTER_CATEGORIES[sport] || []).map((c) => c.label);
+  const order = baseOrder.filter((l) => l !== FOOTBALL_CATCHALL_LABEL); // remove do meio se alguém meteu lá
+  order.push(FOOTBALL_CATCHALL_LABEL); // garante último lugar
   const rank = (label) => {
     const idx = order.indexOf(label);
     return idx === -1 ? order.length : idx;
@@ -4477,15 +4547,41 @@ function buildMarketDisplayGroups(e) {
     }
     entry.lines.push(group);
   }
-  // primaryMarket pode ser undefined se e.odds estiver vazio mas groups vier de
-  // filterMarketGroups (selectedMarketFilter filtrou odds). includes() com undefined safe.
-  for (const entry of result) entry.isPrimary = !!(primaryMarket && entry.lines.includes(primaryMarket));
+
+  // Fix A: "isPrimary" CORRETO independentemente do backend.
+  // Regra: 1) existe pelo menos 1 entry onde looksLikePrimaryMarket() = true → ESSE é primary
+  // (mesmo que o backend odds[0] seja Handicap). 2) só usa backend odds[0] includes() como
+  // fallback caso nenhuma entry passe a deteção (ex: desporto diferente de futebol).
+  let anyDetectedPrimary = false;
+  for (const entry of result) entry._hasPrimary = entry.lines.some(looksLikePrimaryMarket);
+  const primaryByDetection = result.find((en) => en._hasPrimary);
+  if (primaryByDetection) {
+    for (const entry of result) entry.isPrimary = (entry === primaryByDetection);
+    anyDetectedPrimary = true;
+  } else {
+    for (const entry of result) entry.isPrimary = !!(primaryMarketCandidate && entry.lines.includes(primaryMarketCandidate));
+  }
 
   try {
-    result.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || rank(a.category) - rank(b.category));
+    // Ordem final:
+    //   1. isPrimary DESC (1X2 principal SEMPRE no topo — MESMO que backend odds[0] fosse outro)
+    //   2. rank(categoria) ASC — ordem padrão casas: Resultado > Ambas Marcam > Mais/Menos > Handicap > 1ºT > 2ºT > Placar > Escanteios > Cartões > Marcador > Especiais
+    //   3. secondaryRank(entry) ASC — tiebreaker DENTRO da mesma categoria (1X2 → DNB → DC → Both Halves → Either → ... )
+    //   4. ordem alfabética (markey.market) fallback último — elimina aleatoriedade
+    result.sort((a, b) => {
+      const cmp0 = Number(!!b.isPrimary) - Number(!!a.isPrimary);
+      if (cmp0 !== 0) return cmp0;
+      const cmp1 = rank(a.category) - rank(b.category);
+      if (cmp1 !== 0) return cmp1;
+      const cmp2 = secondaryRank(a) - secondaryRank(b);
+      if (cmp2 !== 0) return cmp2;
+      return String(a.market ?? "").localeCompare(String(b.market ?? ""), "pt");
+    });
   } catch {
     // sort anomalia (NaN rank, etc.) → mantemos ordem original em vez de crashar.
   }
+  // Precisamos de saber se a deteção foi usada para logging/dev; mas não é usado na UI.
+  void anyDetectedPrimary;
   return result;
 }
 
