@@ -319,15 +319,17 @@ model Bet {
   @@index([status])
 }
 
-// Combinação "Melhores Escolhas" curada por um admin para um evento específico — pedido
-// explícito do utilizador a partir de uma referência visual (casa de apostas grande), mas SEM
-// inventar o mecanismo de desconto: o boost aqui é real e aplicado às odds REAIS e atuais do
-// mercado no momento da colocação (ver featuredCombos/service.ts), nunca uma percentagem
-// cosmética. `legs` guarda o mercado/seleção BRUTOS tal como o admin os escreveu (têm de bater
-// exatamente com `LiveOdds.market`/a chave de `LiveOdds.selections` desse evento) — cada perna é
-// revalidada contra os dados ao vivo/pré-jogo REAIS a cada pedido, nunca confiada como definitiva
-// (mesma disciplina de validateSelection() em betting/service.ts); uma combinação cuja perna já
-// não exista ou esteja suspensa simplesmente não aparece, nunca é mostrada com dados inventados.
+// Combinação "Melhores Escolhas" para um evento específico — pedido explícito do utilizador a
+// partir de uma referência visual (casa de apostas grande), mas SEM inventar o mecanismo de
+// desconto: o boost aqui é real e aplicado às odds REAIS e atuais do mercado no momento da
+// colocação (ver featuredCombos/service.ts), nunca uma percentagem cosmética. `legs` guarda o
+// mercado/seleção BRUTOS (têm de bater exatamente com `LiveOdds.market`/a chave de
+// `LiveOdds.selections` desse evento) — cada perna é revalidada contra os dados ao vivo/pré-jogo
+// REAIS a cada pedido, nunca confiada como definitiva (mesma disciplina de validateSelection() em
+// betting/service.ts); uma combinação cuja perna já não exista ou esteja suspensa simplesmente
+// não aparece, nunca é mostrada com dados inventados. Pode ser criada por um admin no painel OU
+// gerada automaticamente pelo sistema (ver ensureAutoFeaturedCombos, createdBy = "auto:v1") —
+// pedido posterior do utilizador para não ter de montar cada uma à mão por evento.
 model FeaturedCombo {
   id           String   @id @default(uuid())
   eventId      String // LiveEvent.id (ex: "sportmonks:12345") — efémero, sem tabela de eventos própria
@@ -336,7 +338,7 @@ model FeaturedCombo {
   boostPercent Int // aplicado à odd combinada REAL das pernas no momento da colocação (ex: 10 = +10%)
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
-  createdBy    String // id do admin que criou (auditoria — sem relation formal, a conta pode ser removida sem apagar o histórico)
+  createdBy    String // id do admin que criou, ou "auto:v1" quando gerada pelo sistema (ver featuredCombos/service.ts)
 
   bets Bet[]
 

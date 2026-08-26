@@ -3,7 +3,9 @@ import { prisma } from "../../lib/prisma";
 import { Errors } from "../../lib/errors";
 import { hybridSportsService } from "../sports/hybridService";
 import { getPrematchEvents } from "../sports/prematch/service";
-import { ALL_SPORTS, type LiveEvent, type Sport } from "../sports/types";
+import { ALL_SPORTS, type LiveEvent, type LiveOdds, type Sport } from "../sports/types";
+import { classifyMarket, type MarketCategory } from "../betting/settlementRules";
+import { classifyRoutingMarket } from "../sports/pulsescore/marketRouting";
 
 /**
  * "Melhores Escolhas" — combinações curadas por um admin para UM evento específico, pedido
@@ -139,13 +141,162 @@ export function applyBoost(pricedLegs: PricedLeg[], boostPercent: number): { leg
   };
 }
 
-export async function getPricedFeaturedCombosForEvent(eventId: string): Promise<PricedFeaturedCombo[]> {
-  const combos = await prisma.featuredCombo.findMany({ where: { eventId, active: true }, orderBy: { createdAt: "desc" } });
-  if (!combos.length) return [];
+// ====================== GERAÇÃO AUTOMÁTICA ("Melhores Escolhas" sem curadoria manual por evento) ======================
+// Pedido explícito do utilizador (depois de já ter pedido antes o oposto — combinações curadas à
+// mão — e agora a mudar de ideias com "quero que seja gerado automaticamente"): o sistema monta
+// as combinações sozinho, seguindo os MESMOS 4 modelos das imagens de referência que enviou
+// (Resultado Final + Golos [+ Marcador], BTTS + Resultado, Resultado + Cantos). O admin continua a
+// poder criar combinações à mão (ver adminCreateFeaturedCombo acima) — isto só PREENCHE quando não
+// há combinações ativas suficientes para o evento, nunca substitui/apaga o que um admin criou.
+//
+// Identifica os mercados certos com classifyMarket()/classifyRoutingMarket() — as MESMAS funções
+// já usadas e confirmadas em produção para o Bet Builder e o motor de liquidação automática
+// (settlementRules.ts, marketRouting.ts), nunca uma heurística nova inventada aqui. Toda perna
+// escolhida passa pela MESMA validação real (priceLegsAgainstEvent) que as combinações manuais —
+// se não existir com odd válida, não entra, nunca aparece inventada.
+const AUTO_CREATED_BY = "auto:v1";
+// 3 dos 4 modelos reais enviados pelo utilizador usam 10% de boost (o 4º usa 20%, mas sem nenhuma
+// regra explicada para quando é 20% em vez de 10% — em vez de adivinhar uma fórmula, fica-se pelo
+// valor confirmado na maioria dos exemplos).
+const AUTO_BOOST_PERCENT = 10;
+const AUTO_TARGET_COMBO_COUNT = 2;
 
-  const sport = combos[0]!.sport;
-  const event = await resolveEventForPricing(sport, eventId);
+// "Marcar em qualquer altura" só entra numa combinação automática se a seleção parecer mesmo um
+// nome de jogador — cautela direta de um bug real já visto nesta app (ver comentário em
+// classifyRoutingMarket/marketRouting.ts: heurística "NEEDS VALIDATION"): uma amostra anterior
+// mostrou rótulos como "Anytime"/"First"/"Last"/"Score" em vez de nomes de jogadores, e a
+// estrutura exata deste mercado nunca foi confirmada com uma amostra bruta real. Isto é só uma
+// segunda barreira (a primeira é sempre priceLegsAgainstEvent) contra mostrar um rótulo confuso.
+const NON_PLAYER_LABELS = new Set(["anytime", "first", "last", "yes", "no", "sim", "não", "nao", "score", "score or assist", "to score", "home", "away", "draw", "empate"]);
+export function looksLikePlayerName(label: string, home: string, away: string): boolean {
+  const s = label.trim();
+  if (s.length < 4 || s.length > 40) return false;
+  if (NON_PLAYER_LABELS.has(s.toLowerCase())) return false;
+  if (s.toLowerCase() === home.trim().toLowerCase() || s.toLowerCase() === away.trim().toLowerCase()) return false;
+  if (/^\d+(\.\d+)?$/.test(s)) return false;
+  return /[a-zà-ÿ]/i.test(s);
+}
+
+function groupsByCategory(event: LiveEvent, category: MarketCategory): LiveOdds[] {
+  return event.odds.filter((g) => g.isActive && classifyMarket(g.market) === category);
+}
+function goalscorerGroups(event: LiveEvent): LiveOdds[] {
+  return event.odds.filter((g) => g.isActive && classifyRoutingMarket(g.market) === "anytime_goalscorer");
+}
+
+/** Escolhe o lado favorito (nunca o empate) do Resultado Final pela odd real mais baixa. */
+function pickFavoriteResult(event: LiveEvent): FeaturedComboLegInput | null {
+  for (const group of groupsByCategory(event, "MATCH_RESULT")) {
+    let best: { selection: string; odd: number } | null = null;
+    for (const [selection, sel] of Object.entries(group.selections)) {
+      if (!sel.isActive || !Number.isFinite(sel.odd)) continue;
+      const s = selection.trim().toLowerCase();
+      if (s === "x" || s === "draw" || s === "empate") continue;
+      if (!best || sel.odd < best.odd) best = { selection, odd: sel.odd };
+    }
+    if (best) return { market: group.market, selection: best.selection };
+  }
+  return null;
+}
+
+/** Escolhe a linha "Mais de X" cuja odd real está mais perto de 2.0 — nem quase certa demais para
+ * não valer o boost, nem tão arriscada que pareça só sorte. Usado para Golos e Cantos. */
+function pickBestOverLeg(event: LiveEvent, category: MarketCategory): FeaturedComboLegInput | null {
+  let best: { market: string; selection: string; odd: number } | null = null;
+  for (const group of groupsByCategory(event, category)) {
+    for (const [selection, sel] of Object.entries(group.selections)) {
+      if (!sel.isActive || !Number.isFinite(sel.odd)) continue;
+      if (!/over|mais/i.test(selection)) continue;
+      if (!best || Math.abs(sel.odd - 2.0) < Math.abs(best.odd - 2.0)) best = { market: group.market, selection, odd: sel.odd };
+    }
+  }
+  return best ? { market: best.market, selection: best.selection } : null;
+}
+
+function pickBttsYes(event: LiveEvent): FeaturedComboLegInput | null {
+  for (const group of groupsByCategory(event, "BTTS")) {
+    for (const selection of Object.keys(group.selections)) {
+      const sel = group.selections[selection]!;
+      if (!sel.isActive || !Number.isFinite(sel.odd)) continue;
+      if (/^(yes|sim)$/i.test(selection.trim())) return { market: group.market, selection };
+    }
+  }
+  return null;
+}
+
+/** O goleador com a odd real mais baixa entre seleções que passam looksLikePlayerName. */
+function pickTopScorer(event: LiveEvent): FeaturedComboLegInput | null {
+  let best: { market: string; selection: string; odd: number } | null = null;
+  for (const group of goalscorerGroups(event)) {
+    for (const [selection, sel] of Object.entries(group.selections)) {
+      if (!sel.isActive || !Number.isFinite(sel.odd)) continue;
+      if (!looksLikePlayerName(selection, event.home, event.away)) continue;
+      if (!best || sel.odd < best.odd) best = { market: group.market, selection, odd: sel.odd };
+    }
+  }
+  return best ? { market: best.market, selection: best.selection } : null;
+}
+
+/** Monta até 2 combinações (2-3 pernas) a partir das pernas reais encontradas, espelhando os 4
+ * modelos de referência — só usa pernas que foram mesmo encontradas, nunca inventa uma em falta. */
+export function buildAutoTemplates(event: LiveEvent): FeaturedComboLegInput[][] {
+  const result = pickFavoriteResult(event);
+  const goals = pickBestOverLeg(event, "OVER_UNDER_GOALS");
+  const btts = pickBttsYes(event);
+  const corners = pickBestOverLeg(event, "OVER_UNDER_CORNERS");
+  const scorer = pickTopScorer(event);
+
+  const templates: FeaturedComboLegInput[][] = [];
+  if (result && goals) templates.push(scorer ? [scorer, result, goals] : [result, goals]);
+  if (result && btts) templates.push([btts, result]);
+  else if (result && corners) templates.push([result, corners]);
+  return templates.filter((t) => t.length >= MIN_LEGS);
+}
+
+/** Reconfirma as combinações automáticas já existentes deste evento (desativa as que já não têm
+ * uma perna válida) e gera as que faltarem até AUTO_TARGET_COMBO_COUNT — só para futebol, os
+ * outros desportos não têm os mercados (Cantos/BTTS/Marcador) usados nos modelos de referência. */
+async function ensureAutoFeaturedCombos(event: LiveEvent): Promise<void> {
+  if (event.sport !== "football") return;
+  const existing = await prisma.featuredCombo.findMany({ where: { eventId: event.id, createdBy: AUTO_CREATED_BY, active: true } });
+  let validCount = 0;
+  for (const combo of existing) {
+    const legs = combo.legs as unknown as FeaturedComboLegInput[];
+    if (priceLegsAgainstEvent(event, legs)) {
+      validCount++;
+    } else {
+      await prisma.featuredCombo.update({ where: { id: combo.id }, data: { active: false } }).catch(() => {});
+    }
+  }
+  if (validCount >= AUTO_TARGET_COMBO_COUNT) return;
+  const templates = buildAutoTemplates(event);
+  for (const legs of templates.slice(0, AUTO_TARGET_COMBO_COUNT - validCount)) {
+    if (!priceLegsAgainstEvent(event, legs)) continue; // dupla confirmação antes de gravar
+    await prisma.featuredCombo
+      .create({
+        data: {
+          eventId: event.id,
+          sport: event.sport,
+          legs: legs as unknown as Prisma.InputJsonValue,
+          boostPercent: AUTO_BOOST_PERCENT,
+          createdBy: AUTO_CREATED_BY,
+        },
+      })
+      .catch(() => {});
+  }
+}
+
+export async function getPricedFeaturedCombosForEvent(eventId: string): Promise<PricedFeaturedCombo[]> {
+  let combos = await prisma.featuredCombo.findMany({ where: { eventId, active: true }, orderBy: { createdAt: "desc" } });
+
+  const event = combos.length
+    ? await resolveEventForPricing(combos[0]!.sport, eventId)
+    : await resolveEventForPricing("football", eventId); // geração automática só existe para futebol
   if (!event || event.status === "finished") return [];
+
+  await ensureAutoFeaturedCombos(event);
+  combos = await prisma.featuredCombo.findMany({ where: { eventId, active: true }, orderBy: { createdAt: "desc" } });
+  if (!combos.length) return [];
 
   const priced: PricedFeaturedCombo[] = [];
   for (const combo of combos) {

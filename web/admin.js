@@ -984,15 +984,17 @@ const AdminApp = (() => {
           <button class="btn small" onclick="AdminApp.openFeaturedComboForm()">+ Nova combinação</button>
         </div>
         <div class="table-wrap"><table>
-          <thead><tr><th>Evento</th><th>Desporto</th><th>Pernas</th><th>Boost</th><th>Estado</th><th>Criada</th><th></th></tr></thead>
+          <thead><tr><th>Evento</th><th>Desporto</th><th>Origem</th><th>Pernas</th><th>Boost</th><th>Estado</th><th>Criada</th><th></th></tr></thead>
           <tbody>${
             combos.length
               ? combos
                   .map((c) => {
                     const legs = (c.legs || []).map((l) => `${esc(l.market)} — ${esc(l.selection)}`).join("<br>");
+                    const isAuto = c.createdBy === "auto:v1";
                     return `<tr>
                 <td class="mono">${esc(c.eventId)}</td>
                 <td>${esc(c.sport)}</td>
+                <td>${isAuto ? "🤖 Automática" : "Admin"}</td>
                 <td style="font-size:.78rem">${legs}</td>
                 <td class="mono">${c.boostPercent}%</td>
                 <td>${badge(c.active ? "ACTIVE" : "CLOSED")}</td>
