@@ -1,3 +1,13 @@
+// Serializa um valor para dentro de um atributo HTML delimitado por aspas simples (ex:
+// onclick='fn(${attrJson(x)})') — JSON.stringify() sozinho nunca escapa aspas simples (não faz
+// parte da especificação JSON), por isso um nome real com apóstrofo (equipa, jogador, mercado —
+// ex: "N'Golo Kanté", "Côte d'Ivoire") fechava o atributo a meio, partindo o onclick e deixando o
+// resto do texto solto no HTML como marcação inesperada. Reportado pelo utilizador como "clico
+// numa odd e seleciona várias" — sintoma plausível de um atributo onclick corrompido a meio.
+function attrJson(value) {
+  return JSON.stringify(value).replace(/'/g, "&#39;");
+}
+
 // ====================== TEMA AUTOMÁTICO (sem botão manual) ======================
 // Já aplicado uma vez inline no <head> para evitar flash; aqui só voltamos a
 // verificar a cada minuto para apanhar a transição das 08:00 / 20:00 com a aba aberta.
@@ -227,12 +237,12 @@ function renderSportsMenu() {
           ? leagues
               .map((league) => {
                 const active = selectedSport === s.id && selectedLeague === league;
-                return `<div class="league-item ${active ? "active" : ""}" onclick='selectLeague(${JSON.stringify(s.id)}, ${JSON.stringify(league)})'>${league}</div>`;
+                return `<div class="league-item ${active ? "active" : ""}" onclick='selectLeague(${attrJson(s.id)}, ${attrJson(league)})'>${league}</div>`;
               })
               .join("")
           : "";
         return `
-          <div class="country-item" onclick='toggleCountryExpand(${JSON.stringify(country)}, event)'>
+          <div class="country-item" onclick='toggleCountryExpand(${attrJson(country)}, event)'>
             <span class="sports-menu-chevron ${countryOpen ? "open" : ""}"><i class="fas fa-chevron-down"></i></span>${country}
           </div>
           ${leaguesHtml}`;
@@ -603,7 +613,7 @@ function quickOddsHtml(e, group, isLive) {
       const picked = betslipSelections.has(key);
       const selection = { eventId: e.id, sport: e.sport, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
       const arrow = isLive ? oddsArrowHtml(key, sel.odd) : "";
-      return `<div class="${picked ? "picked" : ""}" onclick='quickPick(event, ${JSON.stringify(key)}, ${JSON.stringify(selection)})'>${labelPt}<br>${sel.odd.toFixed(2)}${arrow}</div>`;
+      return `<div class="${picked ? "picked" : ""}" onclick='quickPick(event, ${attrJson(key)}, ${attrJson(selection)})'>${labelPt}<br>${sel.odd.toFixed(2)}${arrow}</div>`;
     })
     .join("")}</div>`;
 }
@@ -1523,7 +1533,7 @@ function betTicketHtml(b) {
         ? "0.00"
         : Number(b.potentialReturn).toFixed(2);
 
-  const toggleAttr = `onclick='toggleBetTicket(${JSON.stringify(b.id)})'`;
+  const toggleAttr = `onclick='toggleBetTicket(${attrJson(b.id)})'`;
   const head = `
     <div class="bet-ticket-top" ${toggleAttr}>
       <span class="bet-ticket-mode">${modeLabel} • ${b.selections.length} seleç${b.selections.length > 1 ? "ões" : "ão"}</span>
@@ -1548,7 +1558,7 @@ function betTicketHtml(b) {
   // Botão de Cash Out fica em baixo, junto dos valores do bilhete (Stake/Odd/Retorno/ID) —
   // pedido explícito do utilizador — só existe no bilhete que está expandido no acordeão.
   const cashoutRow = isPending
-    ? `<div class="bet-ticket-cashout-row"><button class="bet-ticket-cashout-btn" id="cashout-btn-${b.id}" onclick='requestCashOut(${JSON.stringify(b.id)})' disabled>A verificar Cash Out…</button></div>`
+    ? `<div class="bet-ticket-cashout-row"><button class="bet-ticket-cashout-btn" id="cashout-btn-${b.id}" onclick='requestCashOut(${attrJson(b.id)})' disabled>A verificar Cash Out…</button></div>`
     : "";
 
   return `
@@ -2060,7 +2070,7 @@ function showDepositResult(kind, data) {
         </div>
         <div class="dr-note">${expires ? `Válido até ${expires}. ` : ""}O saldo é atualizado automaticamente assim que o pagamento for confirmado.</div>
       </div>
-      <button class="auth-submit" onclick='copyMultibancoReference(${JSON.stringify(data.entity)}, ${JSON.stringify(data.reference)})'>COPIAR ENTIDADE E REFERÊNCIA</button>
+      <button class="auth-submit" onclick='copyMultibancoReference(${attrJson(data.entity)}, ${attrJson(data.reference)})'>COPIAR ENTIDADE E REFERÊNCIA</button>
       <button class="btn-outline" onclick="closeDeposit()">Fechar</button>`;
   }
 }
@@ -2236,20 +2246,19 @@ const LIVE_STALE_MS = 30000;
 function ensureLiveSocket() {
   if (liveSocket && liveSocket.readyState <= 1) return;
 
-  const statusEl = document.getElementById("ws-status");
   liveSocket = new WebSocket(`${window.BET62_CONFIG.WS_BASE}/ws/live`);
 
+  // Sem texto de "desligado"/erro para o utilizador — a reconexão (aqui e em
+  // forceReconnectLiveSocketIfStale) já é automática e rápida, mostrar o estado real de cada
+  // queda/religação só alarmava sem necessidade (pedido explícito do utilizador: "pode remover
+  // aquele ligado e desligado, pode deixar diretamente ligado").
   liveSocket.onopen = () => {
-    statusEl.textContent = "🟢 Ligado ao feed ao vivo";
     lastLiveFrameAt = Date.now();
   };
   liveSocket.onclose = () => {
-    statusEl.textContent = "🔴 Desligado — a tentar religar…";
     setTimeout(ensureLiveSocket, 3000);
   };
-  liveSocket.onerror = () => {
-    statusEl.textContent = "⚠️ Erro na ligação ao feed ao vivo";
-  };
+  liveSocket.onerror = () => {};
   liveSocket.onmessage = (msg) => {
     lastLiveFrameAt = Date.now();
     const data = JSON.parse(msg.data);
@@ -2337,7 +2346,7 @@ function renderSetsCard(e, clockClass, oddsHtml, icon) {
   const headerCols = Array.from({ length: numSets }, (_, i) => `<span class="sets-grid-col">S${i + 1}</span>`).join("");
 
   return `
-    <div class="live-card" data-eid="${e.id}" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
+    <div class="live-card" data-eid="${e.id}" onclick='openMarket(${attrJson(e.id)}, true)'>
       <div class="lc-top"><span>${icon} ${e.league}</span><span class="${clockClass}">${setLabel}</span></div>
       ${showPoints ? `<div class="event-points">${e.homeScore} - ${e.awayScore}</div>` : ""}
       <div class="sets-grid">
@@ -2373,7 +2382,7 @@ function renderGenericCard(e, clockClass, oddsHtml, icon) {
   const homeRed = redCardsHtml(e.statistics?.home?.redCards);
   const awayRed = redCardsHtml(e.statistics?.away?.redCards);
   return `
-    <div class="live-card" data-eid="${e.id}" onclick='openMarket(${JSON.stringify(e.id)}, true)'>
+    <div class="live-card" data-eid="${e.id}" onclick='openMarket(${attrJson(e.id)}, true)'>
       <div class="lc-top"><span>${icon} ${e.league}</span><span class="${clockClass}">${e.minuteOrPeriod}</span></div>
       <div class="event-rows">
         <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.homeScore}</span>` : ""}<span class="event-team">${e.home}${homeRed}</span></div>
@@ -3358,8 +3367,20 @@ function marketSelectionsLookPlausible(basePt, selectionLabels, home, away) {
   if (basePt === "Resultado Exato" || basePt === "Resultado Exato (Prolongamento)") {
     return labels.every((l) => /^\d+\s*[-–—:]\s*\d+$/.test(l));
   }
-  if (basePt === "Resultado Final" || basePt === "Resultado (Prolongamento)" || basePt === "Empate Anula Aposta") {
-    return labels.every((l) => ["1", "x", "2", "home", "away", "draw", "empate", "casa", "fora"].includes(l) || l === homeL || l === awayL);
+  if (basePt === "Resultado Final" || basePt === "Resultado (Prolongamento)") {
+    // 1X2 é sempre a 3 vias (casa/empate/fora) — um mercado real de só 2 vias (ex: "Casa"/"Fora"
+    // sem Empate) não é "Resultado Final" mesmo que cada rótulo individual bata no vocabulário
+    // (esses mesmos rótulos também batem em "Empate Anula Aposta", 2 vias por definição). Sem
+    // isto, um mercado 2 vias diferente (nunca confirmado o que é de facto) caía aqui só por
+    // coincidência de vocabulário, e aparecia como um "Resultado Final" duplicado e sem sentido —
+    // reportado pelo utilizador como "vários Resultado Final, não sabemos de qual". Falhando esta
+    // validação, mostra-se o nome bruto original em vez de um título enganador.
+    const hasDraw = labels.some((l) => ["x", "draw", "empate"].includes(l));
+    return labels.length >= 3 && hasDraw && labels.every((l) => ["1", "x", "2", "home", "away", "draw", "empate", "casa", "fora"].includes(l) || l === homeL || l === awayL);
+  }
+  if (basePt === "Empate Anula Aposta") {
+    // Draw No Bet é sempre a 2 vias (casa/fora), NUNCA inclui empate — o oposto do 1X2 acima.
+    return labels.length === 2 && labels.every((l) => ["1", "2", "home", "away", "casa", "fora"].includes(l) || l === homeL || l === awayL);
   }
   if (basePt === "Dupla Hipótese") {
     // "and" (Pulsescore) e "or" (Sportmonks, confirmado numa amostra real: "Abha or Draw") são os
@@ -3384,11 +3405,21 @@ function marketSelectionsLookPlausible(basePt, selectionLabels, home, away) {
 // vários jogos do mesmo mercado com linhas diferentes (ex: Handicap -1, Handicap +2, Cantos
 // Mais/Menos 8.5, Mais/Menos 9.5...) ficavam todos com o cabeçalho idêntico e pareciam
 // duplicados/errados — reportado pelo utilizador como "tudo com valores errados".
+// Rótulos genéricos que cobrem VÁRIOS nomes brutos distintos (ex: cantos por equipa, por parte,
+// handicap de cantos — tudo o que não bateu numa regra mais específica cai neste balde). Mostrar
+// só "Cantos" repetido várias vezes sem forma de os distinguir foi reportado pelo utilizador
+// ("temos lá vários nomes de Cantos mas não temos o nome do canto específico") — junta-se o nome
+// bruto ao lado até haver uma amostra real que permita uma tradução mais específica para cada um.
+const GENERIC_AMBIGUOUS_LABELS = new Set(["Cantos", "Total de Cantos", "Total de Cartões"]);
+
 function translateMarketDisplayName(rawName, sport, selectionLabels, home, away, line) {
   if (!rawName) return rawName;
   const base = translateMarketBaseName(rawName, sport);
   const plausible = base && marketSelectionsLookPlausible(base, selectionLabels, home, away);
-  const name = plausible ? base + extractPeriodSuffix(rawName) : rawName; // não reconhecido/implausível — mantém o nome original
+  let name = plausible ? base + extractPeriodSuffix(rawName) : rawName; // não reconhecido/implausível — mantém o nome original
+  if (plausible && GENERIC_AMBIGUOUS_LABELS.has(base) && rawName.toLowerCase() !== base.toLowerCase()) {
+    name = `${name} — ${rawName}`;
+  }
   return typeof line === "number" && !/\d/.test(name) ? `${name} (${line})` : name;
 }
 
@@ -3469,8 +3500,8 @@ function renderMarketFilterBar(e) {
   el.innerHTML = labels
     .map((label) =>
       label === BET_BUILDER_LABEL
-        ? `<div class="mf-chip mf-chip-bet-builder ${selectedMarketFilter === label ? "active" : ""}" onclick='selectMarketFilter(${JSON.stringify(label)})'><i class="fas fa-database"></i> ${label}</div>`
-        : `<div class="mf-chip ${(selectedMarketFilter ?? "Todos") === label ? "active" : ""}" onclick='selectMarketFilter(${JSON.stringify(label)})'>${label}</div>`
+        ? `<div class="mf-chip mf-chip-bet-builder ${selectedMarketFilter === label ? "active" : ""}" onclick='selectMarketFilter(${attrJson(label)})'><i class="fas fa-database"></i> ${label}</div>`
+        : `<div class="mf-chip ${(selectedMarketFilter ?? "Todos") === label ? "active" : ""}" onclick='selectMarketFilter(${attrJson(label)})'>${label}</div>`
     )
     .join("");
 }
@@ -3530,7 +3561,7 @@ function normalSelectionRowHtml(e, group, isLive, withLine) {
       // Setas de subida/descida só em Ao Vivo — no pré-jogo o valor não costuma mudar ao ponto de
       // justificar o indicador, e não foi pedido para essa página.
       const arrow = isLive ? oddsArrowHtml(key, sel.odd) : "";
-      return `<div class="selection-btn ${picked ? "picked" : ""}" onclick='toggleSelection(${JSON.stringify(key)}, ${JSON.stringify(selection)})'>
+      return `<div class="selection-btn ${picked ? "picked" : ""}" onclick='toggleSelection(${attrJson(key)}, ${attrJson(selection)})'>
         <span class="sel-label">${labelPt}</span><span class="sel-odd">${sel.odd.toFixed(2)}${arrow}</span>
       </div>`;
     })
@@ -3549,74 +3580,6 @@ function overUnderButtonLabel(label, line) {
   return `${translated} ${line}`;
 }
 
-// "Marcador" (Primeiro/Qualquer Momento/Último) — 3 mercados brutos distintos que a bookmaker
-// devolve separados; aqui só se decide a que COLUNA cada um pertence para a tabela por jogador
-// (ver buildMarcadorTable), mesma ordem de reconhecimento de translateMarketBaseName (primeiro/
-// último testados antes do genérico "a qualquer momento").
-function marcadorRole(rawMarketName) {
-  if (/first to score|to score first|first goalscorer/i.test(rawMarketName)) return "first";
-  if (/last to score|to score last|last goalscorer/i.test(rawMarketName)) return "last";
-  return "anytime";
-}
-
-// Junta os (até 3) mercados brutos "Marcador" num mapa jogador -> {anytime,first,last}, cada
-// papel com o group.market/label/odd EXATOS do mercado de origem (nunca sintetizado) — devolve
-// pares [jogador, papéis] pela ordem de primeira aparição.
-function buildMarcadorTable(e, groups) {
-  const byPlayer = new Map();
-  for (const group of groups) {
-    const role = marcadorRole(group.market);
-    for (const [label, sel] of orderedSelectionEntries(group.selections)) {
-      if (!byPlayer.has(label)) byPlayer.set(label, {});
-      byPlayer.get(label)[role] = { market: group.market, label, odd: sel.odd, isActive: sel.isActive };
-    }
-  }
-  return [...byPlayer.entries()];
-}
-
-const MARCADOR_VISIBLE_ROWS = 8;
-
-function marcadorCellHtml(e, roleData) {
-  if (!roleData) return '<div class="mc-col"><div class="marcador-odd-btn na">-</div></div>';
-  if (!roleData.isActive || !Number.isFinite(roleData.odd)) return '<div class="mc-col"><div class="marcador-odd-btn na">Susp.</div></div>';
-  const key = `${e.id}|${roleData.market}|${roleData.label}`;
-  const picked = betslipSelections.has(key);
-  const selection = { eventId: e.id, sport: e.sport, market: roleData.market, selection: roleData.label, odd: roleData.odd, home: e.home, away: e.away, league: e.league };
-  return `<div class="mc-col"><div class="marcador-odd-btn ${picked ? "picked" : ""}" onclick='toggleSelection(${JSON.stringify(key)}, ${JSON.stringify(selection)})'>${roleData.odd.toFixed(2)}</div></div>`;
-}
-
-// Tabela por jogador (Em Qualquer Momento/Primeiro/Último Marcador lado a lado) — pedido do
-// utilizador a partir da referência visual, com "ver mais" a revelar o resto dos jogadores reais
-// já presentes no DOM (sem pedido extra à rede, ver toggleMarcadorMore).
-function marcadorEntryHtml(e, groups) {
-  const rows = buildMarcadorTable(e, groups);
-  if (!rows.length) return '<div class="empty-note">Sem seleções disponíveis</div>';
-  const rowsHtml = rows
-    .map(
-      ([player, roles], i) => `
-    <div class="marcador-row${i >= MARCADOR_VISIBLE_ROWS ? " mc-extra hidden" : ""}">
-      <div class="mc-player">${player}</div>
-      ${marcadorCellHtml(e, roles.anytime)}
-      ${marcadorCellHtml(e, roles.first)}
-      ${marcadorCellHtml(e, roles.last)}
-    </div>`
-    )
-    .join("");
-  const moreBtn = rows.length > MARCADOR_VISIBLE_ROWS ? `<div class="marcador-more" onclick="toggleMarcadorMore(this)">Ver mais (+${rows.length - MARCADOR_VISIBLE_ROWS})</div>` : "";
-  return `
-    <div class="marcador-table">
-      <div class="marcador-head"><div class="mc-player"></div><div class="mc-col">Qualquer</div><div class="mc-col">Primeiro</div><div class="mc-col">Último</div></div>
-      ${rowsHtml}
-    </div>
-    ${moreBtn}`;
-}
-function toggleMarcadorMore(btn) {
-  const body = btn.closest(".ml-accordion-body");
-  if (!body) return;
-  body.querySelectorAll(".mc-extra").forEach((r) => r.classList.remove("hidden"));
-  btn.remove();
-}
-
 // Estado de expandir/fechar dos mercados na lista ("Todos"/filtrado) — por evento (reinicia ao
 // trocar de jogo), e só define os "5 primeiros abertos" UMA vez por evento (initialized), para
 // não desfazer o que o utilizador já abriu/fechou manualmente a cada atualização ao vivo.
@@ -3631,13 +3594,19 @@ function toggleMarketAccordion(key) {
 }
 
 // Reorganiza os mercados brutos (e.odds, já filtrados pela categoria escolhida) em entradas para
-// a lista de acordeões: (1) todas as linhas de um mesmo mercado Mais/Menos/Handicap (mesmo
+// a lista de acordeões: todas as linhas de um mesmo mercado Mais/Menos/Handicap (mesmo
 // group.market, várias group.line) fundidas numa só entrada — pedido explícito do utilizador
-// ("o grupo desse mercado fique dentro de um único... sem essa base retangular"); (2) os (até 3)
-// mercados "Marcador" fundidos numa tabela por jogador; (3) tudo o resto, uma entrada por mercado.
-// Ordenado pela mesma prioridade de categoria da barra de filtros (FOOTBALL_FILTER_DISPLAY_ORDER)
-// — pedido explícito: "Resultado, Ambas Marcam, Mais/Menos, Handicap, 1ºT, 2ºT, Placar Exato,
-// Escanteios, Cartões, Marcador, Especial".
+// ("o grupo desse mercado fique dentro de um único... sem essa base retangular"); tudo o resto,
+// uma entrada por mercado. Ordenado pela mesma prioridade de categoria da barra de filtros
+// (FOOTBALL_FILTER_DISPLAY_ORDER) — pedido explícito: "Resultado, Ambas Marcam, Mais/Menos,
+// Handicap, 1ºT, 2ºT, Placar Exato, Escanteios, Cartões, Marcador, Especial".
+//
+// "Marcador" NÃO tem tratamento especial (já teve uma fusão numa tabela por jogador, revertida):
+// uma amostra real mostrou os rótulos "Anytime"/"First"/"Last"/"Score or Assist"/"Score" onde se
+// esperava nomes de jogadores — a estrutura real deste mercado (o que é o "mercado" e o que é a
+// "seleção") ainda não está confirmada. Até haver uma amostra real completa, cada mercado
+// "Marcador" aparece como qualquer outro — nome traduzido, seleções tal como vêm — em vez de
+// arriscar uma tabela com rótulos errados a fingir ser jogadores.
 function buildMarketDisplayGroups(e) {
   const groups = filterMarketGroups(e);
   const primaryMarket = e.odds[0];
@@ -3648,61 +3617,50 @@ function buildMarketDisplayGroups(e) {
     return idx === -1 ? order.length : idx;
   };
 
-  const marcadorGroups = [];
   const byMergeKey = new Map();
   const result = [];
   for (const group of groups) {
     const category = classifyMarket(sport, group.market);
-    if (category === "Marcador") {
-      marcadorGroups.push(group);
-      continue;
-    }
     let entry = byMergeKey.get(group.market);
     if (!entry) {
-      entry = { key: `m:${group.market}`, kind: "normal", market: group.market, category, lines: [] };
+      entry = { key: `m:${group.market}`, market: group.market, category, lines: [] };
       byMergeKey.set(group.market, entry);
       result.push(entry);
     }
     entry.lines.push(group);
   }
   for (const entry of result) entry.isPrimary = entry.lines.includes(primaryMarket);
-  if (marcadorGroups.length) {
-    result.push({ key: "marcador", kind: "marcador", market: "Marcador", category: "Marcador", isPrimary: false, groups: marcadorGroups });
-  }
 
-  result.sort((a, b) => rank(a.category) - rank(b.category));
+  // O mercado principal (1X2 real, sempre e.odds[0] — ver orderMarketsWithPrimaryFirst no
+  // backend) fica sempre em primeiro lugar, mesmo antes de qualquer critério de categoria —
+  // pedido explícito do utilizador ("Resultado Final tem de aparecer no topo de todos").
+  result.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || rank(a.category) - rank(b.category));
   return result;
 }
 
 function marketAccordionHtml(e, entry, isLive) {
   const expanded = marketAccordionState.expanded.has(entry.key);
-  let title, badgeHtml, bodyHtml;
-  if (entry.kind === "marcador") {
-    title = "Marcador";
-    badgeHtml = "";
-    bodyHtml = marcadorEntryHtml(e, entry.groups);
+  const first = entry.lines[0];
+  const title = translateMarketDisplayName(entry.market, e.sport, Object.keys(first.selections || {}), e.home, e.away, entry.lines.length === 1 ? first.line : undefined);
+  const allSuspended = entry.lines.every((g) => !g.isActive);
+  const badgeHtml = allSuspended ? '<span class="market-suspended-badge">Suspenso</span>' : "";
+  let bodyHtml;
+  if (entry.isPrimary && allSuspended) {
+    // Mercado principal (1X2/moneyline) totalmente suspenso: um único botão a cobrir a linha
+    // toda em vez de 3 caixas "Suspenso" repetidas — ver primarySuspendedLabel().
+    bodyHtml = `<div class="selection-row"><div class="selection-btn suspended"><span class="sel-odd">${primarySuspendedLabel(e)}</span></div></div>`;
+  } else if (entry.lines.length === 1) {
+    bodyHtml = normalSelectionRowHtml(e, entry.lines[0], isLive, false);
   } else {
-    const first = entry.lines[0];
-    title = translateMarketDisplayName(entry.market, e.sport, Object.keys(first.selections || {}), e.home, e.away, entry.lines.length === 1 ? first.line : undefined);
-    const allSuspended = entry.lines.every((g) => !g.isActive);
-    badgeHtml = allSuspended ? '<span class="market-suspended-badge">Suspenso</span>' : "";
-    if (entry.isPrimary && allSuspended) {
-      // Mercado principal (1X2/moneyline) totalmente suspenso: um único botão a cobrir a linha
-      // toda em vez de 3 caixas "Suspenso" repetidas — ver primarySuspendedLabel().
-      bodyHtml = `<div class="selection-row"><div class="selection-btn suspended"><span class="sel-odd">${primarySuspendedLabel(e)}</span></div></div>`;
-    } else if (entry.lines.length === 1) {
-      bodyHtml = normalSelectionRowHtml(e, entry.lines[0], isLive, false);
-    } else {
-      bodyHtml = entry.lines
-        .slice()
-        .sort((a, b) => (a.line ?? 0) - (b.line ?? 0))
-        .map((g) => normalSelectionRowHtml(e, g, isLive, true))
-        .join("");
-    }
+    bodyHtml = entry.lines
+      .slice()
+      .sort((a, b) => (a.line ?? 0) - (b.line ?? 0))
+      .map((g) => normalSelectionRowHtml(e, g, isLive, true))
+      .join("");
   }
   return `
     <div class="ml-accordion${expanded ? " open" : ""}">
-      <div class="ml-accordion-head" onclick='toggleMarketAccordion(${JSON.stringify(entry.key)})'>
+      <div class="ml-accordion-head" onclick='toggleMarketAccordion(${attrJson(entry.key)})'>
         <span>${title}${badgeHtml}</span>
         <span class="ml-chevron">⌄</span>
       </div>
@@ -3900,7 +3858,7 @@ function renderBetBuilder(e) {
     const rows = options
       .map(({ market, label, odd }) => {
         const isPicked = picked && picked.market === market && picked.selection === label;
-        return `<div class="selection-btn ${isPicked ? "picked" : ""}" onclick='toggleBetBuilderPick(${JSON.stringify(cat.key)}, ${JSON.stringify(market)}, ${JSON.stringify(label)}, ${odd})'>
+        return `<div class="selection-btn ${isPicked ? "picked" : ""}" onclick='toggleBetBuilderPick(${attrJson(cat.key)}, ${attrJson(market)}, ${attrJson(label)}, ${odd})'>
           <span class="sel-label">${translateSelectionLabel(label)}</span><span class="sel-odd">${odd.toFixed(2)}</span>
         </div>`;
       })
@@ -4114,10 +4072,10 @@ function renderBetslipPanel() {
         <div class="bs-row-actions">
           ${
             betslipMode === "simples" && !isSuspended
-              ? `<input type="number" min="0.5" step="0.5" class="bs-stake-input" value="${betslipStakes.get(key) || ""}" placeholder="€" oninput='setStake(${JSON.stringify(key)}, this.value)'>`
+              ? `<input type="number" min="0.5" step="0.5" class="bs-stake-input" value="${betslipStakes.get(key) || ""}" placeholder="€" oninput='setStake(${attrJson(key)}, this.value)'>`
               : ""
           }
-          <button class="bs-remove" onclick='toggleSelection(${JSON.stringify(key)})' aria-label="Remover">✕</button>
+          <button class="bs-remove" onclick='toggleSelection(${attrJson(key)})' aria-label="Remover">✕</button>
         </div>
       </div>`;
       })
