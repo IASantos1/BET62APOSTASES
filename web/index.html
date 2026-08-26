@@ -406,6 +406,14 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .tp-team-bar.away{justify-content:flex-end;text-align:right}
 .tp-team-dot{width:7px;height:7px;border-radius:50%;background:var(--gold);flex-shrink:0}
 .tp-team-bar.away .tp-team-dot{background:#fff;border:1px solid var(--muted)}
+/* Pulsa o nome da equipa que está a pressionar a zona real de perigo (ver ballDangerZone/
+   pitchHeaderHtml em app.js) — nunca rotulado como "posse de bola", só a zona onde a bola está
+   confirmada agora. Cor própria da app (--red, já usada para "ao vivo"), não a de nenhuma
+   referência. */
+.tp-team-bar.zone-pulse{color:var(--red);animation:zone-pulse-text 1.3s ease-in-out infinite}
+.tp-team-bar.zone-pulse .tp-team-dot{background:var(--red);border-color:var(--red)}
+@keyframes zone-pulse-text{0%,100%{opacity:1}50%{opacity:.5}}
+@media (prefers-reduced-motion: reduce){.tp-team-bar.zone-pulse{animation:none}}
 .tp-score-block{background:rgba(255,255,255,.12);border-radius:6px;padding:2px 8px;font-family:'Bebas Neue',sans-serif;font-size:.95rem;margin:0 6px;white-space:nowrap;flex-shrink:0}
 .tp-live-badge{display:flex;align-items:center;gap:4px;font-size:.6rem;font-weight:700;color:var(--red);white-space:nowrap;flex-shrink:0}
 .tp-live-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--red);animation:pulse 1.4s infinite}
