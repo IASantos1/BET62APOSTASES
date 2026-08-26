@@ -424,8 +424,12 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
    utilizador para substituir o campo 2D por um mini campo 3D a sério, ligado aos mesmos dados
    reais (posição da bola, zona de perigo, canto, golo) já usados no 2D. O <canvas> do WebGL vive
    dentro deste contentor com aspect-ratio fixo — mesma técnica já comprovada (não confiar só em
-   width:100%;height:auto) que corrigiu o bug real de distorção do campo 2D anterior. */
-.tp-canvas-frame{position:relative;width:100%;aspect-ratio:100/64;border-radius:10px;overflow:hidden;background:#04100a}
+   width:100%;height:auto) que corrigiu o bug real de distorção do campo 2D anterior.
+   A foto da bancada (img/tracker-stadium-bg.jpg) fica como fundo deste contentor, atrás do
+   <canvas> — o renderer agora é transparente (alpha:true, scene.background=null em
+   ensureTracker3D) para deixar a foto aparecer à volta do relvado/balizas/bandeiras 3D, em vez
+   do piso cinzento liso que estava aqui antes. */
+.tp-canvas-frame{position:relative;width:100%;aspect-ratio:100/64;border-radius:10px;overflow:hidden;background:#04100a url("img/tracker-stadium-bg.jpg") center 70%/cover no-repeat}
 .tp-canvas-frame canvas{position:absolute;inset:0;width:100%!important;height:100%!important;display:block;touch-action:none}
 /* Flash de golo — sobrepõe o campo por alguns segundos quando um golo novo e confirmado aparece
    na linha do tempo real do jogo (nunca antecipado/inventado); agora uma camada HTML normal por

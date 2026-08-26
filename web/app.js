@@ -3102,13 +3102,17 @@ function ensureTracker3D() {
   if (!THREE) return null;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x05130c);
+  // Sem cor de fundo opaca: o <canvas> fica transparente (renderer alpha:true abaixo) para deixar
+  // aparecer a foto real da bancada (img/tracker-stadium-bg.jpg, fundo CSS de .tp-canvas-frame em
+  // index.html) atrás do relvado/balizas/bandeiras 3D — pedido explícito do utilizador.
+  scene.background = null;
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
   camera.position.set(0, 22, 26);
   camera.lookAt(0, 0, 0);
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setClearColor(0x000000, 0);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -3128,18 +3132,6 @@ function ensureTracker3D() {
   sun.position.set(-12, 26, 10);
   sun.castShadow = true;
   scene.add(sun);
-
-  // Piso cinzento à volta do relvado (bancada/passeio do estádio) — só decorativo, dá contexto ao
-  // campo em vez de o deixar a flutuar sozinho no fundo escuro. Fica por baixo da base do relvado
-  // (y=-0.2) para nunca disputar o mesmo plano com ele (sem z-fighting).
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(TP3_LEN + 22, TP3_WID + 22),
-    new THREE.MeshStandardMaterial({ color: 0x8c8c8c, roughness: 0.95 })
-  );
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -0.2;
-  ground.receiveShadow = true;
-  scene.add(ground);
 
   const pitch = new THREE.Mesh(new THREE.BoxGeometry(TP3_LEN, 0.2, TP3_WID), new THREE.MeshStandardMaterial({ color: 0x1c7a34, roughness: 0.85 }));
   pitch.position.y = -0.1;
