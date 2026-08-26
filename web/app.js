@@ -2824,36 +2824,56 @@ function deriveHalfLabel(e) {
 // branco=fora, mesma convenção já usada no gráfico de eventos), nunca as cores da imagem de
 // referência. Substitui o bloco #mt-basic-header separado que ficava duplicado por cima do mini
 // campo (ver renderMatchHeaderVisual/setTrackerTeamsRowVisible).
-function pitchHeaderHtml(e) {
+//
+// "latest" (ponto mais recente da bola, ou undefined sem cobertura) só pulsa o nome da equipa
+// quando a bola está mesmo na zona de perigo real (ballDangerZone, coordenada x confirmada) —
+// pedido explícito do utilizador para destacar "quem está a atacar". Pulsa a equipa que NÃO é
+// dona da baliza ameaçada (ela é quem está a pressionar ali), nunca rotulado como "posse de
+// bola": continua sem existir nenhum sinal de posse instantânea confirmado em nenhum provedor
+// desta app — isto é só "a bola está mesmo perto de que baliza agora".
+function pitchHeaderHtml(e, latest) {
   const hasScore = e.homeScore !== undefined && e.awayScore !== undefined;
   const half = deriveHalfLabel(e);
   const clockClass = isClockMissing(e) ? " clock-missing" : "";
+  let homePulse = "", awayPulse = "";
+  if (latest && ballDangerZone(latest.x) === "danger") {
+    if (latest.x < 0.5) awayPulse = " zone-pulse";
+    else homePulse = " zone-pulse";
+  }
   return `
     <div class="tp-header-bar">
       <div class="tp-clock-badge${clockClass}">${e.minuteOrPeriod || "-"}</div>
       <div class="tp-team-cluster">
-        <div class="tp-team-bar home"><span class="tp-team-dot"></span>${e.home}</div>
+        <div class="tp-team-bar home${homePulse}"><span class="tp-team-dot"></span>${e.home}</div>
         <div class="tp-score-block">${hasScore ? `${e.homeScore} - ${e.awayScore}` : "vs"}</div>
-        <div class="tp-team-bar away">${e.away}<span class="tp-team-dot"></span></div>
+        <div class="tp-team-bar away${awayPulse}">${e.away}<span class="tp-team-dot"></span></div>
       </div>
       <div class="tp-live-badge"><span class="dot"></span>AO VIVO</div>
     </div>
     ${half ? `<div class="tp-period-pill">${half}</div>` : ""}`;
 }
-// Ícone da bola pedido pelo utilizador com uma referência visual (bola de futebol a sério, não um
-// ponto sólido) — só a posição mais recente usa este ícone; o rasto atrás dela continua como
-// pontos dourados a desvanecer (mesma lógica de sempre), para não perder a visualização do
-// percurso real já construída.
+// Ícone da bola pedido pelo utilizador — uma bola oficial a sério (padrão Telstar, gomos +
+// costuras + brilho), não uma aproximação de pontos. Só a posição mais recente usa este ícone; o
+// rasto atrás dela continua como pontos dourados a desvanecer (mesma lógica de sempre), para não
+// perder a visualização do percurso real já construída. Desenhada uma vez à escala nativa (r=13.5)
+// e reaproveitada a qualquer tamanho via <g transform="translate(...) scale(...)">.
 function soccerBallSvg(cx, cy, r) {
-  const petals = [0, 72, 144, 216, 288]
-    .map((deg) => {
-      const rad = (deg * Math.PI) / 180;
-      const px = (cx + Math.cos(rad) * r * 0.55).toFixed(2);
-      const py = (cy + Math.sin(rad) * r * 0.55).toFixed(2);
-      return `<circle cx="${px}" cy="${py}" r="${(r * 0.24).toFixed(2)}" fill="#111"/>`;
-    })
-    .join("");
-  return `<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="${r.toFixed(2)}" fill="#fff" stroke="#111" stroke-width="0.35"/><circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="${(r * 0.3).toFixed(2)}" fill="#111"/>${petals}`;
+  const k = (r / 13.5).toFixed(3);
+  return (
+    `<g transform="translate(${cx.toFixed(2)} ${cy.toFixed(2)}) scale(${k})">` +
+    '<circle r="15" fill="#000" opacity=".2" cy="3.5"/>' +
+    '<circle r="13.5" fill="#f4f4ef"/>' +
+    '<path d="M0 -6.2 L3.6 -2.1 L2.2 3.1 L-2.2 3.1 L-3.6 -2.1Z" fill="#111"/>' +
+    '<path d="M0 -13.2 L4 -9.6 L2.5 -6 L-2.5 -6 L-4 -9.6Z" fill="#111"/>' +
+    '<path d="M10.5 -6.6 L13 -2.1 L10 1.3 L5.2 -0.2 L6 -5Z" fill="#111"/>' +
+    '<path d="M6.6 9 L10.2 6.2 L11 2 L6.4 1.2 L4 5.4Z" fill="#111"/>' +
+    '<path d="M-6.6 9 L-4 5.4 L-6.4 1.2 L-11 2 L-10.2 6.2Z" fill="#111"/>' +
+    '<path d="M-10.5 -6.6 L-6 -5 L-5.2 -0.2 L-10 1.3 L-13 -2.1Z" fill="#111"/>' +
+    '<path d="M-2.5 -6 L-5.2 -0.2 M2.5 -6 L5.2 -0.2 M2.2 3.1 L4 5.4 M-2.2 3.1 L-4 5.4 M3.6 -2.1 L6 -5 M-3.6 -2.1 L-6 -5" fill="none" stroke="#222" stroke-width=".7" opacity=".5"/>' +
+    '<circle r="13.5" fill="none" stroke="#1a1a1a" stroke-width="1.15"/>' +
+    '<ellipse cx="-4.2" cy="-5.2" rx="3.2" ry="2" fill="#fff" opacity=".32" transform="rotate(-28 -4.2 -5.2)"/>' +
+    "</g>"
+  );
 }
 // Barra de estatísticas por baixo do campo, pedida pelo utilizador com uma referência visual —
 // só mostra métricas com dado real confirmado (relógio, placar, cantos já usados no resto da app
@@ -2882,12 +2902,12 @@ function pitchStatBarHtml(e) {
 function renderPitchInto(el, points, e, opts) {
   if (!el) return;
   const compact = !!(opts && opts.compact);
-  const header = pitchHeaderHtml(e);
+  const latest = points.length ? points[0] : null;
+  const header = pitchHeaderHtml(e, latest);
   if (!points.length) {
     el.innerHTML = `<div class="tp-panel">${header}<div class="empty-note">${compact ? "Sem dados de posição da bola" : "Sem dados de posição da bola disponíveis para este jogo"}</div></div>`;
     return;
   }
-  const latest = points[0];
   const trailMarkers = points
     .map((p, i) => {
       const cx = p.x * 100;
