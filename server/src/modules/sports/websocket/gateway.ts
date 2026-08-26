@@ -13,7 +13,20 @@ const CHANNEL_REMOVE = "bet62:ws:remove";
 interface ClientState {
   socket: WebSocket;
   sports: Set<Sport>;
+  isAlive: boolean;
 }
+
+// Intervalo de ping/pong (ver HEARTBEAT_INTERVAL_MS abaixo): sem isto, uma ligação que morre sem
+// um FIN/RST TCP limpo (ex: telemóvel muda de wifi para dados móveis, ou passa muito tempo em
+// segundo plano) fica "presa" como OPEN dos dois lados — o cliente nunca recebe onclose, por isso
+// nunca tenta religar (ver ensureLiveSocket() em app.js: só religa quando readyState > 1), e este
+// servidor continua a "enviar para o vazio" um cliente que já não está a ouvir. Reportado pelo
+// utilizador com atrasos reais de 20-30s no placar/odds em ao vivo depois de a app voltar de
+// segundo plano — o "pisca vermelho depois verde" era exatamente este tipo de ligação zombie a
+// finalmente cair, só muito mais tarde do que se esperava (o timeout TCP do sistema operativo pode
+// demorar muito mais do que isto). Ping/pong é o padrão recomendado pela própria biblioteca `ws`
+// para este problema exato.
+const HEARTBEAT_INTERVAL_MS = 25_000;
 
 /**
  * Internal WebSocket relay + Redis Pub/Sub bridge:
@@ -71,7 +84,7 @@ export function attachSportsWebsocketGateway(httpServer: HttpServer) {
       .map((s) => s.trim())
       .filter((s): s is Sport => VALID_SPORTS.includes(s as Sport));
 
-    const state: ClientState = { socket, sports: new Set(requested.length ? requested : VALID_SPORTS) };
+    const state: ClientState = { socket, sports: new Set(requested.length ? requested : VALID_SPORTS), isAlive: true };
     clients.add(state);
 
     socket.send(
@@ -81,9 +94,28 @@ export function attachSportsWebsocketGateway(httpServer: HttpServer) {
       })
     );
 
+    socket.on("pong", () => {
+      state.isAlive = true;
+    });
     socket.on("close", () => clients.delete(state));
     socket.on("error", () => clients.delete(state));
   });
+
+  // A cada ciclo: termina quem não respondeu ao ping anterior (ligação zombie — ver comentário de
+  // HEARTBEAT_INTERVAL_MS acima) e pede um novo pong a quem sobrou. `terminate()` (não `close()`)
+  // fecha já sem esperar handshake nenhum — o cliente não vai responder de qualquer forma.
+  const heartbeat = setInterval(() => {
+    for (const state of clients) {
+      if (!state.isAlive) {
+        state.socket.terminate();
+        clients.delete(state);
+        continue;
+      }
+      state.isAlive = false;
+      state.socket.ping();
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+  wss.on("close", () => clearInterval(heartbeat));
 
   hybridSportsService.on("event", (event) => {
     const frame = JSON.stringify({ type: "update", event });

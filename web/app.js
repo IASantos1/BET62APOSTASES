@@ -2225,6 +2225,14 @@ async function renderDestaquesHighlights() {
 }
 
 // ====================== LIVE SPORTS (Pulsescore + API-Football híbrido) ======================
+// Marca de quando chegou o último frame (qualquer tipo) do WS — usada por
+// forceReconnectLiveSocketIfStale() abaixo para detetar uma ligação "zombie": o browser não avisa
+// (readyState continua OPEN) quando uma ligação morre sem um fecho limpo — típico de telemóvel a
+// voltar de segundo plano ou a mudar de rede. Reportado pelo utilizador com atrasos reais de
+// 20-30s no placar/odds ao vivo depois disso acontecer duas vezes seguidas.
+let lastLiveFrameAt = 0;
+const LIVE_STALE_MS = 30000;
+
 function ensureLiveSocket() {
   if (liveSocket && liveSocket.readyState <= 1) return;
 
@@ -2233,6 +2241,7 @@ function ensureLiveSocket() {
 
   liveSocket.onopen = () => {
     statusEl.textContent = "🟢 Ligado ao feed ao vivo";
+    lastLiveFrameAt = Date.now();
   };
   liveSocket.onclose = () => {
     statusEl.textContent = "🔴 Desligado — a tentar religar…";
@@ -2242,6 +2251,7 @@ function ensureLiveSocket() {
     statusEl.textContent = "⚠️ Erro na ligação ao feed ao vivo";
   };
   liveSocket.onmessage = (msg) => {
+    lastLiveFrameAt = Date.now();
     const data = JSON.parse(msg.data);
     if (data.type === "snapshot") {
       liveSnapshotReceived = true;
@@ -2270,6 +2280,28 @@ function ensureLiveSocket() {
     syncBetslipLiveState();
   };
 }
+
+// Chamado quando a app volta ao primeiro plano (aba/telemóvel) — se a ligação existente parece
+// aberta mas está calada há mais de LIVE_STALE_MS, ou já está a meio de fechar, força já uma nova
+// ligação em vez de esperar pelo próximo ping do heartbeat do servidor (até 25s, ver gateway.ts) ou
+// pelo atraso de 3s do reconector passivo em onclose. Sem isto, o "pisca vermelho" só aparecia
+// muito depois de a ligação já estar morta — exatamente o atraso de 20-30s reportado.
+function forceReconnectLiveSocketIfStale() {
+  if (!liveSocket) return; // nunca ligou ainda — ensureLiveSocket() liga quando for preciso
+  const staleOpen = liveSocket.readyState === WebSocket.OPEN && Date.now() - lastLiveFrameAt > LIVE_STALE_MS;
+  if (staleOpen) {
+    liveSocket.close(); // readyState passa já a CLOSING (>1) — ensureLiveSocket() não fica bloqueado pela guarda
+    ensureLiveSocket();
+  } else if (liveSocket.readyState > 1) {
+    // já estava CLOSING/CLOSED (ex: voltou de segundo plano muito depois do fecho) — religa já
+    ensureLiveSocket();
+  }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") forceReconnectLiveSocketIfStale();
+});
+window.addEventListener("focus", forceReconnectLiveSocketIfStale);
+window.addEventListener("pageshow", forceReconnectLiveSocketIfStale);
 
 // Quando um evento ao vivo não tem relógio/período real (matchClock ausente ou numa forma que
 // formatMatchClock não reconheceu — ver client.ts/wsClient.ts), minuteOrPeriod cai no genérico
@@ -4205,6 +4237,11 @@ async function submitBetslip() {
   renderSportsMenu();
   renderCompetitions();
   renderBetslipPanel();
+  // Feed ao vivo liga já ao carregar a app (não só quando o utilizador entra em "Ao Vivo") — sem
+  // login nenhum exigido (gateway público, ver websocket/gateway.ts) — para a página "Ao Vivo" e o
+  // cabeçalho do Match Tracker nunca terem de esperar pela ligação a começar do zero. Pedido
+  // explícito do utilizador ("o feed tem de ser contínuo mesmo que o usuário não esteja logado").
+  ensureLiveSocket();
   if (Bet62Api.isAuthenticated()) {
     await loadProfile();
   }
