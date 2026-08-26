@@ -3766,16 +3766,45 @@ async function renderTimeline(e) {
 // apostas de referência).
 const MARKET_FILTER_CATEGORIES = {
   football: [
-    { label: "1º Tempo", test: (m) => /1st half|first half|half.?time|\bht\b/i.test(m) && !/2nd|second/i.test(m) },
-    { label: "2º Tempo", test: (m) => /2nd half|second half/i.test(m) },
-    { label: "Escanteios", test: (m) => /corner/i.test(m) },
-    { label: "Cartões", test: (m) => /\bcard|booking/i.test(m) },
-    { label: "Ambas Marcam", test: (m) => /both teams to score|\bbtts\b|both to score/i.test(m) },
-    { label: "Marcador", test: (m) => /goalscorer|\bscorer\b|first to score|last to score|to score first|to score last|player.*(to score|goals)/i.test(m) },
-    { label: "Placar Exato", test: (m) => /correct score|exact score/i.test(m) },
-    { label: "Handicap", test: (m) => /handicap|spread|asian/i.test(m) },
-    { label: "Mais/Menos", test: (m) => /over\/?under|total goals|\bo\/u\b/i.test(m) },
-    { label: "Resultado", test: (m) => /match odds|\b1x2\b|to win|winner|double chance|draw no bet|full time result|3.?way/i.test(m) },
+    // ==================== PRIORIDADE DE MATCH ====================
+    // Regra IMPORTANTE: .find() devolve o PRIMEIRO que bater. Por isso os mercados mais
+    // específicos (menos prováveis de falso positivo) vêm PRIMEIRO. Ordem final do user em
+    // "Todos": Resultado, Ambas Marcam, Mais/Menos, Handicap, 1ºT, 2ºT, Placar Exato,
+    // Escanteios, Cartões, Marcador, Especiais (catch-all).
+    //
+    // 🚨 REGRAS ANTI-FALSO POSITIVO 🚨
+    // Nomes como "Full Time Result HT/FT" ou "Match Odds (1st Half Available)" NÃO PODEM ser
+    // classificados como "1º Tempo" por terem a palavra "half" no texto — isso era o bug raiz
+    // que fazia Handicap/Cartões aparecer ANTES de Resultado no topo da lista.
+    // Para combater:
+    //   1. "Resultado" vem 1º na lista de categorias; regex inclui menções explícitas a
+    //      "Full Time"/"FT"/"Match Odds"/"1x2"/"3 Way"/"Winner"/"Double Chance"/"DNB" —
+    //      a maioria destes SÃO o mercado principal.
+    //   2. Regexes de "1º Tempo" / "2º Tempo" REJEITAM a string se ela mencionar
+    //      explicitamente "Full Time", "FT", "1x2", "Match Winner", "3 Way", "Result",
+    //      "Moneyline", "Draw No Bet", "Double Chance", "Both Teams", "Correct Score" em
+    //      conjunto com "half" (ou seja, o nome é um mercado "Full Time Result HT/FT" — o
+    //      "half" ali é só info adicional, não é um mercado de primeiro tempo).
+    //   3. "Ambas Marcam", "Mais/Menos", "Handicap", "Placar Exato" são testados antes dos
+    //      períodos também, por serem categorias principais.
+    { label: "Resultado", test: (m) => /match odds|\b1x2\b|to win\b|match winner|\bwinner\b|double chance|draw no bet|\bdnb\b|full time result|full.?time.?1x2|ft\s*result|3.?way|money.?line|three.?way|resultado\s*final|tempo\s*inteiro/i.test(m) },
+    { label: "Ambas Marcam", test: (m) => /both teams to score|\bbtts\b|both to score|ambas?\s+(marcam|equipas?\s+marcam)/i.test(m) },
+    { label: "Mais/Menos", test: (m) => /over\/?under|total (goals|points|games|runs|corners|cards)|\bo\/u\b|mais\s*\/?\s*menos/i.test(m) },
+    { label: "Handicap", test: (m) => /handicap|\bspread\b|asian handicap|\bah\b/i.test(m) },
+    { label: "1º Tempo", test: (m) => {
+      if (!/1st half|first half|half.?time|\bht\b|\b1t\b/i.test(m)) return false;
+      if (/(full time|\bft\b|\b1x2\b|match winner|3.?way|three.?way|\bresult\b|money.?line|draw no bet|double chance|both teams|correct score|btts)/i.test(m)) return false;
+      return true;
+    }},
+    { label: "2º Tempo", test: (m) => {
+      if (!/2nd half|second half|\b2ht\b|\b2t\b/i.test(m)) return false;
+      if (/(full time|\bft\b|\b1x2\b|match winner|3.?way|three.?way|\bresult\b|money.?line|draw no bet|double chance|both teams|correct score|btts)/i.test(m)) return false;
+      return true;
+    }},
+    { label: "Placar Exato", test: (m) => /correct score|exact score|placar\s*exato|resultado\s*exato/i.test(m) },
+    { label: "Escanteios", test: (m) => /\bcorner|\bcantos?\b/i.test(m) },
+    { label: "Cartões", test: (m) => /\bcard|booking|cart[õo]e?s/i.test(m) },
+    { label: "Marcador", test: (m) => /goalscorer|\bscorer\b|first to score|last to score|to score first|to score last|player.*(to score|goals)|marcad(or|ora)/i.test(m) },
   ],
   basketball: [
     { label: "1º Quarto", test: (m) => /1st quarter|first quarter|\bq1\b/i.test(m) },
@@ -3840,6 +3869,7 @@ const FOOTBALL_FILTER_DISPLAY_ORDER = [
   "Escanteios",
   "Cartões",
   "Marcador",
+  "Especiais",
 ];
 
 let selectedMarketFilter = null; // null = "Todos"
@@ -4201,14 +4231,16 @@ function filterMarketGroups(e) {
 function normalSelectionRowHtml(e, group, isLive, withLine) {
   const rows = orderedSelectionEntries(group.selections)
     .map(([label, sel]) => {
-      const labelPt = withLine ? overUnderButtonLabel(label, group.line) : translateSelectionLabel(label);
+      const labelPt = withLine ? overUnderButtonLabel(group.market, group.line, label, translateSelectionLabel(label)) : translateSelectionLabel(label);
+      const selkey = `${group.market}||${label}`;
+      const oddVal = Number.isFinite(sel.odd) ? Number(sel.odd) : 0;
       // Seleção suspensa pelo bookmaker (isActive:false — ex: durante uma revisão VAR ou logo
       // após um penálti/cartão, ver LiveSelection em types.ts): mostra-se visível mas sem onclick,
       // em vez de desaparecer ou continuar clicável com uma odd desatualizada. Mesmo tratamento
       // para uma odd inválida (ex: NaN de uma transição de deploy com JS antigo em cache) — nunca
       // deixar clicar numa aposta sem preço válido.
       if (!sel.isActive || !Number.isFinite(sel.odd)) {
-        return `<div class="selection-btn suspended">
+        return `<div class="selection-btn suspended" data-selkey="${attrJson(selkey)}" data-odd="${oddVal}">
           <span class="sel-label">${labelPt}</span><span class="sel-odd">Suspenso</span>
         </div>`;
       }
@@ -4218,7 +4250,7 @@ function normalSelectionRowHtml(e, group, isLive, withLine) {
       // Setas de subida/descida só em Ao Vivo — no pré-jogo o valor não costuma mudar ao ponto de
       // justificar o indicador, e não foi pedido para essa página.
       const arrow = isLive ? oddsArrowHtml(key, sel.odd) : "";
-      return `<div class="selection-btn ${picked ? "picked" : ""}" onclick='toggleSelection(${attrJson(key)}, ${attrJson(selection)})'>
+      return `<div class="selection-btn ${picked ? "picked" : ""}" data-selkey="${attrJson(selkey)}" data-odd="${oddVal}" onclick='toggleSelection(${attrJson(key)}, ${attrJson(selection)})'>
         <span class="sel-label">${labelPt}</span><span class="sel-odd">${sel.odd.toFixed(2)}${arrow}</span>
       </div>`;
     })
@@ -4231,8 +4263,21 @@ function normalSelectionRowHtml(e, group, isLive, withLine) {
 // das odds aparece Mais de 0.5" em vez de só "MAIS DE" com a linha só no título de fora (que deixa
 // de existir quando há mais do que uma linha). Quando o rótulo da seleção já traz o número (ex:
 // "Over 2.5", ou "Home -1.5" de handicap — ambos via translateSelectionLabel), não duplica.
-function overUnderButtonLabel(label, line) {
-  const translated = translateSelectionLabel(label);
+//
+// Assinatura multi-modos (seguro, aceita 2 args antigos ou 4 args novos):
+//   overUnderButtonLabel(rawLabelOrMarket, lineOrUndefined, ?rawLabel, ?translatedLabel)
+// - MODO 1 (antigo, compatibilidade): 2 args, 1º arg é a raw label, 2º é line
+// - MODO 2 (novo, para patch incremental): 4 args, 1º arg = market name (se necessário),
+//   2º arg = line, 3º arg = raw label, 4º arg = label já traduzida (precalculada, performance)
+function overUnderButtonLabel(...args) {
+  let marketOrLabel, line, rawLabel, translated;
+  if (args.length === 2) {
+    marketOrLabel = args[0]; line = args[1];
+    rawLabel = marketOrLabel;
+    translated = translateSelectionLabel(rawLabel);
+  } else {
+    marketOrLabel = args[0]; line = args[1]; rawLabel = args[2]; translated = args[3];
+  }
   if (typeof line !== "number" || /\d/.test(translated)) return translated;
   return `${translated} ${line}`;
 }
@@ -4244,10 +4289,139 @@ let marketAccordionState = { eventId: null, expanded: new Set(), initialized: fa
 function ensureMarketAccordionState(eventId) {
   if (marketAccordionState.eventId !== eventId) marketAccordionState = { eventId, expanded: new Set(), initialized: false, autoOpenedFilter: undefined };
 }
+// ============ FLUIDEZ ACORDEÕES (OTIMIZAÇÃO 2026-08-26) ============
+// Antes: toggleMarketAccordion chamava renderMarketGroups() INTEIRO a cada clique.
+// Custo: um jogo com 30 mercados → 30 acordeões reconstruídos, 200+ botões refeitos → 100-300ms
+// de UI presa num mid-range Android.
+// Agora: TENTA primeiro update DOM local (classList.toggle('open') no nó), SEM rebuildar nada.
+// Só cai no rebuild completo se o nó não existir no DOM (filtro mudou, página reiniciou).
+function findAccordionElByKey(key) {
+  const container = document.getElementById("market-groups");
+  if (!container) return null;
+  return container.querySelector(`.ml-accordion[data-mkey="${cssEscapeAttr(key)}"]`);
+}
+function cssEscapeAttr(s) {
+  return String(s).replace(/"/g, "&quot;").replace(/\\/g, "\\\\");
+}
 function toggleMarketAccordion(key) {
-  if (marketAccordionState.expanded.has(key)) marketAccordionState.expanded.delete(key);
-  else marketAccordionState.expanded.add(key);
+  const isExpanding = !marketAccordionState.expanded.has(key);
+  if (isExpanding) marketAccordionState.expanded.add(key);
+  else marketAccordionState.expanded.delete(key);
+  const el = findAccordionElByKey(key);
+  if (el) {
+    el.classList.toggle("open", isExpanding);
+    return;
+  }
   if (currentMarketEvent) renderMarketGroups(currentMarketEvent);
+}
+// Patch incremental para odds AO VIVO (10-15s cycle e refreshEvent do openMarket).
+// Antes: um update de odds fazia renderMarketGroups() completo = rebuild de TUDO.
+// Agora: percorre .selection-btn já existentes no DOM; se o dataset da odd bate, só atualiza
+// o texto e a classe `suspended`; odds mudadas de valor fazem 1 micro-flash de classe para
+// feedback visual. Qualquer anomalia (botão não encontrado, número de botões diferente) cai
+// no rebuild completo para não divergir.
+function marketSelectionButtonsSignature(container) {
+  const btns = container.querySelectorAll(".selection-btn[data-selkey]");
+  return Array.from(btns).map((b) => b.dataset.selkey).join("||");
+}
+function patchLiveMarketGroups(e) {
+  const container = document.getElementById("market-groups");
+  if (!container || !container.children.length) return false; // primeira render ainda não feita → full
+  if (selectedMarketFilter === BET_BUILDER_LABEL) return false; // BetBuilder tem pipeline próprio
+  try {
+    const expected = buildMarketDisplayGroups(e);
+    const expectedKeys = expected.map((en) => en.key).sort().join("||");
+    const actualKeys = Array.from(container.querySelectorAll(".ml-accordion[data-mkey]"))
+      .map((el) => el.dataset.mkey)
+      .sort()
+      .join("||");
+    if (expectedKeys !== actualKeys) return false; // mercados mudaram (ex: livro abriu novas categorias) → full
+
+    let anyMutated = false;
+    for (const entry of expected) {
+      const accEl = findAccordionElByKey(entry.key);
+      if (!accEl) return false;
+      const titleEl = accEl.querySelector(".ml-accordion-head > span:first-child");
+      const first = entry.lines[0];
+      const title = translateMarketDisplayName(entry.market, e.sport, Object.keys(first.selections || {}), e.home, e.away, entry.lines.length === 1 ? first.line : undefined);
+      const allSuspended = entry.lines.every((g) => !g.isActive);
+      if (titleEl) {
+        const wanted = `${title}${allSuspended ? '<span class="market-suspended-badge">Suspenso</span>' : ""}`;
+        if (titleEl.innerHTML !== wanted) { titleEl.innerHTML = wanted; anyMutated = true; }
+      }
+      const bodyEl = accEl.querySelector(".ml-accordion-body");
+      if (!bodyEl) return false;
+      const selFragments = [];
+      for (let i = 0; i < entry.lines.length; i++) {
+        const g = entry.lines[i];
+        const withLabel = entry.lines.length > 1;
+        const isFirst = i === 0;
+        const keys = Object.keys(g.selections || {});
+        if (entry.isPrimary && allSuspended) {
+          expectedSigs.push(`__primary_suspended__`);
+          selFragments.push({ kind: "suspended", label: primarySuspendedLabel(e) });
+        } else {
+          for (const k of keys) expectedSigs.push(k);
+          selFragments.push({ kind: "selections", group: g, withLabel, isFirst, market: entry.market, line: g.line });
+        }
+      }
+      const bodyBtns = bodyEl.querySelectorAll(".selection-btn");
+      if (bodyBtns.length !== expectedSigs.length) return false; // número mudou → full rebuild
+
+      let fragIdx = 0;
+      let btnIdx = 0;
+      const isLive = e._isLive || e.status === "live";
+      for (const frag of selFragments) {
+        if (frag.kind === "suspended") {
+          const btn = bodyBtns[btnIdx++];
+          if (!btn) return false;
+          const span = btn.querySelector(".sel-odd");
+          if (span && span.textContent !== frag.label) { span.textContent = frag.label; anyMutated = true; }
+          if (!btn.classList.contains("suspended")) { btn.classList.add("suspended"); anyMutated = true; }
+          continue;
+        }
+        const g = frag.group;
+        const keys = Object.keys(g.selections || {});
+        // Uma linha com N seleções corresponde a N botões consecutivos no body (ordem do HTML gerado em normalSelectionRowHtml).
+        for (const k of keys) {
+          const sel = g.selections[k];
+          const btn = bodyBtns[btnIdx++];
+          if (!btn) return false;
+          const newOdd = Number(sel.odd).toFixed(2);
+          const selLabel = translateSelectionLabel(k);
+          const oddSpan = btn.querySelector(".sel-odd");
+          const labelSpan = btn.querySelector(".sel-label");
+          const oddChanged = oddSpan && Number(btn.dataset.odd) !== Number(sel.odd);
+          if (oddSpan && oddSpan.textContent !== newOdd) {
+            oddSpan.textContent = newOdd;
+            btn.dataset.odd = String(sel.odd);
+            anyMutated = true;
+          }
+          if (labelSpan) {
+            let wantedLabel = selLabel;
+            if (frag.withLabel) {
+              const lineLabel = overUnderButtonLabel(frag.market, frag.line, k, selLabel);
+              wantedLabel = lineLabel;
+            }
+            if (labelSpan.innerHTML !== wantedLabel) { labelSpan.innerHTML = wantedLabel; anyMutated = true; }
+          }
+          const shouldSuspend = isLive && (!sel.isActive || !g.isActive);
+          if (btn.classList.toggle("suspended", shouldSuspend)) anyMutated = true;
+          if (isLive && oddChanged) {
+            btn.classList.remove("odd-flash");
+            // force reflow p/ restart da animação CSS
+            // eslint-disable-next-line no-unused-expressions
+            void btn.offsetWidth;
+            btn.classList.add("odd-flash");
+          }
+        }
+        fragIdx++;
+      }
+    }
+    return true; // patch aplicado com sucesso
+  } catch {
+    return false; // anomalia → rebuild completo
+  }
 }
 
 // Reorganiza os mercados brutos (e.odds, já filtrados pela categoria escolhida) em entradas para
@@ -4316,7 +4490,7 @@ function marketAccordionHtml(e, entry, isLive) {
       .join("");
   }
   return `
-    <div class="ml-accordion${expanded ? " open" : ""}">
+    <div class="ml-accordion${expanded ? " open" : ""}" data-mkey="${attrJson(entry.key)}">
       <div class="ml-accordion-head" onclick='toggleMarketAccordion(${attrJson(entry.key)})'>
         <span>${title}${badgeHtml}</span>
         <span class="ml-chevron">⌄</span>
@@ -4325,13 +4499,28 @@ function marketAccordionHtml(e, entry, isLive) {
     </div>`;
 }
 
-function renderMarketGroups(e) {
+function renderMarketGroups(e, _skipPatch = false) {
   const el = document.getElementById("market-groups");
+  if (!el) return;
   if (!e.odds || !e.odds.length) {
     el.innerHTML = '<div class="empty-note">Sem mercados disponíveis para este evento</div>';
     return;
   }
   ensureMarketAccordionState(e.id);
+  const isLive = e._isLive || e.status === "live";
+
+  // OTIMIZAÇÃO FLUIDEZ: tentar patch incremental antes de rebuild completo.
+  // - Apenas em AO VIVO ou quando já temos DOM renderizado anteriormente.
+  // - 90% das atualizações (odds mexem 0.01 ~ 0.03, botão suspendido/não) custam ~5ms
+  //   em vez de 50-300ms do rebuild completo.
+  // - Se houver qualquer anomalia (chaves mudaram, #botões diferente), patchLiveMarketGroups()
+  //   devolve false e fazemos o rebuild completo de segurança.
+  const shouldTryPatch = !_skipPatch && (isLive || (el.children.length && marketAccordionState.eventId === e.id));
+  if (shouldTryPatch) {
+    const patched = patchLiveMarketGroups(e);
+    if (patched) return;
+  }
+
   const entries = buildMarketDisplayGroups(e);
   if (!entries.length) {
     el.innerHTML = '<div class="empty-note">Sem mercados nesta categoria</div>';
@@ -4352,7 +4541,6 @@ function renderMarketGroups(e) {
     entries.slice(0, 5).forEach((entry) => marketAccordionState.expanded.add(entry.key));
     marketAccordionState.initialized = true;
   }
-  const isLive = e._isLive || e.status === "live";
   el.innerHTML = entries.map((entry) => marketAccordionHtml(e, entry, isLive)).join("");
 }
 

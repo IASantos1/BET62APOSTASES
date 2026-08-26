@@ -616,6 +616,11 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .selection-btn.picked .sel-odd{color:var(--red)}
 .selection-btn.suspended{cursor:not-allowed;opacity:.5;background:var(--surface2)}
 .selection-btn.suspended .sel-odd{color:var(--muted);font-style:italic;font-weight:600}
+/* Micro-feedback de odd alterada em live: flash suave (1 vez) para não agredir, mas tornar
+   visível que o preço mudou desde o último render — usado no patchLiveMarketGroups incremental.
+   !important força o restart da animação quando a classe é toggle()ada (remove+add + reflow). */
+.selection-btn.odd-flash .sel-odd{animation:odd-flash 650ms ease-out 1 !important}
+@keyframes odd-flash{0%{background:var(--gold);color:#1a1a1a;border-radius:6px}100%{background:transparent;color:var(--text)}}
 .market-suspended-badge{margin-left:8px;font-size:.62rem;font-weight:700;text-transform:uppercase;color:var(--red);background:rgba(230,48,39,.12);border-radius:6px;padding:2px 6px;letter-spacing:.03em}
 .bs-row.bs-row-suspended{opacity:.7;border-color:var(--red)}
 .bs-row.bs-row-adjusted{border-color:var(--gold)}

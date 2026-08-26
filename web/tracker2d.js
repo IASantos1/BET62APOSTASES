@@ -35,11 +35,19 @@
     canvas.style.height = "100%";
     canvas.style.display = "block";
     canvas.style.background = "#0d2815";
+    const pitchCacheCanvas = document.createElement("canvas");
     tp2d = {
       canvas,
       ctx: canvas.getContext("2d"),
       mountedIn: null,
       dpr: 1,
+      // Cache estático offscreen: relva + marcações FIFA. Re-pintado SÓ em resize.
+      // Entre updates de bola, basta drawImage(cache, 0,0) — ~15% do custo original.
+      pitchCache: pitchCacheCanvas,
+      pitchCacheCtx: pitchCacheCanvas.getContext("2d"),
+      // Chave que identifica a configuração do cache atual (tamanho + dpr + box).
+      // Se mudar, invalidamos e re-pintamos.
+      pitchCacheKey: "",
       lastEvent: null, lastPoints: [], lastCompact: false,
     };
     return tp2d;
@@ -64,6 +72,9 @@
     st.canvas.width = Math.round(w * dpr);
     st.canvas.height = Math.round(h * dpr);
     st.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Invalida o cache de marcações FIFA para ser re-pintado no próximo repaintTracker2D
+    // com o novo tamanho (tamanho do offscreen também muda).
+    st.pitchCacheKey = "";
   }
 
   window.addEventListener("resize", () => {
@@ -288,10 +299,23 @@
     const st = tp2d; if (!st || !st.mountedIn) return;
     const ctx = st.ctx;
     const cw = st.mountedIn.clientWidth, ch = st.mountedIn.clientHeight;
-    ctx.clearRect(0, 0, cw, ch);
-    ctx.fillStyle = "#0d2815"; ctx.fillRect(0, 0, cw, ch);
     const box = fitPitchBox(cw, ch);
-    drawPitchMarkings2D(ctx, box);
+    const cacheKey = `${cw}x${ch}@${st.dpr}|box:${box.x.toFixed(2)},${box.y.toFixed(2)},${box.w.toFixed(2)},${box.h.toFixed(2)}`;
+    if (st.pitchCacheKey !== cacheKey) {
+      // Redesenha relva + marcações FIFA SÓ quando o tamanho muda (resize / mount compact→full).
+      const cCache = st.pitchCache;
+      const dpr = st.dpr;
+      cCache.width = Math.round(cw * dpr);
+      cCache.height = Math.round(ch * dpr);
+      const cctx = st.pitchCacheCtx;
+      cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      cctx.clearRect(0, 0, cw, ch);
+      cctx.fillStyle = "#0d2815"; cctx.fillRect(0, 0, cw, ch);
+      drawPitchMarkings2D(cctx, box);
+      st.pitchCacheKey = cacheKey;
+    }
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.drawImage(st.pitchCache, 0, 0, cw, ch);
     const pts = st.lastPoints || [];
     if (pts.length) {
       drawTrail(ctx, box, pts.slice().reverse());
