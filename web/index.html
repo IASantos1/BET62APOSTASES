@@ -435,22 +435,6 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .ml-accordion-body{display:none;padding:0 2px 16px}
 .ml-accordion.open .ml-accordion-body{display:block}
 .ml-accordion-body .selection-row + .selection-row{margin-top:8px}
-/* Mercado "Marcador": junta Marcador a Qualquer Momento/Primeiro/Último Marcador (3 mercados
-   brutos distintos) numa única tabela por jogador — ver buildMarcadorTable() em app.js. Cada
-   célula continua a submeter o mercado/seleção EXATOS de origem, nunca um mercado sintetizado. */
-.marcador-table{width:100%}
-.marcador-head{display:flex;align-items:center;gap:6px;font-size:.6rem;text-transform:uppercase;letter-spacing:.02em;color:var(--muted);font-weight:700;padding:0 2px 6px}
-.marcador-head .mc-player{flex:1}
-.marcador-head .mc-col{flex:0 0 70px;text-align:center}
-.marcador-row{display:flex;align-items:center;gap:6px;padding:7px 2px;border-bottom:1px solid var(--border)}
-.marcador-row:last-child{border-bottom:none}
-.marcador-row.mc-extra.hidden{display:none}
-.marcador-row .mc-player{flex:1;font-weight:700;font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.marcador-row .mc-col{flex:0 0 70px}
-.marcador-odd-btn{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:6px 4px;text-align:center;font-size:.76rem;font-weight:700;cursor:pointer}
-.marcador-odd-btn.picked{border-color:var(--red);background:rgba(230,48,39,.1);color:var(--red)}
-.marcador-odd-btn.na{cursor:default;color:var(--muted);background:transparent;border-style:dashed}
-.marcador-more{text-align:center;padding:10px 2px 2px;color:var(--red);font-weight:700;font-size:.8rem;cursor:pointer}
 /* "Melhores Escolhas": combinação da Bet Builder pré-preenchida com a seleção mais provável (odd
    mais baixa) de 3 categorias reais deste jogo — nunca uma odd "boost"/promocional inventada, a
    combinada mostrada é sempre o produto real das odds atuais. Ver buildFeaturedCombo() em app.js. */
@@ -513,7 +497,11 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
   .betslip-close{display:inline-flex}
   .drawer-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:240}
   .drawer-overlay.open{display:block}
-  .betslip-fab{display:flex!important}
+  /* :not(.hidden) — sem isto, este !important ganhava sempre ao .hidden{display:none!important}
+     do boletim vazio (mesma especificidade, mas este vem depois no ficheiro), fazendo o botão
+     "0" aparecer sempre em mobile em vez de só quando há seleções — reportado pelo utilizador
+     como um círculo vermelho a tapar a lista de mercados mesmo com o boletim vazio. */
+  .betslip-fab:not(.hidden){display:flex!important}
   /* Ecrã estreito: o menu superior volta para a sua própria linha, de ponta a ponta, tal
      como antes de ficar lado a lado com a marca (isso só cabe em Web). */
   .top-nav{flex-basis:100%;justify-content:flex-start;order:3;padding:10px 12px;margin:0 -16px;background:var(--bg);border-bottom:1px solid var(--border)}
@@ -1029,7 +1017,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 <!-- ========== AO VIVO ========== -->
 <div id="page-aovivo" class="page hidden">
     <div class="section-title">AO VIVO</div>
-    <div class="conn-badge" id="ws-status">A conectar ao feed ao vivo…</div>
+    <div class="conn-badge" id="ws-status">🟢 Ao vivo</div>
     <div class="live-list" id="live-list"></div>
 </div>
 
