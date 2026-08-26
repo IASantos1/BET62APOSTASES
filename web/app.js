@@ -598,11 +598,17 @@ function primarySuspendedLabel(e) {
 // pedido explícito para NUNCA sumirem: agora mostram-se sempre, ativas clicáveis e suspensas
 // como bloco cinzento "Suspenso" (mesmo tratamento já usado na página do mercado, ver
 // renderMarketGroups acima) em vez de desaparecer.
+//
+// Mesmo tratamento agora também para quando NÃO existe grupo nenhum ainda (e.odds vazio) — bug
+// real reportado com print: um jogo passava a "Ao Vivo" ~2 min antes do início (placar 0-0 já
+// visível, correto) mas com o cartão sem odds nenhumas nem aviso, como se o mercado nem
+// existisse — o utilizador pediu explicitamente para nunca ficar "assim sem odds", entrar sempre
+// pelo menos como "Suspenso" até o bookmaker abrir o mercado.
+const SUSPENDED_QUICK_ODDS_HTML = (e) => `<div class="lc-odds"><div class="suspended" style="flex:3">${primarySuspendedLabel(e)}</div></div>`;
 function quickOddsHtml(e, group, isLive) {
-  if (!group?.selections) return "";
-  if (!group.isActive) return `<div class="lc-odds"><div class="suspended" style="flex:3">${primarySuspendedLabel(e)}</div></div>`;
+  if (!group?.selections || !group.isActive) return SUSPENDED_QUICK_ODDS_HTML(e);
   const entries = orderedSelectionEntries(group.selections).slice(0, 3);
-  if (!entries.length) return "";
+  if (!entries.length) return SUSPENDED_QUICK_ODDS_HTML(e);
   return `<div class="lc-odds">${entries
     .map(([label, sel]) => {
       const labelPt = translateSelectionLabel(label);
@@ -2561,14 +2567,16 @@ function renderMatchTracker(e) {
   const hasScore = e.homeScore !== undefined && e.awayScore !== undefined;
   const showVisual = e.sport === "football";
   el.innerHTML = `
-    <div class="mt-teams-top">
-      <div class="mt-team-name">${e.home}</div>
-      <div class="mt-team-name away">${e.away}</div>
-    </div>
-    <div class="mt-scoreboard">
-      <div class="mt-live"><span class="dot"></span> AO VIVO</div>
-      ${hasScore ? `<div class="mt-score">${e.homeScore} - ${e.awayScore}</div>` : '<div class="mt-vs-label">vs</div>'}
-      <div class="mt-period${clockClass}">${e.minuteOrPeriod}</div>
+    <div id="mt-basic-header">
+      <div class="mt-teams-top">
+        <div class="mt-team-name">${e.home}</div>
+        <div class="mt-team-name away">${e.away}</div>
+      </div>
+      <div class="mt-scoreboard">
+        <div class="mt-live"><span class="dot"></span> AO VIVO</div>
+        ${hasScore ? `<div class="mt-score">${e.homeScore} - ${e.awayScore}</div>` : '<div class="mt-vs-label">vs</div>'}
+        <div class="mt-period${clockClass}">${e.minuteOrPeriod}</div>
+      </div>
     </div>
     ${showVisual ? '<div class="mt-pulse" id="mt-pulse"></div>' : ""}
     <div class="mt-actions">
@@ -2583,15 +2591,24 @@ function renderMatchTracker(e) {
 // ballCoordinates), o cabeçalho mostra o mini campo em vez do gráfico de eventos; só cai para o
 // gráfico quando não há essa cobertura para este jogo. A decisão depende de já termos recebido
 // uma resposta real da API (trackerBallState.hasCoverage), não de uma suposição.
+//
+// O mini campo já traz o seu próprio cabeçalho embutido (relógio + equipas + placar + AO VIVO,
+// ver pitchHeaderHtml) — por isso o bloco #mt-basic-header (nomes/placar separados, por cima do
+// mini campo) fica escondido quando o mini campo está ativo, para não duplicar a mesma informação
+// duas vezes (bug real reportado com print, marcado com um X pelo utilizador). Continua visível
+// quando cai para o gráfico de eventos, que não tem esse cabeçalho próprio.
 function renderMatchHeaderVisual(e) {
   const el = document.getElementById("mt-pulse");
   if (!el) return;
+  const basicHeader = document.getElementById("mt-basic-header");
   const hasCoverage = trackerBallState.eventId === e.id && trackerBallState.hasCoverage;
   if (hasCoverage) {
     if (!el.classList.contains("mt-mini-pitch")) el.classList.add("mt-mini-pitch");
+    if (basicHeader) basicHeader.classList.add("hidden");
     renderPitchInto(el, trackerBallState.points, e, { compact: true });
   } else {
     el.classList.remove("mt-mini-pitch");
+    if (basicHeader) basicHeader.classList.remove("hidden");
     renderMatchPulseTrack(e);
     refreshMatchPulseIfNeeded(e);
   }
@@ -2699,6 +2716,14 @@ function renderTrackerHeader(e) {
   document.getElementById("tracker-score").textContent =
     e.homeScore !== undefined && e.awayScore !== undefined ? `${e.homeScore} - ${e.awayScore}` : "vs";
 }
+// O painel do mini campo (renderPitchInto) já traz o seu próprio cabeçalho (relógio + equipas +
+// placar), por isso .tracker-teams (linha de texto simples no topo do modal) fica escondida
+// sempre que o painel aparece — só volta a mostrar-se quando o jogo não tem futebol ao vivo (sem
+// campo nenhum para desenhar), mesmo raciocínio já aplicado a #mt-basic-header no cabeçalho.
+function setTrackerTeamsRowVisible(visible) {
+  const row = document.querySelector("#tracker-modal .tracker-teams");
+  if (row) row.classList.toggle("hidden", !visible);
+}
 // Chamado em todo render do Match Tracker no cabeçalho (WS/poll), independentemente de o modal
 // estar aberto — o cabeçalho precisa dos mesmos dados para decidir entre mini campo e gráfico.
 async function refreshBallPositionIfNeeded(e, force) {
@@ -2707,6 +2732,7 @@ async function refreshBallPositionIfNeeded(e, force) {
   if (modalOpen) renderTrackerHeader(e);
   if (!trackerIsLiveFootball(e)) {
     if (modalOpen) {
+      setTrackerTeamsRowVisible(true);
       const wrap = document.getElementById("tracker-pitch-wrap");
       if (wrap) wrap.innerHTML = '<div class="empty-note">Posição da bola disponível só para jogos de futebol ao vivo</div>';
     }
@@ -2715,7 +2741,10 @@ async function refreshBallPositionIfNeeded(e, force) {
   if (trackerBallState.eventId !== e.id) trackerBallState = { eventId: e.id, points: [], fetchedAt: 0, hasCoverage: false };
   const now = Date.now();
   if (!force && now - trackerBallState.fetchedAt < TRACKER_BALL_REFRESH_MS) {
-    if (modalOpen) renderPitchInto(document.getElementById("tracker-pitch-wrap"), trackerBallState.points, e, { compact: false });
+    if (modalOpen) {
+      setTrackerTeamsRowVisible(false);
+      renderPitchInto(document.getElementById("tracker-pitch-wrap"), trackerBallState.points, e, { compact: false });
+    }
     return;
   }
   trackerBallState.fetchedAt = now;
@@ -2730,6 +2759,7 @@ async function refreshBallPositionIfNeeded(e, force) {
   if (currentMarketEvent && currentMarketEvent.id === e.id) {
     renderMatchHeaderVisual(e);
     if (modal && modal.classList.contains("open")) {
+      setTrackerTeamsRowVisible(false);
       renderPitchInto(document.getElementById("tracker-pitch-wrap"), trackerBallState.points, e, { compact: false });
     }
   }
@@ -2777,6 +2807,72 @@ function detectNewGoal(e) {
   trackerLastGoalCount.count = goals.length;
   return null;
 }
+// Deriva a parte do jogo (1ª/2ª parte/prorrogação) a partir do minuto real já usado no resto da
+// app (currentMatchMinute) — não é um campo confirmado à parte de nenhum provedor, é a mesma
+// leitura direta que a linha "45'"/"67'" já mostrada no relógio, só arredondada às faixas normais
+// de um jogo de futebol (0-45, 45-90, 90+). Nunca inventa intervalo/prorrogação sem o minuto real
+// já apontar para lá.
+function deriveHalfLabel(e) {
+  const minute = currentMatchMinute(e);
+  if (minute === null) return null;
+  if (minute <= 45) return "1ª PARTE";
+  if (minute <= 90) return "2ª PARTE";
+  return "PRORROGAÇÃO";
+}
+// Cabeçalho embutido no próprio painel do mini campo (relógio + equipas + placar + AO VIVO),
+// pedido explícito do utilizador com uma referência visual — cores da própria app (dourado=casa,
+// branco=fora, mesma convenção já usada no gráfico de eventos), nunca as cores da imagem de
+// referência. Substitui o bloco #mt-basic-header separado que ficava duplicado por cima do mini
+// campo (ver renderMatchHeaderVisual/setTrackerTeamsRowVisible).
+function pitchHeaderHtml(e) {
+  const hasScore = e.homeScore !== undefined && e.awayScore !== undefined;
+  const half = deriveHalfLabel(e);
+  const clockClass = isClockMissing(e) ? " clock-missing" : "";
+  return `
+    <div class="tp-header-bar">
+      <div class="tp-clock-badge${clockClass}">${e.minuteOrPeriod || "-"}</div>
+      <div class="tp-team-cluster">
+        <div class="tp-team-bar home"><span class="tp-team-dot"></span>${e.home}</div>
+        <div class="tp-score-block">${hasScore ? `${e.homeScore} - ${e.awayScore}` : "vs"}</div>
+        <div class="tp-team-bar away">${e.away}<span class="tp-team-dot"></span></div>
+      </div>
+      <div class="tp-live-badge"><span class="dot"></span>AO VIVO</div>
+    </div>
+    ${half ? `<div class="tp-period-pill">${half}</div>` : ""}`;
+}
+// Ícone da bola pedido pelo utilizador com uma referência visual (bola de futebol a sério, não um
+// ponto sólido) — só a posição mais recente usa este ícone; o rasto atrás dela continua como
+// pontos dourados a desvanecer (mesma lógica de sempre), para não perder a visualização do
+// percurso real já construída.
+function soccerBallSvg(cx, cy, r) {
+  const petals = [0, 72, 144, 216, 288]
+    .map((deg) => {
+      const rad = (deg * Math.PI) / 180;
+      const px = (cx + Math.cos(rad) * r * 0.55).toFixed(2);
+      const py = (cy + Math.sin(rad) * r * 0.55).toFixed(2);
+      return `<circle cx="${px}" cy="${py}" r="${(r * 0.24).toFixed(2)}" fill="#111"/>`;
+    })
+    .join("");
+  return `<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="${r.toFixed(2)}" fill="#fff" stroke="#111" stroke-width="0.35"/><circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="${(r * 0.3).toFixed(2)}" fill="#111"/>${petals}`;
+}
+// Barra de estatísticas por baixo do campo, pedida pelo utilizador com uma referência visual —
+// só mostra métricas com dado real confirmado (relógio, placar, cantos já usados no resto da app
+// via e.statistics, ver redCardsHtml) e "há Xs" a partir do momento real do último pedido à API.
+// Deliberadamente SEM posse de bola: não existe sinal de posse instantânea confirmado em nenhum
+// provedor desta app (ver comentário de ballDangerZone acima) — mostrar isso seria inventar.
+function pitchStatBarHtml(e) {
+  const hasScore = e.homeScore !== undefined && e.awayScore !== undefined;
+  const homeCorners = e.statistics?.home?.corners;
+  const awayCorners = e.statistics?.away?.corners;
+  const hasCorners = Number.isFinite(homeCorners) && Number.isFinite(awayCorners);
+  const secondsAgo = trackerBallState.fetchedAt ? Math.max(0, Math.round((Date.now() - trackerBallState.fetchedAt) / 1000)) : null;
+  return `<div class="tp-stat-bar">
+    <div class="tp-stat-box">🕐 ${e.minuteOrPeriod || "-"}</div>
+    ${hasScore ? `<div class="tp-stat-box">👕 ${e.homeScore} - ${e.awayScore}</div>` : ""}
+    ${hasCorners ? `<div class="tp-stat-box">🚩 ${homeCorners}-${awayCorners} cantos</div>` : ""}
+    ${secondsAgo !== null ? `<div class="tp-stat-box">🔄 há ${secondsAgo}s</div>` : ""}
+  </div>`;
+}
 // Campo desenhado em SVG (marcações padrão + bandeiras de canto + bordas destacadas) com a bola
 // mais recente maior/sólida e os pontos anteriores encolhendo/desvanecendo atrás dela — rasto,
 // nunca uma curva ou posição inventada entre pontos reais. Camada extra de zona de perigo (pulsa
@@ -2786,19 +2882,21 @@ function detectNewGoal(e) {
 function renderPitchInto(el, points, e, opts) {
   if (!el) return;
   const compact = !!(opts && opts.compact);
+  const header = pitchHeaderHtml(e);
   if (!points.length) {
-    el.innerHTML = `<div class="empty-note">${compact ? "Sem dados de posição da bola" : "Sem dados de posição da bola disponíveis para este jogo"}</div>`;
+    el.innerHTML = `<div class="tp-panel">${header}<div class="empty-note">${compact ? "Sem dados de posição da bola" : "Sem dados de posição da bola disponíveis para este jogo"}</div></div>`;
     return;
   }
   const latest = points[0];
   const trailMarkers = points
     .map((p, i) => {
-      const cx = (p.x * 100).toFixed(2);
-      const cy = (p.y * 64).toFixed(2);
+      const cx = p.x * 100;
+      const cy = p.y * 64;
       const isLatest = i === 0;
-      const r = isLatest ? 2.1 : Math.max(0.6, 1.6 - i * 0.1);
-      const opacity = isLatest ? 1 : Math.max(0.08, 0.55 - i * 0.045);
-      return `<circle cx="${cx}" cy="${cy}" r="${r.toFixed(2)}" fill="var(--gold)" opacity="${opacity.toFixed(2)}"${isLatest ? ' stroke="#fff" stroke-width="0.4"' : ""}/>`;
+      if (isLatest) return soccerBallSvg(cx, cy, 2.3);
+      const r = Math.max(0.6, 1.6 - i * 0.1);
+      const opacity = Math.max(0.08, 0.55 - i * 0.045);
+      return `<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="${r.toFixed(2)}" fill="var(--gold)" opacity="${opacity.toFixed(2)}"/>`;
     })
     .reverse()
     .join("");
@@ -2818,31 +2916,34 @@ function renderPitchInto(el, points, e, opts) {
   }
   const goalEvent = compact ? null : detectNewGoal(e);
   el.innerHTML = `
-    <div class="tracker-pitch-frame">
-      <svg viewBox="0 0 100 64" class="tracker-pitch-svg" preserveAspectRatio="xMidYMid meet">
-        <rect x="0.5" y="0.5" width="99" height="63" rx="1.5" class="tp-border"/>
-        <line x1="50" y1="0.5" x2="50" y2="63.5" class="tp-line"/>
-        <circle cx="50" cy="32" r="8.7" class="tp-line"/>
-        <circle cx="50" cy="32" r="0.5" class="tp-spot"/>
-        <rect x="0.5" y="13" width="16" height="38" class="tp-line"/>
-        <rect x="0.5" y="23.4" width="5" height="17.2" class="tp-line"/>
-        <rect x="83.5" y="13" width="16" height="38" class="tp-line"/>
-        <rect x="94.5" y="23.4" width="5" height="17.2" class="tp-line"/>
-        <path d="M 0.5 0.5 L 3.5 0.5 A 3 3 0 0 1 0.5 3.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 0 ? " pulse" : ""}"/>
-        <path d="M 99.5 0.5 L 96.5 0.5 A 3 3 0 0 0 99.5 3.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 0 ? " pulse" : ""}"/>
-        <path d="M 0.5 63.5 L 3.5 63.5 A 3 3 0 0 0 0.5 60.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 1 ? " pulse" : ""}"/>
-        <path d="M 99.5 63.5 L 96.5 63.5 A 3 3 0 0 1 99.5 60.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 1 ? " pulse" : ""}"/>
-        ${cornerCrossSvg}
-        ${trailMarkers}
-        ${
-          goalEvent
-            ? `<foreignObject x="0" y="0" width="100" height="64"><div xmlns="http://www.w3.org/1999/xhtml" class="tp-goal-flash"><span class="tp-goal-net">⚽🥅</span><span>GOLO!</span>${goalEvent.playerName ? `<span class="tp-goal-player">${goalEvent.playerName} (${goalEvent.team})</span>` : ""}</div></foreignObject>`
-            : ""
-        }
-      </svg>
-      <div class="tp-danger-glow zone-${zone}" style="left:${glowLeftPct}%;top:${glowTopPct}%;width:${glowSize}px;height:${glowSize}px"></div>
-    </div>
-    ${compact ? "" : `<div class="tracker-pitch-caption">${latest.timer} • posição da bola (dados com atraso próprio da Sportmonks, ver documentação)</div>`}`;
+    <div class="tp-panel">
+      ${header}
+      <div class="tracker-pitch-frame">
+        <svg viewBox="0 0 100 64" class="tracker-pitch-svg" preserveAspectRatio="xMidYMid meet">
+          <rect x="0.5" y="0.5" width="99" height="63" rx="1.5" class="tp-border"/>
+          <line x1="50" y1="0.5" x2="50" y2="63.5" class="tp-line"/>
+          <circle cx="50" cy="32" r="8.7" class="tp-line"/>
+          <circle cx="50" cy="32" r="0.5" class="tp-spot"/>
+          <rect x="0.5" y="13" width="16" height="38" class="tp-line"/>
+          <rect x="0.5" y="23.4" width="5" height="17.2" class="tp-line"/>
+          <rect x="83.5" y="13" width="16" height="38" class="tp-line"/>
+          <rect x="94.5" y="23.4" width="5" height="17.2" class="tp-line"/>
+          <path d="M 0.5 0.5 L 3.5 0.5 A 3 3 0 0 1 0.5 3.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 0 ? " pulse" : ""}"/>
+          <path d="M 99.5 0.5 L 96.5 0.5 A 3 3 0 0 0 99.5 3.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 0 ? " pulse" : ""}"/>
+          <path d="M 0.5 63.5 L 3.5 63.5 A 3 3 0 0 0 0.5 60.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 1 ? " pulse" : ""}"/>
+          <path d="M 99.5 63.5 L 96.5 63.5 A 3 3 0 0 1 99.5 60.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 1 ? " pulse" : ""}"/>
+          ${cornerCrossSvg}
+          ${trailMarkers}
+          ${
+            goalEvent
+              ? `<foreignObject x="0" y="0" width="100" height="64"><div xmlns="http://www.w3.org/1999/xhtml" class="tp-goal-flash"><span class="tp-goal-net">⚽🥅</span><span>GOLO!</span>${goalEvent.playerName ? `<span class="tp-goal-player">${goalEvent.playerName} (${goalEvent.team})</span>` : ""}</div></foreignObject>`
+              : ""
+          }
+        </svg>
+        <div class="tp-danger-glow zone-${zone}" style="left:${glowLeftPct}%;top:${glowTopPct}%;width:${glowSize}px;height:${glowSize}px"></div>
+      </div>
+      ${pitchStatBarHtml(e)}
+    </div>`;
 }
 
 // ====================== ESTATÍSTICAS (Margens de Vitória / H2H / Classificação) ======================
