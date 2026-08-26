@@ -2697,6 +2697,7 @@ let trackerBallState = { eventId: null, points: [], fetchedAt: 0, hasCoverage: f
 const TRACKER_BALL_REFRESH_MS = 2500;
 function openTracker() {
   document.getElementById("tracker-modal").classList.add("open");
+  showTrackerPitchView();
   if (currentMarketEvent) {
     renderTrackerHeader(currentMarketEvent);
     refreshBallPositionIfNeeded(currentMarketEvent, true);
@@ -2705,24 +2706,109 @@ function openTracker() {
 function closeTracker() {
   document.getElementById("tracker-modal").classList.remove("open");
 }
+// Alterna Campo/Estatísticas dentro do MESMO cartão do modal (pedido explícito do utilizador, a
+// partir do modelo BET62trackerpreview.html) em vez de duas telas separadas.
+function showTrackerPitchView() {
+  document.getElementById("tracker-btn-pitch").classList.add("is-selected");
+  document.getElementById("tracker-btn-stats").classList.remove("is-selected");
+  document.getElementById("tracker-pitch-wrap").classList.remove("hidden");
+  document.getElementById("tracker-stats-wrap").classList.add("hidden");
+}
+function showTrackerStatsView() {
+  document.getElementById("tracker-btn-stats").classList.add("is-selected");
+  document.getElementById("tracker-btn-pitch").classList.remove("is-selected");
+  document.getElementById("tracker-pitch-wrap").classList.add("hidden");
+  document.getElementById("tracker-stats-wrap").classList.remove("hidden");
+  if (currentMarketEvent) renderTrackerStatsPanel(currentMarketEvent);
+}
+// Estatísticas reais da partida dentro do próprio Tracker — reaproveita EXATAMENTE a mesma fonte
+// já confirmada e usada na aba Estatísticas > Jogo (API-Football via Bet62Api.getTeamStats, ver
+// TEAM_STAT_LABELS mais abaixo), só com um visual compacto próprio deste cartão. Nunca inventa
+// uma linha para um tipo de estatística que a API não devolveu para este jogo.
+let trackerStatsLoadedForEventId = null;
+async function renderTrackerStatsPanel(e) {
+  const el = document.getElementById("tracker-stats-wrap");
+  if (!el) return;
+  if (e.sport !== "football") {
+    el.innerHTML = '<div class="empty-note">Estatísticas detalhadas disponíveis só para futebol, por agora</div>';
+    return;
+  }
+  if (trackerStatsLoadedForEventId === e.id) return;
+  el.innerHTML = '<div class="empty-note">A carregar…</div>';
+  try {
+    const { response } = await Bet62Api.getTeamStats(e.id);
+    if (!currentMarketEvent || currentMarketEvent.id !== e.id) return; // saiu deste evento entretanto
+    trackerStatsLoadedForEventId = e.id;
+    const [home, away] = response || [];
+    if (!home || !away || !home.statistics?.length) {
+      el.innerHTML = '<div class="empty-note">Sem estatísticas detalhadas disponíveis para este jogo</div>';
+      return;
+    }
+    const rows = home.statistics.map((s, i) => ({
+      label: TEAM_STAT_LABELS[s.type] || s.type,
+      homeVal: s.value ?? "-",
+      awayVal: away.statistics[i]?.value ?? "-",
+    }));
+    el.innerHTML = `
+      <div class="bt-stat-team-labels"><span>${e.home.toUpperCase()}</span><span>${e.away.toUpperCase()}</span></div>
+      ${rows.map((r) => trackerStatRowHtml(r.label, r.homeVal, r.awayVal)).join("")}`;
+  } catch {
+    el.innerHTML = '<div class="empty-note">Não foi possível carregar as estatísticas</div>';
+  }
+}
+function trackerStatRowHtml(label, homeVal, awayVal) {
+  const homeNum = parseFloat(String(homeVal).replace(",", "."));
+  const awayNum = parseFloat(String(awayVal).replace(",", "."));
+  const homeSafe = Number.isFinite(homeNum) ? Math.max(0, homeNum) : 0;
+  const awaySafe = Number.isFinite(awayNum) ? Math.max(0, awayNum) : 0;
+  const total = homeSafe + awaySafe;
+  const homePct = total > 0 ? (homeSafe / total) * 100 : 50;
+  const awayPct = 100 - homePct;
+  return `
+    <div class="bt-stat-item">
+      <div class="bt-stat-values"><b>${homeVal}</b><span>${label}</span><b>${awayVal}</b></div>
+      <div class="bt-stat-bar"><i style="width:${homePct}%"></i><i style="width:${awayPct}%"></i></div>
+    </div>`;
+}
 function trackerIsLiveFootball(e) {
   return !!e && e.sport === "football" && (e._isLive || e.status === "live") && !e._finished;
 }
+// Iniciais reais derivadas do nome da equipa (primeiras letras das duas primeiras palavras, ou os
+// 2 primeiros caracteres se só houver uma palavra) — nunca um crest/logo inventado, só texto
+// extraído do nome real do evento.
+function teamInitials(name) {
+  if (!name) return "—";
+  const words = name.trim().split(/\s+/);
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+  return name.trim().slice(0, 2).toUpperCase();
+}
+// Cabeçalho do modal — placar integrado no visual pedido pelo utilizador (modelo
+// BET62trackerpreview.html): marca redonda com iniciais + nome + placar dividido + relógio +
+// competição. O painel do mini campo (pitchHeaderHtml) deixa de repetir esta linha dentro do
+// modal (skipTeamBar) para não duplicar — mantém só a pílula de parte do jogo.
 function renderTrackerHeader(e) {
   const homeEl = document.getElementById("tracker-home");
   if (!homeEl) return;
   homeEl.textContent = e.home;
   document.getElementById("tracker-away").textContent = e.away;
-  document.getElementById("tracker-score").textContent =
-    e.homeScore !== undefined && e.awayScore !== undefined ? `${e.homeScore} - ${e.awayScore}` : "vs";
+  document.getElementById("tracker-home-mark").textContent = teamInitials(e.home);
+  document.getElementById("tracker-away-mark").textContent = teamInitials(e.away);
+  const hasScore = e.homeScore !== undefined && e.awayScore !== undefined;
+  document.getElementById("tracker-home-score").textContent = hasScore ? e.homeScore : "–";
+  document.getElementById("tracker-away-score").textContent = hasScore ? e.awayScore : "–";
+  document.getElementById("tracker-clock").textContent = e.minuteOrPeriod || "–";
+  document.getElementById("tracker-clock-badge").classList.toggle("clock-missing", isClockMissing(e));
+  document.getElementById("tracker-league").textContent = e.league || "";
 }
-// O painel do mini campo (renderPitchInto) já traz o seu próprio cabeçalho (relógio + equipas +
-// placar), por isso .tracker-teams (linha de texto simples no topo do modal) fica escondida
-// sempre que o painel aparece — só volta a mostrar-se quando o jogo não tem futebol ao vivo (sem
-// campo nenhum para desenhar), mesmo raciocínio já aplicado a #mt-basic-header no cabeçalho.
-function setTrackerTeamsRowVisible(visible) {
-  const row = document.querySelector("#tracker-modal .tracker-teams");
-  if (row) row.classList.toggle("hidden", !visible);
+// Pulsa o nome da equipa no placar do modal quando a bola real está na zona de perigo perto da
+// baliza da OUTRA equipa (mesma lógica/disciplina de pitchHeaderHtml — zona real, nunca "posse").
+function applyZonePulseToScoreboard(latest) {
+  const homeEl = document.getElementById("tracker-home");
+  const awayEl = document.getElementById("tracker-away");
+  if (!homeEl || !awayEl) return;
+  const inDanger = !!latest && ballDangerZone(latest.x) === "danger";
+  homeEl.classList.toggle("zone-pulse", inDanger && latest.x >= 0.5);
+  awayEl.classList.toggle("zone-pulse", inDanger && latest.x < 0.5);
 }
 // Chamado em todo render do Match Tracker no cabeçalho (WS/poll), independentemente de o modal
 // estar aberto — o cabeçalho precisa dos mesmos dados para decidir entre mini campo e gráfico.
@@ -2732,7 +2818,7 @@ async function refreshBallPositionIfNeeded(e, force) {
   if (modalOpen) renderTrackerHeader(e);
   if (!trackerIsLiveFootball(e)) {
     if (modalOpen) {
-      setTrackerTeamsRowVisible(true);
+      applyZonePulseToScoreboard(null);
       const wrap = document.getElementById("tracker-pitch-wrap");
       if (wrap) wrap.innerHTML = '<div class="empty-note">Posição da bola disponível só para jogos de futebol ao vivo</div>';
     }
@@ -2741,10 +2827,7 @@ async function refreshBallPositionIfNeeded(e, force) {
   if (trackerBallState.eventId !== e.id) trackerBallState = { eventId: e.id, points: [], fetchedAt: 0, hasCoverage: false };
   const now = Date.now();
   if (!force && now - trackerBallState.fetchedAt < TRACKER_BALL_REFRESH_MS) {
-    if (modalOpen) {
-      setTrackerTeamsRowVisible(false);
-      renderPitchInto(document.getElementById("tracker-pitch-wrap"), trackerBallState.points, e, { compact: false });
-    }
+    if (modalOpen) renderPitchInto(document.getElementById("tracker-pitch-wrap"), trackerBallState.points, e, { compact: false });
     return;
   }
   trackerBallState.fetchedAt = now;
@@ -2759,7 +2842,6 @@ async function refreshBallPositionIfNeeded(e, force) {
   if (currentMarketEvent && currentMarketEvent.id === e.id) {
     renderMatchHeaderVisual(e);
     if (modal && modal.classList.contains("open")) {
-      setTrackerTeamsRowVisible(false);
       renderPitchInto(document.getElementById("tracker-pitch-wrap"), trackerBallState.points, e, { compact: false });
     }
   }
@@ -2823,7 +2905,7 @@ function deriveHalfLabel(e) {
 // pedido explícito do utilizador com uma referência visual — cores da própria app (dourado=casa,
 // branco=fora, mesma convenção já usada no gráfico de eventos), nunca as cores da imagem de
 // referência. Substitui o bloco #mt-basic-header separado que ficava duplicado por cima do mini
-// campo (ver renderMatchHeaderVisual/setTrackerTeamsRowVisible).
+// campo (ver renderMatchHeaderVisual).
 //
 // "latest" (ponto mais recente da bola, ou undefined sem cobertura) só pulsa o nome da equipa
 // quando a bola está mesmo na zona de perigo real (ballDangerZone, coordenada x confirmada) —
@@ -2831,7 +2913,13 @@ function deriveHalfLabel(e) {
 // dona da baliza ameaçada (ela é quem está a pressionar ali), nunca rotulado como "posse de
 // bola": continua sem existir nenhum sinal de posse instantânea confirmado em nenhum provedor
 // desta app — isto é só "a bola está mesmo perto de que baliza agora".
-function pitchHeaderHtml(e, latest) {
+// skipTeamBar: o modal do Match Tracker agora tem o seu próprio placar rico no topo do cartão
+// (.bt-scoreboard, com marca redonda + "Casa"/"Fora" + competição — ver renderTrackerHeader), por
+// isso o painel do campo dentro do modal salta esta barra para não a duplicar; mantém só a
+// pílula de parte do jogo. O cabeçalho compacto do topo de página (sem .bt-scoreboard) continua a
+// mostrar a barra completa.
+function pitchHeaderHtml(e, latest, opts) {
+  const skipTeamBar = !!(opts && opts.skipTeamBar);
   const hasScore = e.homeScore !== undefined && e.awayScore !== undefined;
   const half = deriveHalfLabel(e);
   const clockClass = isClockMissing(e) ? " clock-missing" : "";
@@ -2840,8 +2928,9 @@ function pitchHeaderHtml(e, latest) {
     if (latest.x < 0.5) awayPulse = " zone-pulse";
     else homePulse = " zone-pulse";
   }
-  return `
-    <div class="tp-header-bar">
+  const bar = skipTeamBar
+    ? ""
+    : `<div class="tp-header-bar">
       <div class="tp-clock-badge${clockClass}">${e.minuteOrPeriod || "-"}</div>
       <div class="tp-team-cluster">
         <div class="tp-team-bar home${homePulse}"><span class="tp-team-dot"></span>${e.home}</div>
@@ -2849,8 +2938,8 @@ function pitchHeaderHtml(e, latest) {
         <div class="tp-team-bar away${awayPulse}">${e.away}<span class="tp-team-dot"></span></div>
       </div>
       <div class="tp-live-badge"><span class="dot"></span>AO VIVO</div>
-    </div>
-    ${half ? `<div class="tp-period-pill">${half}</div>` : ""}`;
+    </div>`;
+  return `${bar}${half ? `<div class="tp-period-pill">${half}</div>` : ""}`;
 }
 // Ícone da bola pedido pelo utilizador — uma bola oficial a sério (padrão Telstar, gomos +
 // costuras + brilho), não uma aproximação de pontos. Só a posição mais recente usa este ícone; o
@@ -2903,7 +2992,8 @@ function renderPitchInto(el, points, e, opts) {
   if (!el) return;
   const compact = !!(opts && opts.compact);
   const latest = points.length ? points[0] : null;
-  const header = pitchHeaderHtml(e, latest);
+  const header = pitchHeaderHtml(e, latest, { skipTeamBar: !compact });
+  if (!compact) applyZonePulseToScoreboard(latest);
   if (!points.length) {
     el.innerHTML = `<div class="tp-panel">${header}<div class="empty-note">${compact ? "Sem dados de posição da bola" : "Sem dados de posição da bola disponíveis para este jogo"}</div></div>`;
     return;
