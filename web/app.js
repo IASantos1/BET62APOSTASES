@@ -3821,13 +3821,15 @@ function renderMarketGroups(e) {
   el.innerHTML = entries.map((entry) => marketAccordionHtml(e, entry, isLive)).join("");
 }
 
-// ====================== MELHORES ESCOLHAS (combinações reais curadas por um admin) ======================
-// Pedido explícito do utilizador: combinações PRÉ-MONTADAS por um admin (não geradas
-// automaticamente pela Bet Builder), com um "Booster" REAL — a odd boostada vem sempre calculada
-// no servidor a partir das odds reais e atuais do mercado no momento da colocação (ver
-// featuredCombos/service.ts e placeFeaturedComboBet em betting/service.ts), nunca uma percentagem
-// cosmética sobre um número inventado. Várias combinações do mesmo evento aparecem lado a lado
-// num carrossel horizontal (deslizar), como na referência visual enviada.
+// ====================== MELHORES ESCOLHAS (combinações geradas automaticamente) ======================
+// Pedido explícito do utilizador: o próprio sistema monta as combinações (não a Bet Builder — são
+// mercados extra, incluindo Marcador/Cantos, que o Bet Builder não usa), seguindo os modelos das
+// referências visuais enviadas (ver ensureAutoFeaturedCombos em featuredCombos/service.ts), com um
+// "Booster" REAL — a odd boostada vem sempre calculada no servidor a partir das odds reais e
+// atuais do mercado no momento da colocação, nunca uma percentagem cosmética sobre um número
+// inventado. Um admin ainda pode criar combinações à mão no painel (continuam a aparecer aqui
+// também) — a geração automática só preenche o que faltar. Várias combinações do mesmo evento
+// aparecem lado a lado num carrossel horizontal (deslizar), como na referência visual enviada.
 let featuredCombosState = { eventId: null, combos: [] };
 
 async function renderFeaturedCombo(e) {
