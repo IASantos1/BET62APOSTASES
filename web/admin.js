@@ -116,6 +116,15 @@ const AdminApi = (() => {
     createPromotion: (input) => request("/admin/promotions", { method: "POST", body: input }),
     updatePromotion: (id, input) => request(`/admin/promotions/${id}`, { method: "PATCH", body: input }),
 
+    listFeaturedCombos: (eventId) => request(`/admin/featured-combos${eventId ? `?eventId=${encodeURIComponent(eventId)}` : ""}`),
+    createFeaturedCombo: (input) => request("/admin/featured-combos", { method: "POST", body: input }),
+    setFeaturedComboActive: (id, active) => request(`/admin/featured-combos/${id}/active`, { method: "PATCH", body: { active } }),
+    deleteFeaturedCombo: (id) => request(`/admin/featured-combos/${id}`, { method: "DELETE" }),
+    // Endpoint público de refresh (ver openMarket() em app.js) reaproveitado aqui só como
+    // referência de leitura — mostra ao admin os mercados/seleções BRUTOS reais deste evento,
+    // para copiar o texto exato ao criar as pernas de uma combinação (têm de bater ao carácter).
+    getEventOdds: (eventId, sport) => request(`/sports/events/${encodeURIComponent(eventId)}/refresh?sport=${encodeURIComponent(sport)}`),
+
     listCasinoGames: (qs) => request(`/admin/casino/games?${qs}`),
     syncCasinoGames: () => request("/admin/casino/games/sync", { method: "POST" }),
     getCasinoAgentInfo: () => request("/admin/casino/agent-info"),
@@ -227,6 +236,9 @@ const AdminApp = (() => {
     mappingFixtures: { page: 1, limit: 20, total: 0, maxConfidence: "", unlinkedOnly: false },
     betsReview: [],
     promotions: [],
+    featuredCombos: [],
+    featuredCombosEventFilter: "",
+    featuredComboEventOddsPreview: null, // { home, away, odds } do último "Carregar mercados" no formulário
   };
 
   // --- Auth ---
@@ -318,7 +330,7 @@ const AdminApp = (() => {
   const SECTION_TITLES = {
     dashboard: "Dashboard", users: "Utilizadores", kyc: "Verificação KYC", withdrawals: "Levantamentos",
     deposits: "Depósitos", casino: "Cassino", responsible: "Jogo Responsável", mapping: "Mapeamento Pulsescore ↔ API-Football",
-    "bets-review": "Apostas em Revisão", promotions: "Promoções", audit: "Audit Log", settings: "Definições",
+    "bets-review": "Apostas em Revisão", promotions: "Promoções", "featured-combos": "Melhores Escolhas", audit: "Audit Log", settings: "Definições",
   };
   function showSection(name) {
     state.section = name;
@@ -337,6 +349,7 @@ const AdminApp = (() => {
       mapping: () => loadMappingTeams(1),
       "bets-review": loadBetsReview,
       promotions: loadPromotions,
+      "featured-combos": loadFeaturedCombos,
       audit: () => loadAudit(true),
       settings: loadSettings,
     };
@@ -942,6 +955,189 @@ const AdminApp = (() => {
         toast(err.message || "Erro ao guardar promoção", "error");
       }
     });
+  }
+
+  // --- "Melhores Escolhas" (FeaturedCombo) — combinações curadas por evento, com boost real
+  // aplicado às odds reais e atuais no momento da colocação (ver featuredCombos/service.ts). ---
+
+  const ADMIN_SPORTS = ["football", "tennis", "basketball", "ice_hockey", "mma", "baseball", "volleyball", "formula1"];
+
+  async function loadFeaturedCombos() {
+    const data = await AdminApi.listFeaturedCombos(state.featuredCombosEventFilter.trim() || undefined);
+    state.featuredCombos = data.combos;
+    renderFeaturedCombos();
+  }
+
+  function filterFeaturedCombosByEvent(value) {
+    state.featuredCombosEventFilter = value;
+    loadFeaturedCombos();
+  }
+
+  function renderFeaturedCombos() {
+    const el = document.getElementById("section-featured-combos");
+    const combos = state.featuredCombos;
+    el.innerHTML = `
+      <div class="panel">
+        <div class="toolbar">
+          <input type="text" placeholder="Filtrar por eventId (ex: sportmonks:12345)" value="${esc(state.featuredCombosEventFilter)}"
+            oninput="AdminApp.filterFeaturedCombosByEvent(this.value)" style="max-width:320px">
+          <button class="btn small" onclick="AdminApp.openFeaturedComboForm()">+ Nova combinação</button>
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Evento</th><th>Desporto</th><th>Pernas</th><th>Boost</th><th>Estado</th><th>Criada</th><th></th></tr></thead>
+          <tbody>${
+            combos.length
+              ? combos
+                  .map((c) => {
+                    const legs = (c.legs || []).map((l) => `${esc(l.market)} — ${esc(l.selection)}`).join("<br>");
+                    return `<tr>
+                <td class="mono">${esc(c.eventId)}</td>
+                <td>${esc(c.sport)}</td>
+                <td style="font-size:.78rem">${legs}</td>
+                <td class="mono">${c.boostPercent}%</td>
+                <td>${badge(c.active ? "ACTIVE" : "CLOSED")}</td>
+                <td class="mono">${fmtDate(c.createdAt)}</td>
+                <td>
+                  <button class="btn small outline" onclick='AdminApp.toggleFeaturedComboActive(${JSON.stringify(c.id)}, ${!c.active})'>${c.active ? "Desativar" : "Ativar"}</button>
+                  <button class="btn small outline" onclick='AdminApp.confirmDeleteFeaturedCombo(${JSON.stringify(c.id)})'>Eliminar</button>
+                </td>
+              </tr>`;
+                  })
+                  .join("")
+              : `<tr><td colspan="7" class="empty-note">Sem combinações configuradas</td></tr>`
+          }</tbody>
+        </table></div>
+      </div>`;
+  }
+
+  function featuredComboLegRowHtml(i, market, selection) {
+    return `<div class="detail-grid" data-leg-row="${i}" style="grid-template-columns:1fr 1fr auto;align-items:end">
+      <div class="field"><label>Mercado (nome bruto)</label><input type="text" class="fc-leg-market" value="${esc(market ?? "")}" placeholder="Ex: Fulltime Result"></div>
+      <div class="field"><label>Seleção (nome bruto)</label><input type="text" class="fc-leg-selection" value="${esc(selection ?? "")}" placeholder="Ex: 1"></div>
+      <button class="btn small outline" onclick="AdminApp.removeFeaturedComboLegRow(this)" style="margin-bottom:14px">✕</button>
+    </div>`;
+  }
+
+  function addFeaturedComboLegRow() {
+    const wrap = document.getElementById("fc-legs-wrap");
+    if (!wrap || wrap.children.length >= 4) return;
+    wrap.insertAdjacentHTML("beforeend", featuredComboLegRowHtml(wrap.children.length, "", ""));
+  }
+
+  function removeFeaturedComboLegRow(btn) {
+    const wrap = document.getElementById("fc-legs-wrap");
+    if (wrap && wrap.children.length > 2) btn.closest("[data-leg-row]").remove();
+  }
+
+  // Referência de leitura: mostra os mercados/seleções BRUTOS reais deste evento (via o mesmo
+  // endpoint público que o refresh do Match Tracker usa) para o admin copiar o texto exato — as
+  // pernas só validam se baterem ao carácter, ver priceLegsAgainstEvent() no backend.
+  async function loadFeaturedComboEventPreview() {
+    const eventId = document.getElementById("fc-eventid").value.trim();
+    const sport = document.getElementById("fc-sport").value;
+    const previewEl = document.getElementById("fc-event-preview");
+    if (!eventId) return toast("Indica o eventId primeiro", "error");
+    previewEl.innerHTML = '<div class="empty-note">A carregar…</div>';
+    try {
+      const { event } = await AdminApi.getEventOdds(eventId, sport);
+      if (!event?.odds?.length) {
+        previewEl.innerHTML = '<div class="empty-note">Sem mercados disponíveis para este evento</div>';
+        return;
+      }
+      previewEl.innerHTML = `
+        <div style="font-weight:700;margin-bottom:6px">${esc(event.home)} vs ${esc(event.away)}</div>
+        <div style="max-height:220px;overflow-y:auto;font-size:.76rem;line-height:1.6">
+          ${event.odds
+            .map(
+              (g) =>
+                `<div style="margin-bottom:6px"><b>${esc(g.market)}</b><br>${Object.keys(g.selections || {})
+                  .map((s) => `<span class="mono" style="display:inline-block;background:var(--surface2);border-radius:4px;padding:1px 5px;margin:1px">${esc(s)}</span>`)
+                  .join(" ")}</div>`
+            )
+            .join("")}
+        </div>`;
+    } catch (err) {
+      previewEl.innerHTML = `<div class="empty-note">${esc(err.message || "Não foi possível carregar os mercados")}</div>`;
+    }
+  }
+
+  function openFeaturedComboForm() {
+    openModal(
+      "Nova combinação — Melhores Escolhas",
+      `
+      <div class="detail-grid">
+        <div class="field"><label>Event ID</label><input id="fc-eventid" type="text" placeholder="Ex: sportmonks:12345"></div>
+        <div class="field"><label>Desporto</label><select id="fc-sport">${ADMIN_SPORTS.map((s) => `<option value="${s}">${s}</option>`).join("")}</select></div>
+      </div>
+      <button class="btn small outline" onclick="AdminApp.loadFeaturedComboEventPreview()" style="margin-bottom:10px">Carregar mercados deste evento</button>
+      <div id="fc-event-preview" style="margin-bottom:14px"></div>
+      <div style="font-weight:700;margin-bottom:8px">Pernas (2 a 4 — mercado + seleção têm de bater exatamente com os nomes brutos acima)</div>
+      <div id="fc-legs-wrap">${featuredComboLegRowHtml(0, "", "")}${featuredComboLegRowHtml(1, "", "")}</div>
+      <button class="btn small outline" onclick="AdminApp.addFeaturedComboLegRow()" style="margin-bottom:14px">+ Adicionar perna</button>
+      <div class="field"><label>Boost (%)</label><input id="fc-boost" type="number" step="1" min="1" max="100" value="10"></div>
+      <div class="btn-row">
+        <button class="btn green" onclick="AdminApp.submitFeaturedComboForm(this)">Criar</button>
+        <button class="btn outline" onclick="AdminApp.closeModal()">Cancelar</button>
+      </div>`
+    );
+  }
+
+  async function submitFeaturedComboForm(btn) {
+    const eventId = document.getElementById("fc-eventid").value.trim();
+    const sport = document.getElementById("fc-sport").value;
+    const boostPercent = Number(document.getElementById("fc-boost").value);
+    const legs = [...document.querySelectorAll("#fc-legs-wrap [data-leg-row]")]
+      .map((row) => ({
+        market: row.querySelector(".fc-leg-market").value.trim(),
+        selection: row.querySelector(".fc-leg-selection").value.trim(),
+      }))
+      .filter((l) => l.market && l.selection);
+
+    if (!eventId) return toast("Indica o eventId", "error");
+    if (legs.length < 2) return toast("Uma combinação precisa de pelo menos 2 pernas preenchidas", "error");
+
+    await withBusyButton(btn, async () => {
+      try {
+        await AdminApi.createFeaturedCombo({ eventId, sport, legs, boostPercent });
+        toast("Combinação criada");
+        closeModal();
+        loadFeaturedCombos();
+      } catch (err) {
+        toast(err.message || "Erro ao criar combinação", "error");
+      }
+    });
+  }
+
+  async function toggleFeaturedComboActive(id, active) {
+    try {
+      await AdminApi.setFeaturedComboActive(id, active);
+      toast(active ? "Combinação ativada" : "Combinação desativada");
+      loadFeaturedCombos();
+    } catch (err) {
+      toast(err.message || "Erro ao atualizar combinação", "error");
+    }
+  }
+
+  function confirmDeleteFeaturedCombo(id) {
+    openModal(
+      "Eliminar combinação",
+      `<p>Tem a certeza que quer eliminar esta combinação? Apostas já colocadas a partir dela não são afetadas.</p>
+      <div class="btn-row">
+        <button class="btn" onclick='AdminApp.deleteFeaturedCombo(${JSON.stringify(id)})'>Eliminar</button>
+        <button class="btn outline" onclick="AdminApp.closeModal()">Cancelar</button>
+      </div>`
+    );
+  }
+
+  async function deleteFeaturedCombo(id) {
+    try {
+      await AdminApi.deleteFeaturedCombo(id);
+      toast("Combinação eliminada");
+      closeModal();
+      loadFeaturedCombos();
+    } catch (err) {
+      toast(err.message || "Erro ao eliminar combinação", "error");
+    }
   }
 
   // --- Deposits (read-only) ---
@@ -1621,6 +1817,9 @@ const AdminApp = (() => {
     loadWithdrawals, approveWithdrawal, openRejectWithdrawal, submitRejectWithdrawal,
     loadBetsReview, settleReviewSelection,
     loadPromotions, openPromotionForm, submitPromotionForm,
+    loadFeaturedCombos, filterFeaturedCombosByEvent, openFeaturedComboForm, submitFeaturedComboForm,
+    addFeaturedComboLegRow, removeFeaturedComboLegRow, loadFeaturedComboEventPreview,
+    toggleFeaturedComboActive, confirmDeleteFeaturedCombo, deleteFeaturedCombo,
     loadDeposits,
     loadCasino, syncCasino, showCasinoAgentInfo,
     setMappingTab, loadMappingTeams, openCorrectTeam, submitCorrectTeam, testApiFootballStatus, testSportmonksStatus,

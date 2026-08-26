@@ -11,6 +11,7 @@ import { userRateLimit } from "../../lib/userRateLimit";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
 import { adminListPromotions, adminCreatePromotion, adminUpdatePromotion } from "../promotions/service";
+import { adminListFeaturedCombos, adminCreateFeaturedCombo, adminSetFeaturedComboActive, adminDeleteFeaturedCombo } from "../featuredCombos/service";
 import { getKycDocumentFile } from "../users/kycDocuments";
 import {
   getAgentInfo,
@@ -268,6 +269,53 @@ router.patch(
   asyncHandler(async (req: AuthedRequest, res) => {
     const promotion = await adminUpdatePromotion(requireParamId(req.params.id), req.body);
     res.json({ promotion });
+  })
+);
+
+// --- "Melhores Escolhas" (FeaturedCombo) — combinações curadas por evento, ver
+// featuredCombos/service.ts. legs = [{ market, selection }] tal como aparecem em LiveOdds desse
+// evento (o próprio admin confirma isso a olhar para /api/sports/live ou /prematch primeiro —
+// nenhuma validação aqui de que o mercado/seleção existem, só na hora de mostrar/apostar). ---
+
+const featuredComboLegSchema = z.object({ market: z.string().min(1), selection: z.string().min(1) });
+const featuredComboInputSchema = z.object({
+  eventId: z.string().min(1),
+  sport: z.string().min(1),
+  legs: z.array(featuredComboLegSchema).min(2).max(4),
+  boostPercent: z.number().int().min(1).max(100),
+});
+
+router.get(
+  "/featured-combos",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const eventId = typeof req.query.eventId === "string" ? req.query.eventId : undefined;
+    res.json({ combos: await adminListFeaturedCombos(eventId) });
+  })
+);
+
+router.post(
+  "/featured-combos",
+  validateBody(featuredComboInputSchema),
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const combo = await adminCreateFeaturedCombo(req.body, req.user!.id);
+    res.status(201).json({ combo });
+  })
+);
+
+router.patch(
+  "/featured-combos/:id/active",
+  validateBody(z.object({ active: z.boolean() })),
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const combo = await adminSetFeaturedComboActive(requireParamId(req.params.id), req.body.active);
+    res.json({ combo });
+  })
+);
+
+router.delete(
+  "/featured-combos/:id",
+  asyncHandler(async (req: AuthedRequest, res) => {
+    await adminDeleteFeaturedCombo(requireParamId(req.params.id));
+    res.status(204).end();
   })
 );
 
