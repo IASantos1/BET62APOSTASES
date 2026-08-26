@@ -598,11 +598,17 @@ function primarySuspendedLabel(e) {
 // pedido explícito para NUNCA sumirem: agora mostram-se sempre, ativas clicáveis e suspensas
 // como bloco cinzento "Suspenso" (mesmo tratamento já usado na página do mercado, ver
 // renderMarketGroups acima) em vez de desaparecer.
+//
+// Mesmo tratamento agora também para quando NÃO existe grupo nenhum ainda (e.odds vazio) — bug
+// real reportado com print: um jogo passava a "Ao Vivo" ~2 min antes do início (placar 0-0 já
+// visível, correto) mas com o cartão sem odds nenhumas nem aviso, como se o mercado nem
+// existisse — o utilizador pediu explicitamente para nunca ficar "assim sem odds", entrar sempre
+// pelo menos como "Suspenso" até o bookmaker abrir o mercado.
+const SUSPENDED_QUICK_ODDS_HTML = (e) => `<div class="lc-odds"><div class="suspended" style="flex:3">${primarySuspendedLabel(e)}</div></div>`;
 function quickOddsHtml(e, group, isLive) {
-  if (!group?.selections) return "";
-  if (!group.isActive) return `<div class="lc-odds"><div class="suspended" style="flex:3">${primarySuspendedLabel(e)}</div></div>`;
+  if (!group?.selections || !group.isActive) return SUSPENDED_QUICK_ODDS_HTML(e);
   const entries = orderedSelectionEntries(group.selections).slice(0, 3);
-  if (!entries.length) return "";
+  if (!entries.length) return SUSPENDED_QUICK_ODDS_HTML(e);
   return `<div class="lc-odds">${entries
     .map(([label, sel]) => {
       const labelPt = translateSelectionLabel(label);
