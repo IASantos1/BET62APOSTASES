@@ -3129,6 +3129,18 @@ function ensureTracker3D() {
   sun.castShadow = true;
   scene.add(sun);
 
+  // Piso cinzento à volta do relvado (bancada/passeio do estádio) — só decorativo, dá contexto ao
+  // campo em vez de o deixar a flutuar sozinho no fundo escuro. Fica por baixo da base do relvado
+  // (y=-0.2) para nunca disputar o mesmo plano com ele (sem z-fighting).
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(TP3_LEN + 22, TP3_WID + 22),
+    new THREE.MeshStandardMaterial({ color: 0x8c8c8c, roughness: 0.95 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
   const pitch = new THREE.Mesh(new THREE.BoxGeometry(TP3_LEN, 0.2, TP3_WID), new THREE.MeshStandardMaterial({ color: 0x1c7a34, roughness: 0.85 }));
   pitch.position.y = -0.1;
   pitch.receiveShadow = true;
