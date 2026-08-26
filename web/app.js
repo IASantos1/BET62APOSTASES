@@ -640,6 +640,11 @@ function oddsArrowHtml(key, value) {
 function showPage(page) {
   if (pageHistory[pageHistory.length - 1] !== page) pageHistory.push(page);
   closeDrawers();
+  // Sai da página de mercado: pára o motor 3D do mini campo (ver pauseTracker3D em app.js) — a
+  // cena e o <canvas> continuam vivos (nada é destruído), só o loop de animação para de correr
+  // sem estar visível a ninguém. Volta a arrancar sozinho quando renderMatchTracker é chamado de
+  // novo (mountTracker3D reativa-o).
+  if (page !== "market") pauseTracker3D();
 
   ["destaques", "profile", "esportes", "cassino", "aovivo", "promocao", "market"].forEach((p) => {
     const el = document.getElementById("page-" + p);
@@ -2705,6 +2710,9 @@ function openTracker() {
 }
 function closeTracker() {
   document.getElementById("tracker-modal").classList.remove("open");
+  // O <canvas> 3D partilhado (ver mountTracker3D) ficava preso dentro do modal — reancora-o de
+  // volta ao mini campo compacto do cabeçalho, se ainda fizer sentido mostrá-lo ali.
+  if (currentMarketEvent) renderMatchHeaderVisual(currentMarketEvent);
 }
 // Alterna Campo/Estatísticas dentro do MESMO cartão do modal (pedido explícito do utilizador, a
 // partir do modelo BET62trackerpreview.html) em vez de duas telas separadas.
@@ -2941,29 +2949,6 @@ function pitchHeaderHtml(e, latest, opts) {
     </div>`;
   return `${bar}${half ? `<div class="tp-period-pill">${half}</div>` : ""}`;
 }
-// Ícone da bola pedido pelo utilizador — uma bola oficial a sério (padrão Telstar, gomos +
-// costuras + brilho), não uma aproximação de pontos. Só a posição mais recente usa este ícone; o
-// rasto atrás dela continua como pontos dourados a desvanecer (mesma lógica de sempre), para não
-// perder a visualização do percurso real já construída. Desenhada uma vez à escala nativa (r=13.5)
-// e reaproveitada a qualquer tamanho via <g transform="translate(...) scale(...)">.
-function soccerBallSvg(cx, cy, r) {
-  const k = (r / 13.5).toFixed(3);
-  return (
-    `<g transform="translate(${cx.toFixed(2)} ${cy.toFixed(2)}) scale(${k})">` +
-    '<circle r="15" fill="#000" opacity=".2" cy="3.5"/>' +
-    '<circle r="13.5" fill="#f4f4ef"/>' +
-    '<path d="M0 -6.2 L3.6 -2.1 L2.2 3.1 L-2.2 3.1 L-3.6 -2.1Z" fill="#111"/>' +
-    '<path d="M0 -13.2 L4 -9.6 L2.5 -6 L-2.5 -6 L-4 -9.6Z" fill="#111"/>' +
-    '<path d="M10.5 -6.6 L13 -2.1 L10 1.3 L5.2 -0.2 L6 -5Z" fill="#111"/>' +
-    '<path d="M6.6 9 L10.2 6.2 L11 2 L6.4 1.2 L4 5.4Z" fill="#111"/>' +
-    '<path d="M-6.6 9 L-4 5.4 L-6.4 1.2 L-11 2 L-10.2 6.2Z" fill="#111"/>' +
-    '<path d="M-10.5 -6.6 L-6 -5 L-5.2 -0.2 L-10 1.3 L-13 -2.1Z" fill="#111"/>' +
-    '<path d="M-2.5 -6 L-5.2 -0.2 M2.5 -6 L5.2 -0.2 M2.2 3.1 L4 5.4 M-2.2 3.1 L-4 5.4 M3.6 -2.1 L6 -5 M-3.6 -2.1 L-6 -5" fill="none" stroke="#222" stroke-width=".7" opacity=".5"/>' +
-    '<circle r="13.5" fill="none" stroke="#1a1a1a" stroke-width="1.15"/>' +
-    '<ellipse cx="-4.2" cy="-5.2" rx="3.2" ry="2" fill="#fff" opacity=".32" transform="rotate(-28 -4.2 -5.2)"/>' +
-    "</g>"
-  );
-}
 // Barra de estatísticas por baixo do campo, pedida pelo utilizador com uma referência visual —
 // só mostra métricas com dado real confirmado (relógio, placar, cantos já usados no resto da app
 // via e.statistics, ver redCardsHtml) e "há Xs" a partir do momento real do último pedido à API.
@@ -2982,78 +2967,344 @@ function pitchStatBarHtml(e) {
     ${secondsAgo !== null ? `<div class="tp-stat-box">🔄 há ${secondsAgo}s</div>` : ""}
   </div>`;
 }
-// Campo desenhado em SVG (marcações padrão + bandeiras de canto + bordas destacadas) com a bola
-// mais recente maior/sólida e os pontos anteriores encolhendo/desvanecendo atrás dela — rasto,
-// nunca uma curva ou posição inventada entre pontos reais. Camada extra de zona de perigo (pulsa
-// atrás da bola) e indicador de canto (cruz tracejada animada) quando a posição real o justifica.
-// opts.compact controla só o tamanho/legenda (mini campo do cabeçalho vs modal cheio) — o desenho
-// é o mesmo, partilhado, para nunca haver duas implementações a divergir.
+
+// ====================== MOTOR 3D DO MINI CAMPO (Three.js real) ======================
+// Pedido explícito do utilizador ("vamos inserir fazer nosso mini campo em 3D mesmo para obter
+// dados reais"): substitui o campo 2D em SVG por uma cena 3D a sério (WebGL, câmara orbital),
+// ligada aos MESMOS dados reais que já alimentavam o SVG — trackerBallState.points
+// (Sportmonks ballCoordinates), ballDangerZone/isInCornerZone/nearestCorner/detectNewGoal (as
+// mesmas funções puras de sempre, só a "pintura" mudou). A biblioteca (vendor/three.bundle.min.js
+// — Three.js + OrbitControls, só os módulos usados, gerado com esbuild, sem CDN nenhum) só é
+// pedida ao servidor quando um jogo de futebol ao vivo com cobertura de posição da bola precisa
+// dela — nunca no arranque da app.
+let threeLoadPromise = null;
+function loadThreeJs() {
+  if (window.THREE) return Promise.resolve(window.THREE);
+  if (threeLoadPromise) return threeLoadPromise;
+  threeLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "vendor/three.bundle.min.js";
+    script.onload = () => (window.THREE ? resolve(window.THREE) : reject(new Error("Three.js não carregou")));
+    script.onerror = () => reject(new Error("Falha ao carregar Three.js"));
+    document.head.appendChild(script);
+  });
+  return threeLoadPromise;
+}
+
+// Dimensões do mundo 3D (unidades arbitrárias, sem relação com metros reais) — comprimento
+// (baliza-a-baliza) no eixo X, largura (linha lateral a linha lateral) no eixo Z, para a câmara
+// ficar ao lado do campo (não atrás de uma baliza) — MESMA convenção já usada em todo o resto da
+// app: casa à esquerda (x real 0 → X 3D negativo), fora à direita (x real 1 → X 3D positivo).
+const TP3_LEN = 32;
+const TP3_WID = 20;
+function tp3X(xReal) { return (xReal - 0.5) * TP3_LEN; }
+function tp3Z(yReal) { return (yReal - 0.5) * TP3_WID; }
+
+// Textura da bola gerada num <canvas> 2D (pentágono central + 5 à volta, mesmo padrão Telstar já
+// usado na versão SVG) — nunca uma imagem externa, só desenho vetorial nosso.
+function buildBallTexture(THREE) {
+  const size = 128;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#f4f4ef";
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#111";
+  function pentagon(x, y, rad, rot) {
+    ctx.beginPath();
+    for (let i = 0; i < 5; i++) {
+      const a = rot + (i / 5) * Math.PI * 2 - Math.PI / 2;
+      const px = x + Math.cos(a) * rad, py = y + Math.sin(a) * rad;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+  const cx = size / 2, cy = size / 2, r = size * 0.42;
+  pentagon(cx, cy, size * 0.13, 0);
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2 - Math.PI / 2;
+    pentagon(cx + Math.cos(a) * r * 0.62, cy + Math.sin(a) * r * 0.62, size * 0.1, a);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  if (THREE.SRGBColorSpace) texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function buildGoalMesh(THREE, xSide) {
+  const group = new THREE.Group();
+  const postMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35 });
+  const postGeo = new THREE.CylinderGeometry(0.09, 0.09, 3.2, 8);
+  const left = new THREE.Mesh(postGeo, postMat);
+  left.position.set(0, 1.6, -3.2);
+  const right = new THREE.Mesh(postGeo, postMat);
+  right.position.set(0, 1.6, 3.2);
+  const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 6.4, 8), postMat);
+  bar.rotation.z = Math.PI / 2;
+  bar.position.set(0, 3.2, 0);
+  group.add(left, right, bar);
+  const netMat = new THREE.MeshBasicMaterial({ color: 0xdddddd, transparent: true, opacity: 0.3, side: THREE.DoubleSide, wireframe: true });
+  const net = new THREE.Mesh(new THREE.BoxGeometry(1.4, 3.2, 6.4, 6, 6, 10), netMat);
+  net.position.set(xSide < 0 ? -0.7 : 0.7, 1.6, 0);
+  group.add(net);
+  group.position.x = xSide;
+  return group;
+}
+
+function buildCornerFlag(THREE, x, z) {
+  const group = new THREE.Group();
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.1, 6), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+  pole.position.y = 0.55;
+  const flag = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.2, 0.01), new THREE.MeshStandardMaterial({ color: 0xf5c842, side: THREE.DoubleSide }));
+  flag.position.set(0.18, 1, 0);
+  group.add(pole, flag);
+  group.position.set(x, 0, z);
+  return group;
+}
+
+// Marcações do campo (contorno, meio-campo, círculo central, grande/pequena área) desenhadas como
+// linhas — mesmo traçado da versão 2D anterior, só na orientação nova (comprimento no eixo X).
+function addPitchLines(THREE, scene) {
+  const mat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 });
+  function poly(points) {
+    const geo = new THREE.BufferGeometry().setFromPoints(points.map((p) => new THREE.Vector3(p[0], 0.02, p[1])));
+    scene.add(new THREE.Line(geo, mat));
+  }
+  const hl = TP3_LEN / 2, hw = TP3_WID / 2;
+  poly([[-hl, -hw], [hl, -hw], [hl, hw], [-hl, hw], [-hl, -hw]]);
+  poly([[0, -hw], [0, hw]]);
+  const circle = [];
+  for (let i = 0; i <= 48; i++) {
+    const a = (i / 48) * Math.PI * 2;
+    circle.push([Math.cos(a) * 4.3, Math.sin(a) * 4.3]);
+  }
+  poly(circle);
+  function box(xSign, len, wid) {
+    const x0 = xSign * hl, x1 = xSign * (hl - len);
+    poly([[x0, -wid / 2], [x1, -wid / 2], [x1, wid / 2], [x0, wid / 2], [x0, -wid / 2]]);
+  }
+  box(-1, 6, 10);
+  box(-1, 2.5, 5);
+  box(1, 6, 10);
+  box(1, 2.5, 5);
+}
+
+// Constrói a cena partilhada UMA ÚNICA VEZ (chamadas seguintes são no-op) — nunca dois <canvas>
+// WebGL abertos ao mesmo tempo entre o cabeçalho compacto e o modal, só o MESMO canvas
+// reaproveitado/reancorado entre os dois (ver mountTracker3D).
+let tp3 = null;
+function ensureTracker3D() {
+  if (tp3) return tp3;
+  const THREE = window.THREE;
+  if (!THREE) return null;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x05130c);
+
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
+  camera.position.set(0, 22, 26);
+  camera.lookAt(0, 0, 0);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  if (THREE.SRGBColorSpace) renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.enablePan = false;
+  controls.minDistance = 16;
+  controls.maxDistance = 46;
+  controls.maxPolarAngle = Math.PI / 2.1;
+  controls.enabled = false; // só ligado quando montado no modal cheio (ver mountTracker3D)
+  controls.update();
+
+  scene.add(new THREE.AmbientLight(0xffffff, 1.6));
+  const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+  sun.position.set(-12, 26, 10);
+  sun.castShadow = true;
+  scene.add(sun);
+
+  const pitch = new THREE.Mesh(new THREE.BoxGeometry(TP3_LEN, 0.2, TP3_WID), new THREE.MeshStandardMaterial({ color: 0x1c7a34, roughness: 0.85 }));
+  pitch.position.y = -0.1;
+  pitch.receiveShadow = true;
+  scene.add(pitch);
+  addPitchLines(THREE, scene);
+
+  scene.add(buildGoalMesh(THREE, -TP3_LEN / 2));
+  scene.add(buildGoalMesh(THREE, TP3_LEN / 2));
+  const hl = TP3_LEN / 2, hw = TP3_WID / 2;
+  scene.add(buildCornerFlag(THREE, -hl, -hw));
+  scene.add(buildCornerFlag(THREE, -hl, hw));
+  scene.add(buildCornerFlag(THREE, hl, -hw));
+  scene.add(buildCornerFlag(THREE, hl, hw));
+
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.55, 24, 24), new THREE.MeshStandardMaterial({ map: buildBallTexture(THREE), roughness: 0.4 }));
+  ball.castShadow = true;
+  scene.add(ball);
+
+  // Rasto: pool fixa de esferas reaproveitadas a cada atualização (nunca cria/destrói objetos a
+  // cada posição nova) — mesma ideia dos pontos a desvanecer da versão 2D.
+  const TRAIL_LEN = 12;
+  const trailPool = [];
+  for (let i = 0; i < TRAIL_LEN; i++) {
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), new THREE.MeshBasicMaterial({ color: 0xf5c842, transparent: true }));
+    dot.visible = false;
+    scene.add(dot);
+    trailPool.push(dot);
+  }
+
+  // Zona de perigo real — disco colorido no relvado sob a bola, cor conforme a distância real (x)
+  // à baliza mais próxima (ver ballDangerZone). Nunca rotulado como posse de bola.
+  const dangerGlow = new THREE.Mesh(new THREE.CircleGeometry(2.4, 32), new THREE.MeshBasicMaterial({ color: 0xf5c842, transparent: true, opacity: 0.3, side: THREE.DoubleSide }));
+  dangerGlow.rotation.x = -Math.PI / 2;
+  dangerGlow.position.y = 0.03;
+  dangerGlow.visible = false;
+  scene.add(dangerGlow);
+
+  // Indicador de canto real — linha tracejada da bola até à bandeira mais próxima, só quando a
+  // bola real está mesmo na zona do canto (nunca finge que um canto foi marcado).
+  const cornerLineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+  const cornerLine = new THREE.Line(cornerLineGeo, new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 0.6, gapSize: 0.4, transparent: true, opacity: 0.85 }));
+  cornerLine.visible = false;
+  scene.add(cornerLine);
+
+  tp3 = { THREE, scene, camera, renderer, controls, ball, trailPool, dangerGlow, cornerLine, running: false, rafId: null };
+  return tp3;
+}
+
+function tp3AnimateStep() {
+  if (!tp3 || !tp3.running) return;
+  tp3.controls.update();
+  tp3.renderer.render(tp3.scene, tp3.camera);
+  tp3.rafId = requestAnimationFrame(tp3AnimateStep);
+}
+// Liga (ou reancora) o <canvas> partilhado ao contentor indicado. interactive=true (só o modal
+// cheio) liga o OrbitControls a sério (arrastar/zoom); no cabeçalho compacto a câmara fica fixa —
+// mais leve, sem gestos a competir com o scroll da página.
+function mountTracker3D(container, interactive) {
+  const state = ensureTracker3D();
+  if (!state || !container) return null;
+  const canvas = state.renderer.domElement;
+  if (canvas.parentElement !== container) container.appendChild(canvas);
+  state.controls.enabled = interactive;
+  resizeTracker3D(container);
+  if (!state.running) {
+    state.running = true;
+    tp3AnimateStep();
+  }
+  return state;
+}
+function resizeTracker3D(container) {
+  if (!tp3 || !container) return;
+  const w = container.clientWidth || 1, h = container.clientHeight || 1;
+  tp3.renderer.setSize(w, h, false);
+  tp3.camera.aspect = w / h;
+  tp3.camera.updateProjectionMatrix();
+}
+window.addEventListener("resize", () => {
+  if (tp3 && tp3.renderer.domElement.parentElement) resizeTracker3D(tp3.renderer.domElement.parentElement);
+});
+// Pára o loop de animação (poupa CPU/bateria) sem destruir a cena — chamado ao sair da página de
+// mercado, para o motor não continuar a renderizar um campo que já não está visível.
+function pauseTracker3D() {
+  if (!tp3) return;
+  tp3.running = false;
+  if (tp3.rafId) cancelAnimationFrame(tp3.rafId);
+  tp3.rafId = null;
+}
+// Flash de golo — camada HTML normal por cima do <canvas> (dentro do .tp-canvas-frame onde a
+// bola está montada agora), acionada só por um golo novo e confirmado na linha do tempo real.
+function showGoalFlashOverlay(goalEvent) {
+  if (!tp3) return;
+  const frame = tp3.renderer.domElement.parentElement;
+  if (!frame) return;
+  const flash = document.createElement("div");
+  flash.className = "tp-goal-flash";
+  flash.innerHTML = `<span class="tp-goal-net">⚽🥅</span><span>GOLO!</span>${goalEvent.playerName ? `<span class="tp-goal-player">${goalEvent.playerName} (${goalEvent.team})</span>` : ""}`;
+  frame.appendChild(flash);
+  setTimeout(() => flash.remove(), 4000);
+}
+// Atualiza a posição real da bola/rasto/zona de perigo/canto/golo na cena já construída — nunca
+// recria a cena nem o <canvas>, só move objetos já existentes (ver ensureTracker3D).
+function updateTracker3DFromPoints(e, points, compact) {
+  if (!tp3 || !points.length) return;
+  const latest = points[0];
+  const bx = tp3X(latest.x), bz = tp3Z(latest.y);
+  tp3.ball.position.set(bx, 0.55, bz);
+
+  for (let i = 0; i < tp3.trailPool.length; i++) {
+    const dot = tp3.trailPool[i];
+    const p = points[i + 1];
+    if (!p) {
+      dot.visible = false;
+      continue;
+    }
+    dot.visible = true;
+    dot.position.set(tp3X(p.x), 0.28, tp3Z(p.y));
+    dot.material.opacity = Math.max(0.06, 0.5 - i * 0.045);
+    dot.scale.setScalar(Math.max(0.35, 1 - i * 0.06));
+  }
+
+  const zone = ballDangerZone(latest.x);
+  tp3.dangerGlow.visible = true;
+  tp3.dangerGlow.position.set(bx, 0.03, bz);
+  tp3.dangerGlow.material.color.setHex(zone === "danger" ? 0xe63027 : zone === "mid" ? 0xf5b428 : 0xf5c842);
+  tp3.dangerGlow.material.opacity = zone === "danger" ? 0.55 : zone === "mid" ? 0.4 : 0.28;
+
+  const inCorner = isInCornerZone(latest.x, latest.y);
+  if (inCorner) {
+    const { cx, cy } = nearestCorner(latest.x, latest.y);
+    const flagX = (cx === 0 ? -1 : 1) * (TP3_LEN / 2);
+    const flagZ = (cy === 0 ? -1 : 1) * (TP3_WID / 2);
+    const positions = tp3.cornerLine.geometry.attributes.position;
+    positions.setXYZ(0, bx, 0.05, bz);
+    positions.setXYZ(1, flagX, 0.05, flagZ);
+    positions.needsUpdate = true;
+    tp3.cornerLine.computeLineDistances();
+    tp3.cornerLine.visible = true;
+  } else {
+    tp3.cornerLine.visible = false;
+  }
+
+  if (!compact) {
+    const goalEvent = detectNewGoal(e);
+    if (goalEvent) showGoalFlashOverlay(goalEvent);
+  }
+}
+
+// Ponto de entrada partilhado entre o cabeçalho compacto (#mt-pulse) e o modal cheio
+// (#tracker-pitch-wrap) — pedido explícito do utilizador para o mini campo ser 3D a sério, ligado
+// aos mesmos dados reais que já alimentavam a versão 2D. Constrói o "chrome" HTML (cabeçalho +
+// barra de estatísticas, reaproveitados tal e qual) em torno de um .tp-canvas-frame vazio, carrega
+// o Three.js só quando é mesmo preciso, e move o MESMO <canvas> partilhado para dentro dele.
 function renderPitchInto(el, points, e, opts) {
   if (!el) return;
   const compact = !!(opts && opts.compact);
   const latest = points.length ? points[0] : null;
-  const header = pitchHeaderHtml(e, latest, { skipTeamBar: !compact });
   if (!compact) applyZonePulseToScoreboard(latest);
+  const header = pitchHeaderHtml(e, latest, { skipTeamBar: !compact });
+
   if (!points.length) {
     el.innerHTML = `<div class="tp-panel">${header}<div class="empty-note">${compact ? "Sem dados de posição da bola" : "Sem dados de posição da bola disponíveis para este jogo"}</div></div>`;
     return;
   }
-  const trailMarkers = points
-    .map((p, i) => {
-      const cx = p.x * 100;
-      const cy = p.y * 64;
-      const isLatest = i === 0;
-      if (isLatest) return soccerBallSvg(cx, cy, 2.3);
-      const r = Math.max(0.6, 1.6 - i * 0.1);
-      const opacity = Math.max(0.08, 0.55 - i * 0.045);
-      return `<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="${r.toFixed(2)}" fill="var(--gold)" opacity="${opacity.toFixed(2)}"/>`;
+
+  el.innerHTML = `<div class="tp-panel">${header}<div class="tp-canvas-frame"></div>${pitchStatBarHtml(e)}</div>`;
+  const frame = el.querySelector(".tp-canvas-frame");
+  loadThreeJs()
+    .then(() => {
+      if (!document.body.contains(frame)) return; // já saiu deste evento/página entretanto
+      mountTracker3D(frame, !compact);
+      updateTracker3DFromPoints(e, points, compact);
     })
-    .reverse()
-    .join("");
-  const zone = ballDangerZone(latest.x);
-  const glowLeftPct = (latest.x * 100).toFixed(2);
-  const glowTopPct = ((latest.y * 64) / 64 * 100).toFixed(2);
-  const glowSize = compact ? 34 : 46;
-  const inCorner = isInCornerZone(latest.x, latest.y);
-  let cornerCrossSvg = "";
-  if (inCorner) {
-    const { cx, cy } = nearestCorner(latest.x, latest.y);
-    const gx = cx === 0 ? 16 : 84;
-    const gy = 32;
-    const fx = cx * 100;
-    const fy = cy * 64;
-    cornerCrossSvg = `<line x1="${fx}" y1="${fy}" x2="${gx}" y2="${gy}" class="tp-corner-cross"/>`;
-  }
-  const goalEvent = compact ? null : detectNewGoal(e);
-  el.innerHTML = `
-    <div class="tp-panel">
-      ${header}
-      <div class="tracker-pitch-frame">
-        <svg viewBox="0 0 100 64" class="tracker-pitch-svg" preserveAspectRatio="xMidYMid meet">
-          <rect x="0.5" y="0.5" width="99" height="63" rx="1.5" class="tp-border"/>
-          <line x1="50" y1="0.5" x2="50" y2="63.5" class="tp-line"/>
-          <circle cx="50" cy="32" r="8.7" class="tp-line"/>
-          <circle cx="50" cy="32" r="0.5" class="tp-spot"/>
-          <rect x="0.5" y="13" width="16" height="38" class="tp-line"/>
-          <rect x="0.5" y="23.4" width="5" height="17.2" class="tp-line"/>
-          <rect x="83.5" y="13" width="16" height="38" class="tp-line"/>
-          <rect x="94.5" y="23.4" width="5" height="17.2" class="tp-line"/>
-          <path d="M 0.5 0.5 L 3.5 0.5 A 3 3 0 0 1 0.5 3.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 0 ? " pulse" : ""}"/>
-          <path d="M 99.5 0.5 L 96.5 0.5 A 3 3 0 0 0 99.5 3.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 0 ? " pulse" : ""}"/>
-          <path d="M 0.5 63.5 L 3.5 63.5 A 3 3 0 0 0 0.5 60.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 1 ? " pulse" : ""}"/>
-          <path d="M 99.5 63.5 L 96.5 63.5 A 3 3 0 0 1 99.5 60.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 1 ? " pulse" : ""}"/>
-          ${cornerCrossSvg}
-          ${trailMarkers}
-          ${
-            goalEvent
-              ? `<foreignObject x="0" y="0" width="100" height="64"><div xmlns="http://www.w3.org/1999/xhtml" class="tp-goal-flash"><span class="tp-goal-net">⚽🥅</span><span>GOLO!</span>${goalEvent.playerName ? `<span class="tp-goal-player">${goalEvent.playerName} (${goalEvent.team})</span>` : ""}</div></foreignObject>`
-              : ""
-          }
-        </svg>
-        <div class="tp-danger-glow zone-${zone}" style="left:${glowLeftPct}%;top:${glowTopPct}%;width:${glowSize}px;height:${glowSize}px"></div>
-      </div>
-      ${pitchStatBarHtml(e)}
-    </div>`;
+    .catch(() => {
+      if (document.body.contains(frame)) frame.innerHTML = '<div class="empty-note">Não foi possível carregar o campo 3D</div>';
+    });
 }
 
 // ====================== ESTATÍSTICAS (Margens de Vitória / H2H / Classificação) ======================

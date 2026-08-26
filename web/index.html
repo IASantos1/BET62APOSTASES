@@ -335,16 +335,10 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .mt-pulse-marker.away .mt-pulse-icon{background:#fff;border-color:var(--muted)}
 .mt-pulse-name{font-size:.56rem;font-weight:700;color:var(--muted);white-space:nowrap;max-width:64px;overflow:hidden;text-overflow:ellipsis}
 .mt-pulse-labels{display:flex;justify-content:space-between;font-size:.62rem;color:var(--muted);margin-top:2px;padding:0 2px}
-/* Match Tracker: mini campo 2D com a posição real da bola (Sportmonks ballCoordinates). Relva
-   fica sempre verde (convenção universal de campo, independente do tema claro/escuro do site) — a
-   bola usa --gold, a cor de destaque própria da app.
-   .tracker-pitch-frame com aspect-ratio corrige um bug real reportado pelo utilizador com um
-   print (a bola/rasto apareciam como manchas gigantes e distorcidas): um <svg> só com
-   width:100%;height:auto, sem width/height próprios nem aspect-ratio no contentor, deixa alguns
-   motores (WebViews/Safari mais antigos) sem forma fiável de calcular a altura a partir do
-   viewBox — o SVG acaba a renderizar num tamanho errado e tudo lá dentro sai esticado. Com
-   aspect-ratio:100/64 no contentor, o SVG (position:absolute;inset:0) fica sempre com a forma
-   certa, viewBox+preserveAspectRatio tratam do resto. */
+/* Match Tracker: mini campo 3D real (Three.js, ver ensureTracker3D em app.js) com a posição real
+   da bola (Sportmonks ballCoordinates). O <canvas> WebGL vive dentro de .tp-canvas-frame, um
+   contentor com aspect-ratio fixo — mesma técnica já comprovada noutros sítios da app para o
+   conteúdo nunca sair esticado independentemente do motor de renderização. */
 /* Modal do Match Tracker redesenhado a partir do modelo HTML que o utilizador enviou
    (BET62trackerpreview.html) — pedido explícito "usar o mesmo que mandei". Mundo visual próprio
    (verde-escuro estádio + amarelo, tipografia Plus Jakarta Sans/Space Mono), deliberadamente à
@@ -394,7 +388,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 @keyframes bt-live-pulse{0%,100%{opacity:1}50%{opacity:.4}}
 @media (prefers-reduced-motion: reduce){.bt-clock i{animation:none}}
 .bt-pitch-body{position:relative}
-/* Reaproveita .tracker-pitch-frame/.tp-panel já construídos (campo real com rasto/bola/zona de
+/* Reaproveita .tp-canvas-frame/.tp-panel já construídos (campo 3D real com rasto/bola/zona de
    perigo/canto/golo) — só o "chrome" à volta (fundo, tipografia) muda para este novo visual. */
 .bt-pitch-body .tp-header-bar,.bt-pitch-body .tp-period-pill,.bt-pitch-body .tp-stat-bar,.bt-pitch-body .tp-stat-box{background:var(--bt-panel-2)}
 .bt-pitch-body #tracker-pitch-wrap{margin:14px 16px 10px}
@@ -426,46 +420,26 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
    mesma disciplina/keyframe de .tp-team-bar.zone-pulse: zona real da bola, nunca "posse". */
 .bt-score-team strong.zone-pulse{color:var(--bt-red);animation:zone-pulse-text 1.3s ease-in-out infinite}
 @media (prefers-reduced-motion: reduce){.bt-score-team strong.zone-pulse{animation:none}}
-.tracker-pitch-frame{position:relative;width:100%;aspect-ratio:100/64;border-radius:10px;overflow:hidden}
-.tracker-pitch-svg{position:absolute;inset:0;width:100%;height:100%;display:block;background:repeating-linear-gradient(90deg,#1c7a34 0 10%,#186c2d 10% 20%)}
-.tp-line{fill:none;stroke:rgba(255,255,255,.7);stroke-width:0.5}
-.tp-border{fill:none;stroke:rgba(255,255,255,.85);stroke-width:0.8}
-.tp-spot{fill:rgba(255,255,255,.7)}
-.tp-flag{fill:var(--gold)}
-.tp-flag-pole{stroke:rgba(255,255,255,.7);stroke-width:0.35}
-/* Camada de zona de perigo — pulsa por trás da posição atual da bola, cor conforme a distância
-   real (x) à baliza mais próxima: pedido explícito do utilizador ("amarelo clarinho... amarelo
-   mais forte... vermelho ataque perigoso"). Não é posse de bola nenhuma equipa — é só a zona do
-   campo onde a bola está agora, inferida da posição real, nunca inventada. */
-.tp-danger-glow{position:absolute;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;animation:tp-pulse 1.6s ease-in-out infinite}
-@keyframes tp-pulse{0%,100%{opacity:.55;transform:translate(-50%,-50%) scale(0.9)}50%{opacity:.9;transform:translate(-50%,-50%) scale(1.15)}}
-@media (prefers-reduced-motion: reduce){.tp-danger-glow{animation:none}}
-.tp-danger-glow.zone-safe{background:radial-gradient(circle,rgba(245,200,66,.35),transparent 70%)}
-.tp-danger-glow.zone-mid{background:radial-gradient(circle,rgba(245,180,40,.55),transparent 70%)}
-.tp-danger-glow.zone-danger{background:radial-gradient(circle,rgba(230,48,39,.65),transparent 70%)}
-/* Indicador de zona de canto — pulsa a bandeira mais próxima e sugere um cruzamento com uma
-   linha tracejada animada, quando a bola real está mesmo na zona do canto (x/y confirmados nos
-   extremos, ver comentário de SportmonksBallCoordinate no backend). Não finge saber que um canto
-   foi mesmo marcado (não existe esse evento confirmado em nenhum provedor) — é só "a bola está
-   ali agora". */
-.tp-corner-cross{stroke:rgba(255,255,255,.85);stroke-width:0.6;stroke-dasharray:2 1.4;fill:none;animation:tp-corner-dash 1s linear infinite}
-@keyframes tp-corner-dash{to{stroke-dashoffset:-6.8}}
-@media (prefers-reduced-motion: reduce){.tp-corner-cross{animation:none}}
-.tp-flag.pulse{animation:tp-pulse 1s ease-in-out infinite}
+/* Match Tracker 3D real (Three.js, ver ensureTracker3D em app.js) — pedido explícito do
+   utilizador para substituir o campo 2D por um mini campo 3D a sério, ligado aos mesmos dados
+   reais (posição da bola, zona de perigo, canto, golo) já usados no 2D. O <canvas> do WebGL vive
+   dentro deste contentor com aspect-ratio fixo — mesma técnica já comprovada (não confiar só em
+   width:100%;height:auto) que corrigiu o bug real de distorção do campo 2D anterior. */
+.tp-canvas-frame{position:relative;width:100%;aspect-ratio:100/64;border-radius:10px;overflow:hidden;background:#04100a}
+.tp-canvas-frame canvas{position:absolute;inset:0;width:100%!important;height:100%!important;display:block;touch-action:none}
 /* Flash de golo — sobrepõe o campo por alguns segundos quando um golo novo e confirmado aparece
-   na linha do tempo real do jogo (nunca antecipado/inventado). */
-.tp-goal-flash{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;background:rgba(12,12,14,.72);color:#fff;font-family:'Bebas Neue',sans-serif;font-size:1.6rem;letter-spacing:1px;opacity:0;pointer-events:none;animation:tp-goal-flash 4s ease-in-out}
+   na linha do tempo real do jogo (nunca antecipado/inventado); agora uma camada HTML normal por
+   cima do <canvas> em vez de <foreignObject> dentro de um SVG. */
+.tp-goal-flash{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;background:rgba(12,12,14,.72);color:#fff;font-family:'Bebas Neue',sans-serif;font-size:1.6rem;letter-spacing:1px;opacity:0;pointer-events:none;animation:tp-goal-flash 4s ease-in-out}
 @keyframes tp-goal-flash{0%{opacity:0}8%{opacity:1}80%{opacity:1}100%{opacity:0}}
 .tp-goal-flash .tp-goal-net{font-size:2.6rem;animation:tp-goal-bounce 0.6s ease-in-out 2}
 @keyframes tp-goal-bounce{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(6px) scale(1.15)}}
 .tp-goal-flash .tp-goal-player{font-family:'DM Sans',sans-serif;font-size:.8rem;font-weight:700;letter-spacing:0}
-.tracker-pitch-caption{text-align:center;color:var(--muted);font-size:.68rem;margin-top:8px}
 /* Mini campo embutido no cabeçalho ao vivo (ver renderMatchTracker) — versão mais compacta do
-   mesmo campo, mostrado em vez do gráfico de eventos quando este jogo tem cobertura real de
-   posição da bola; o gráfico continua a ser a alternativa para jogos sem essa cobertura. */
+   mesmo campo 3D, mostrado em vez do gráfico de eventos quando este jogo tem cobertura real de
+   posição da bola; o gráfico continua a ser a alternativa para jogos sem essa cobertura. Câmara
+   fixa aqui (sem OrbitControls) — só o modal cheio deixa arrastar/rodar. */
 .mt-mini-pitch{margin-top:12px;padding-top:0;border-top:none}
-.mt-mini-pitch .tracker-pitch-frame{max-width:100%}
-.mt-mini-pitch .tracker-pitch-caption{margin-top:6px}
 /* Painel do Match Tracker pedido pelo utilizador com uma referência visual: cabeçalho próprio
    embutido (relógio + equipas + placar + AO VIVO) por cima do campo, em vez do bloco separado
    .mt-teams-top/.mt-scoreboard que ficava duplicado por cima do mini campo (marcado com um X num
@@ -474,7 +448,8 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
    app (dourado=casa, branco=fora, mesma convenção já usada no gráfico de eventos), nunca as cores
    da imagem de referência. */
 .tp-panel{border-radius:10px;overflow:hidden}
-.tp-panel .tracker-pitch-frame{border-radius:0}
+.tp-panel .tp-canvas-frame{border-radius:0}
+.tp-canvas-note{position:absolute;left:8px;bottom:6px;z-index:2;color:rgba(255,255,255,.4);font-family:'JetBrains Mono','SF Mono',Consolas,monospace;font-size:.55rem;letter-spacing:.03em;pointer-events:none}
 .tp-header-bar{display:flex;align-items:center;gap:8px;background:#0e1210;padding:8px 10px;color:#fff}
 .tp-clock-badge{background:rgba(255,255,255,.1);border-radius:6px;padding:3px 8px;font-family:'Bebas Neue',sans-serif;font-size:.85rem;letter-spacing:.5px;white-space:nowrap;flex-shrink:0}
 .tp-clock-badge.clock-missing{color:var(--red)}
