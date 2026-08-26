@@ -320,26 +320,74 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
    em nenhum provedor usado nesta app. */
 .mt-pulse{margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
 .mt-pulse-track{position:relative;height:58px}
-.mt-pulse-line{position:absolute;left:2px;right:2px;top:50%;height:2px;background:var(--surface2);border-radius:2px;transform:translateY(-50%)}
+/* Linha central pontilhada — acima dela é sempre casa (amarelo), abaixo é sempre fora (branco),
+   pedido explícito do utilizador. Pontilhado via repeating-linear-gradient (é uma div, não uma
+   <hr>/borda real). */
+.mt-pulse-line{position:absolute;left:2px;right:2px;top:50%;height:1px;background:repeating-linear-gradient(90deg,var(--border) 0 5px,transparent 5px 9px);transform:translateY(-50%)}
 .mt-pulse-ht{position:absolute;left:50%;top:8px;bottom:8px;width:1px;background:var(--border)}
 .mt-pulse-now{position:absolute;top:4px;bottom:4px;width:2px;border-radius:2px;background:var(--red)}
 .mt-pulse-marker{position:absolute;top:50%;display:flex;flex-direction:column;align-items:center;gap:2px;transform:translate(-50%,-100%);margin-top:-5px}
 .mt-pulse-marker.away{flex-direction:column-reverse;transform:translate(-50%,0);margin-top:5px}
-.mt-pulse-icon{width:20px;height:20px;border-radius:50%;background:var(--surface);border:1.5px solid var(--red);display:flex;align-items:center;justify-content:center;font-size:.66rem;line-height:1}
-.mt-pulse-marker.away .mt-pulse-icon{border-color:var(--gold)}
+.mt-pulse-icon{width:20px;height:20px;border-radius:50%;background:var(--surface);border:1.5px solid var(--gold);display:flex;align-items:center;justify-content:center;font-size:.66rem;line-height:1}
+/* Fora = "branco" pedido pelo utilizador — preenchimento branco em vez de borda branca, que
+   ficaria invisível no tema claro (fundo já é branco); o anel em --muted garante contraste nos
+   dois temas. */
+.mt-pulse-marker.away .mt-pulse-icon{background:#fff;border-color:var(--muted)}
 .mt-pulse-name{font-size:.56rem;font-weight:700;color:var(--muted);white-space:nowrap;max-width:64px;overflow:hidden;text-overflow:ellipsis}
 .mt-pulse-labels{display:flex;justify-content:space-between;font-size:.62rem;color:var(--muted);margin-top:2px;padding:0 2px}
 /* Match Tracker: mini campo 2D com a posição real da bola (Sportmonks ballCoordinates). Relva
    fica sempre verde (convenção universal de campo, independente do tema claro/escuro do site) — a
-   bola usa --gold, a cor de destaque própria da app. */
+   bola usa --gold, a cor de destaque própria da app.
+   .tracker-pitch-frame com aspect-ratio corrige um bug real reportado pelo utilizador com um
+   print (a bola/rasto apareciam como manchas gigantes e distorcidas): um <svg> só com
+   width:100%;height:auto, sem width/height próprios nem aspect-ratio no contentor, deixa alguns
+   motores (WebViews/Safari mais antigos) sem forma fiável de calcular a altura a partir do
+   viewBox — o SVG acaba a renderizar num tamanho errado e tudo lá dentro sai esticado. Com
+   aspect-ratio:100/64 no contentor, o SVG (position:absolute;inset:0) fica sempre com a forma
+   certa, viewBox+preserveAspectRatio tratam do resto. */
 .tracker-box{max-width:480px}
 .tracker-body{padding:16px}
 .tracker-teams{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700;font-size:.85rem;margin-bottom:12px}
 .tracker-teams #tracker-score{font-family:'Bebas Neue',sans-serif;font-size:1.3rem;color:var(--gold)}
-.tracker-pitch-svg{width:100%;height:auto;display:block;border-radius:10px;background:repeating-linear-gradient(90deg,#1c7a34 0 10%,#186c2d 10% 20%)}
-.tp-line{fill:none;stroke:rgba(255,255,255,.55);stroke-width:0.4}
-.tp-spot{fill:rgba(255,255,255,.55)}
+.tracker-pitch-frame{position:relative;width:100%;aspect-ratio:100/64;border-radius:10px;overflow:hidden}
+.tracker-pitch-svg{position:absolute;inset:0;width:100%;height:100%;display:block;background:repeating-linear-gradient(90deg,#1c7a34 0 10%,#186c2d 10% 20%)}
+.tp-line{fill:none;stroke:rgba(255,255,255,.7);stroke-width:0.5}
+.tp-border{fill:none;stroke:rgba(255,255,255,.85);stroke-width:0.8}
+.tp-spot{fill:rgba(255,255,255,.7)}
+.tp-flag{fill:var(--gold)}
+.tp-flag-pole{stroke:rgba(255,255,255,.7);stroke-width:0.35}
+/* Camada de zona de perigo — pulsa por trás da posição atual da bola, cor conforme a distância
+   real (x) à baliza mais próxima: pedido explícito do utilizador ("amarelo clarinho... amarelo
+   mais forte... vermelho ataque perigoso"). Não é posse de bola nenhuma equipa — é só a zona do
+   campo onde a bola está agora, inferida da posição real, nunca inventada. */
+.tp-danger-glow{position:absolute;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;animation:tp-pulse 1.6s ease-in-out infinite}
+@keyframes tp-pulse{0%,100%{opacity:.55;transform:translate(-50%,-50%) scale(0.9)}50%{opacity:.9;transform:translate(-50%,-50%) scale(1.15)}}
+@media (prefers-reduced-motion: reduce){.tp-danger-glow{animation:none}}
+.tp-danger-glow.zone-safe{background:radial-gradient(circle,rgba(245,200,66,.35),transparent 70%)}
+.tp-danger-glow.zone-mid{background:radial-gradient(circle,rgba(245,180,40,.55),transparent 70%)}
+.tp-danger-glow.zone-danger{background:radial-gradient(circle,rgba(230,48,39,.65),transparent 70%)}
+/* Indicador de zona de canto — pulsa a bandeira mais próxima e sugere um cruzamento com uma
+   linha tracejada animada, quando a bola real está mesmo na zona do canto (x/y confirmados nos
+   extremos, ver comentário de SportmonksBallCoordinate no backend). Não finge saber que um canto
+   foi mesmo marcado (não existe esse evento confirmado em nenhum provedor) — é só "a bola está
+   ali agora". */
+.tp-corner-cross{stroke:rgba(255,255,255,.85);stroke-width:0.6;stroke-dasharray:2 1.4;fill:none;animation:tp-corner-dash 1s linear infinite}
+@keyframes tp-corner-dash{to{stroke-dashoffset:-6.8}}
+@media (prefers-reduced-motion: reduce){.tp-corner-cross{animation:none}}
+.tp-flag.pulse{animation:tp-pulse 1s ease-in-out infinite}
+/* Flash de golo — sobrepõe o campo por alguns segundos quando um golo novo e confirmado aparece
+   na linha do tempo real do jogo (nunca antecipado/inventado). */
+.tp-goal-flash{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;background:rgba(12,12,14,.72);color:#fff;font-family:'Bebas Neue',sans-serif;font-size:1.6rem;letter-spacing:1px;opacity:0;pointer-events:none;animation:tp-goal-flash 4s ease-in-out}
+@keyframes tp-goal-flash{0%{opacity:0}8%{opacity:1}80%{opacity:1}100%{opacity:0}}
+.tp-goal-flash .tp-goal-net{font-size:2.6rem;animation:tp-goal-bounce 0.6s ease-in-out 2}
+@keyframes tp-goal-bounce{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(6px) scale(1.15)}}
+.tp-goal-flash .tp-goal-player{font-family:'DM Sans',sans-serif;font-size:.8rem;font-weight:700;letter-spacing:0}
 .tracker-pitch-caption{text-align:center;color:var(--muted);font-size:.68rem;margin-top:8px}
+/* Mini campo embutido no cabeçalho ao vivo (ver renderMatchTracker) — versão mais compacta do
+   mesmo campo, mostrado em vez do gráfico de eventos quando este jogo tem cobertura real de
+   posição da bola; o gráfico continua a ser a alternativa para jogos sem essa cobertura. */
+.mt-mini-pitch .tracker-pitch-frame{max-width:100%}
+.mt-mini-pitch .tracker-pitch-caption{margin-top:6px}
 /* "Jogo": comparação em barra dupla lado a lado (golos/posse/remates...), casa à esquerda em
    --red, fora à direita em --gold — paleta própria da app, nunca as cores da referência. */
 .jogo-stat-row{margin-bottom:14px}

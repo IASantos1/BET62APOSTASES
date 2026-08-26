@@ -2516,7 +2516,7 @@ function renderMarketPage() {
 function renderMatchTracker(e) {
   const el = document.getElementById("match-tracker");
   const isLive = e._isLive || e.status === "live";
-  refreshTrackerPitchIfOpen(e, false); // sem custo se o modal do Match Tracker não estiver aberto
+  refreshBallPositionIfNeeded(e, false); // atualiza o rasto real da bola (cabeçalho + modal, se aberto)
 
   if (e._finished) {
     el.innerHTML = `
@@ -2559,7 +2559,7 @@ function renderMatchTracker(e) {
   }
 
   const hasScore = e.homeScore !== undefined && e.awayScore !== undefined;
-  const showPulse = e.sport === "football";
+  const showVisual = e.sport === "football";
   el.innerHTML = `
     <div class="mt-teams-top">
       <div class="mt-team-name">${e.home}</div>
@@ -2570,23 +2570,41 @@ function renderMatchTracker(e) {
       ${hasScore ? `<div class="mt-score">${e.homeScore} - ${e.awayScore}</div>` : '<div class="mt-vs-label">vs</div>'}
       <div class="mt-period${clockClass}">${e.minuteOrPeriod}</div>
     </div>
-    ${showPulse ? '<div class="mt-pulse" id="mt-pulse"></div>' : ""}
+    ${showVisual ? '<div class="mt-pulse" id="mt-pulse"></div>' : ""}
     <div class="mt-actions">
       <div class="mt-action-btn" onclick="openTracker()"><span class="mt-action-icon"><span class="pitch-icon" style="width:26px;height:18px"></span></span>Match Tracker</div>
       <div class="mt-action-btn" onclick="openStats()"><span class="mt-action-icon">📊</span>Estatísticas</div>
     </div>`;
-  if (showPulse) {
+  if (showVisual) renderMatchHeaderVisual(e);
+}
+
+// ====================== VISUAL DO CABEÇALHO AO VIVO: mini campo OU gráfico de eventos ======================
+// Pedido explícito do utilizador: se o jogo tem cobertura real de posição da bola (Sportmonks
+// ballCoordinates), o cabeçalho mostra o mini campo em vez do gráfico de eventos; só cai para o
+// gráfico quando não há essa cobertura para este jogo. A decisão depende de já termos recebido
+// uma resposta real da API (trackerBallState.hasCoverage), não de uma suposição.
+function renderMatchHeaderVisual(e) {
+  const el = document.getElementById("mt-pulse");
+  if (!el) return;
+  const hasCoverage = trackerBallState.eventId === e.id && trackerBallState.hasCoverage;
+  if (hasCoverage) {
+    if (!el.classList.contains("mt-mini-pitch")) el.classList.add("mt-mini-pitch");
+    renderPitchInto(el, trackerBallState.points, e, { compact: true });
+  } else {
+    el.classList.remove("mt-mini-pitch");
     renderMatchPulseTrack(e);
     refreshMatchPulseIfNeeded(e);
   }
 }
 
-// ====================== GRÁFICO DE EVENTOS DO JOGO (cabeçalho ao vivo) ======================
+// ====================== GRÁFICO DE EVENTOS DO JOGO (alternativa sem cobertura de mini campo) ======================
 // Mostra só golos/cartões/VAR reais posicionados pelo minuto (getMatchTimeline/MatchEventRow, já
 // usado na aba "Eventos" das estatísticas — ver Bet62Api.getTimeline). Pedido do utilizador foi
 // um "gráfico de pressão" ao estilo de uma referência visual, mas não existe nenhuma métrica de
 // pressão/intensidade por minuto confirmada em nenhum provedor desta app — em vez de inventar uma
-// curva, mostra-se a linha do tempo real dos eventos confirmados sobre o eixo 0'-90'.
+// curva, mostra-se a linha do tempo real dos eventos confirmados sobre o eixo 0'-90'+.
+// A escala é dinâmica (pulseMaxMinute) para nunca "apagar"/comprimir o jogo perto do minuto 90:
+// prolonga-se automaticamente para acompanhar o minuto atual real, incluindo prolongamento.
 let matchPulseState = { eventId: null, events: [], fetchedAt: 0 };
 const MATCH_PULSE_REFRESH_MS = 20000;
 const PULSE_MARKER_ICON = { goal: "⚽", redcard: "🟥", yellowcard: "🟨", var: "📺" };
@@ -2594,8 +2612,13 @@ function currentMatchMinute(e) {
   const m = /^(\d+)/.exec(e.minuteOrPeriod || "");
   return m ? parseInt(m[1], 10) : null;
 }
-function pulsePct(minute) {
-  return Math.max(3, Math.min(97, (minute / 90) * 100));
+function pulseMaxMinute(e, events) {
+  const nowMinute = currentMatchMinute(e) || 0;
+  const eventsMax = events.reduce((max, ev) => Math.max(max, parseInt(ev.minute, 10) || 0), 0);
+  return Math.max(90, nowMinute, eventsMax);
+}
+function pulsePct(minute, maxMinute) {
+  return Math.max(3, Math.min(97, (minute / maxMinute) * 100));
 }
 function renderMatchPulseTrack(e) {
   const el = document.getElementById("mt-pulse");
@@ -2603,23 +2626,25 @@ function renderMatchPulseTrack(e) {
   const events = matchPulseState.eventId === e.id ? matchPulseState.events : [];
   const markers = events.filter((ev) => PULSE_MARKER_ICON[ev.kind]);
   const nowMinute = currentMatchMinute(e);
+  const maxMinute = pulseMaxMinute(e, events);
+  const htPct = (45 / maxMinute) * 100;
   el.innerHTML = `
     <div class="mt-pulse-track">
       <div class="mt-pulse-line"></div>
-      <div class="mt-pulse-ht"></div>
-      ${nowMinute !== null ? `<div class="mt-pulse-now" style="left:${pulsePct(nowMinute)}%"></div>` : ""}
+      <div class="mt-pulse-ht" style="left:${htPct}%"></div>
+      ${nowMinute !== null ? `<div class="mt-pulse-now" style="left:${pulsePct(nowMinute, maxMinute)}%"></div>` : ""}
       ${markers
         .map((ev) => {
           const minute = parseInt(ev.minute, 10) || 0;
           const tooltip = `${ev.minute} ${ev.label}${ev.playerName ? ": " + ev.playerName : ""} (${ev.team})`;
-          return `<div class="mt-pulse-marker ${ev.isHome ? "home" : "away"}" style="left:${pulsePct(minute)}%" title="${tooltip}">
+          return `<div class="mt-pulse-marker ${ev.isHome ? "home" : "away"}" style="left:${pulsePct(minute, maxMinute)}%" title="${tooltip}">
             <span class="mt-pulse-icon">${PULSE_MARKER_ICON[ev.kind]}</span>
             ${ev.playerName ? `<span class="mt-pulse-name">${ev.playerName}</span>` : ""}
           </div>`;
         })
         .join("")}
     </div>
-    <div class="mt-pulse-labels"><span>0'</span><span>45'</span><span>90'</span></div>`;
+    <div class="mt-pulse-labels"><span>0'</span><span>45'</span><span>${maxMinute}'</span></div>`;
 }
 async function refreshMatchPulseIfNeeded(e) {
   const now = Date.now();
@@ -2632,7 +2657,7 @@ async function refreshMatchPulseIfNeeded(e) {
     const { events } = await Bet62Api.getTimeline(e.id);
     if (matchPulseState.eventId !== e.id) return; // saiu deste evento entretanto
     matchPulseState.events = events || [];
-    if (currentMarketEvent && currentMarketEvent.id === e.id) renderMatchPulseTrack(e);
+    if (currentMarketEvent && currentMarketEvent.id === e.id && !trackerBallState.hasCoverage) renderMatchPulseTrack(e);
   } catch {
     /* mantém os marcadores já mostrados */
   }
@@ -2646,11 +2671,19 @@ async function refreshMatchPulseIfNeeded(e) {
 // qual equipa, por isso segue-se a mesma convenção já usada no resto da app (casa à esquerda,
 // fora à direita, ver .mt-teams-top). Documentação confirma "disponível só para ligas
 // selecionadas" — jogo sem esta tecnologia devolve lista vazia, mostrado como tal, nunca inventado.
-let trackerBallState = { eventId: null, points: [], fetchedAt: 0 };
-const TRACKER_BALL_REFRESH_MS = 8000; // amostra real: ~6-12 pontos novos por minuto, ~15s de atraso — não vale a pena pedir mais depressa que isto
+// hasCoverage só fica true depois de recebermos uma resposta real da API com pelo menos um ponto
+// para este jogo — nunca assumido antecipadamente.
+let trackerBallState = { eventId: null, points: [], fetchedAt: 0, hasCoverage: false };
+// 2.5s: reduz o atraso QUE NÓS acrescentamos por cima do atraso já existente na Sportmonks (a
+// documentação real colada pelo utilizador confirma "slight delay of ~15 seconds" do lado deles,
+// que não desaparece por pedirmos mais depressa — isto só evita somar mais espera nossa a isso).
+const TRACKER_BALL_REFRESH_MS = 2500;
 function openTracker() {
   document.getElementById("tracker-modal").classList.add("open");
-  if (currentMarketEvent) refreshTrackerPitchIfOpen(currentMarketEvent, true);
+  if (currentMarketEvent) {
+    renderTrackerHeader(currentMarketEvent);
+    refreshBallPositionIfNeeded(currentMarketEvent, true);
+  }
 }
 function closeTracker() {
   document.getElementById("tracker-modal").classList.remove("open");
@@ -2666,22 +2699,23 @@ function renderTrackerHeader(e) {
   document.getElementById("tracker-score").textContent =
     e.homeScore !== undefined && e.awayScore !== undefined ? `${e.homeScore} - ${e.awayScore}` : "vs";
 }
-// Chamado em todo render do Match Tracker no cabeçalho (WS/poll) e ao abrir o modal — sem custo
-// nenhum quando o modal está fechado (só verifica a classe, não pede nada à rede).
-async function refreshTrackerPitchIfOpen(e, force) {
+// Chamado em todo render do Match Tracker no cabeçalho (WS/poll), independentemente de o modal
+// estar aberto — o cabeçalho precisa dos mesmos dados para decidir entre mini campo e gráfico.
+async function refreshBallPositionIfNeeded(e, force) {
   const modal = document.getElementById("tracker-modal");
-  if (!modal || !modal.classList.contains("open") || !e) return;
-  renderTrackerHeader(e);
-  const wrap = document.getElementById("tracker-pitch-wrap");
-  if (!wrap) return;
+  const modalOpen = !!modal && modal.classList.contains("open");
+  if (modalOpen) renderTrackerHeader(e);
   if (!trackerIsLiveFootball(e)) {
-    wrap.innerHTML = '<div class="empty-note">Posição da bola disponível só para jogos de futebol ao vivo</div>';
+    if (modalOpen) {
+      const wrap = document.getElementById("tracker-pitch-wrap");
+      if (wrap) wrap.innerHTML = '<div class="empty-note">Posição da bola disponível só para jogos de futebol ao vivo</div>';
+    }
     return;
   }
-  if (trackerBallState.eventId !== e.id) trackerBallState = { eventId: e.id, points: [], fetchedAt: 0 };
+  if (trackerBallState.eventId !== e.id) trackerBallState = { eventId: e.id, points: [], fetchedAt: 0, hasCoverage: false };
   const now = Date.now();
   if (!force && now - trackerBallState.fetchedAt < TRACKER_BALL_REFRESH_MS) {
-    renderTrackerPitch(trackerBallState.points);
+    if (modalOpen) renderPitchInto(document.getElementById("tracker-pitch-wrap"), trackerBallState.points, e, { compact: false });
     return;
   }
   trackerBallState.fetchedAt = now;
@@ -2689,23 +2723,74 @@ async function refreshTrackerPitchIfOpen(e, force) {
     const { points } = await Bet62Api.getBallPosition(e.id);
     if (trackerBallState.eventId !== e.id) return; // saiu deste evento entretanto
     trackerBallState.points = points || [];
+    trackerBallState.hasCoverage = !!(points && points.length);
   } catch {
     /* mantém o rasto já mostrado */
   }
-  if (modal.classList.contains("open") && currentMarketEvent && currentMarketEvent.id === e.id) {
-    renderTrackerPitch(trackerBallState.points);
+  if (currentMarketEvent && currentMarketEvent.id === e.id) {
+    renderMatchHeaderVisual(e);
+    if (modal && modal.classList.contains("open")) {
+      renderPitchInto(document.getElementById("tracker-pitch-wrap"), trackerBallState.points, e, { compact: false });
+    }
   }
 }
-// Campo desenhado em SVG (marcações padrão: círculo central, grandes/pequenas áreas) com a bola
+// Zona de perigo real, derivada só da coordenada x confirmada da bola (0 = baliza casa, 1 = baliza
+// fora) — nunca rotulada como "posse de bola" (não existe sinal de posse instantânea confirmado em
+// nenhum provedor desta app; a única stat de posse existente, "Ball Possession %", é cumulativa do
+// jogo todo, não instantânea — ver TEAM_STAT_LABELS). É só "a bola está perto de que baliza agora".
+function ballDangerZone(x) {
+  const distToGoal = Math.min(x, 1 - x);
+  if (distToGoal < 0.14) return "danger";
+  if (distToGoal < 0.32) return "mid";
+  return "safe";
+}
+// Zona de canto real: bola confirmada dentro do raio do arco de canto (extremos de x, extremos de
+// y) — não finge que um canto foi marcado (não existe esse evento confirmado, ver
+// MatchEventRow.kind), é só "a bola está mesmo ali agora".
+const CORNER_ZONE_X = 0.045;
+const CORNER_ZONE_Y = 0.09;
+function nearestCorner(x, y) {
+  const cx = x < 0.5 ? 0 : 1;
+  const cy = y < 0.5 ? 0 : 1;
+  return { cx, cy };
+}
+function isInCornerZone(x, y) {
+  const { cx, cy } = nearestCorner(x, y);
+  return Math.abs(x - cx) < CORNER_ZONE_X && Math.abs(y - cy) < CORNER_ZONE_Y;
+}
+// Deteta um golo NOVO comparando a contagem de eventos "goal" reais já confirmados na linha do
+// tempo (matchPulseState.events, a mesma fonte da aba Eventos) com a última contagem vista — nunca
+// antecipa/infere um golo a partir da posição da bola.
+let trackerLastGoalCount = { eventId: null, count: 0 };
+function detectNewGoal(e) {
+  if (matchPulseState.eventId !== e.id) return null;
+  const goals = matchPulseState.events.filter((ev) => ev.kind === "goal");
+  if (trackerLastGoalCount.eventId !== e.id) {
+    trackerLastGoalCount = { eventId: e.id, count: goals.length };
+    return null;
+  }
+  if (goals.length > trackerLastGoalCount.count) {
+    const latest = goals[goals.length - 1];
+    trackerLastGoalCount.count = goals.length;
+    return latest || null;
+  }
+  trackerLastGoalCount.count = goals.length;
+  return null;
+}
+// Campo desenhado em SVG (marcações padrão + bandeiras de canto + bordas destacadas) com a bola
 // mais recente maior/sólida e os pontos anteriores encolhendo/desvanecendo atrás dela — rasto,
-// nunca uma curva ou posição inventada entre pontos reais.
-function renderTrackerPitch(points) {
-  const el = document.getElementById("tracker-pitch-wrap");
+// nunca uma curva ou posição inventada entre pontos reais. Camada extra de zona de perigo (pulsa
+// atrás da bola) e indicador de canto (cruz tracejada animada) quando a posição real o justifica.
+// opts.compact controla só o tamanho/legenda (mini campo do cabeçalho vs modal cheio) — o desenho
+// é o mesmo, partilhado, para nunca haver duas implementações a divergir.
+function renderPitchInto(el, points, e, opts) {
   if (!el) return;
+  const compact = !!(opts && opts.compact);
   if (!points.length) {
-    el.innerHTML = '<div class="empty-note">Sem dados de posição da bola disponíveis para este jogo</div>';
+    el.innerHTML = `<div class="empty-note">${compact ? "Sem dados de posição da bola" : "Sem dados de posição da bola disponíveis para este jogo"}</div>`;
     return;
   }
+  const latest = points[0];
   const trailMarkers = points
     .map((p, i) => {
       const cx = (p.x * 100).toFixed(2);
@@ -2717,19 +2802,47 @@ function renderTrackerPitch(points) {
     })
     .reverse()
     .join("");
+  const zone = ballDangerZone(latest.x);
+  const glowLeftPct = (latest.x * 100).toFixed(2);
+  const glowTopPct = ((latest.y * 64) / 64 * 100).toFixed(2);
+  const glowSize = compact ? 34 : 46;
+  const inCorner = isInCornerZone(latest.x, latest.y);
+  let cornerCrossSvg = "";
+  if (inCorner) {
+    const { cx, cy } = nearestCorner(latest.x, latest.y);
+    const gx = cx === 0 ? 16 : 84;
+    const gy = 32;
+    const fx = cx * 100;
+    const fy = cy * 64;
+    cornerCrossSvg = `<line x1="${fx}" y1="${fy}" x2="${gx}" y2="${gy}" class="tp-corner-cross"/>`;
+  }
+  const goalEvent = compact ? null : detectNewGoal(e);
   el.innerHTML = `
-    <svg viewBox="0 0 100 64" class="tracker-pitch-svg" preserveAspectRatio="xMidYMid meet">
-      <rect x="0.5" y="0.5" width="99" height="63" rx="1.5" class="tp-line"/>
-      <line x1="50" y1="0.5" x2="50" y2="63.5" class="tp-line"/>
-      <circle cx="50" cy="32" r="8.7" class="tp-line"/>
-      <circle cx="50" cy="32" r="0.5" class="tp-spot"/>
-      <rect x="0.5" y="13" width="16" height="38" class="tp-line"/>
-      <rect x="0.5" y="23.4" width="5" height="17.2" class="tp-line"/>
-      <rect x="83.5" y="13" width="16" height="38" class="tp-line"/>
-      <rect x="94.5" y="23.4" width="5" height="17.2" class="tp-line"/>
-      ${trailMarkers}
-    </svg>
-    <div class="tracker-pitch-caption">${points[0].timer} • posição da bola (~15s de atraso, ver Sportmonks)</div>`;
+    <div class="tracker-pitch-frame">
+      <svg viewBox="0 0 100 64" class="tracker-pitch-svg" preserveAspectRatio="xMidYMid meet">
+        <rect x="0.5" y="0.5" width="99" height="63" rx="1.5" class="tp-border"/>
+        <line x1="50" y1="0.5" x2="50" y2="63.5" class="tp-line"/>
+        <circle cx="50" cy="32" r="8.7" class="tp-line"/>
+        <circle cx="50" cy="32" r="0.5" class="tp-spot"/>
+        <rect x="0.5" y="13" width="16" height="38" class="tp-line"/>
+        <rect x="0.5" y="23.4" width="5" height="17.2" class="tp-line"/>
+        <rect x="83.5" y="13" width="16" height="38" class="tp-line"/>
+        <rect x="94.5" y="23.4" width="5" height="17.2" class="tp-line"/>
+        <path d="M 0.5 0.5 L 3.5 0.5 A 3 3 0 0 1 0.5 3.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 0 ? " pulse" : ""}"/>
+        <path d="M 99.5 0.5 L 96.5 0.5 A 3 3 0 0 0 99.5 3.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 0 ? " pulse" : ""}"/>
+        <path d="M 0.5 63.5 L 3.5 63.5 A 3 3 0 0 0 0.5 60.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 1 ? " pulse" : ""}"/>
+        <path d="M 99.5 63.5 L 96.5 63.5 A 3 3 0 0 1 99.5 60.5 Z" class="tp-flag${inCorner && nearestCorner(latest.x, latest.y).cy === 1 ? " pulse" : ""}"/>
+        ${cornerCrossSvg}
+        ${trailMarkers}
+        ${
+          goalEvent
+            ? `<foreignObject x="0" y="0" width="100" height="64"><div xmlns="http://www.w3.org/1999/xhtml" class="tp-goal-flash"><span class="tp-goal-net">⚽🥅</span><span>GOLO!</span>${goalEvent.playerName ? `<span class="tp-goal-player">${goalEvent.playerName} (${goalEvent.team})</span>` : ""}</div></foreignObject>`
+            : ""
+        }
+      </svg>
+      <div class="tp-danger-glow zone-${zone}" style="left:${glowLeftPct}%;top:${glowTopPct}%;width:${glowSize}px;height:${glowSize}px"></div>
+    </div>
+    ${compact ? "" : `<div class="tracker-pitch-caption">${latest.timer} • posição da bola (dados com atraso próprio da Sportmonks, ver documentação)</div>`}`;
 }
 
 // ====================== ESTATÍSTICAS (Margens de Vitória / H2H / Classificação) ======================
