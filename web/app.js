@@ -3109,7 +3109,11 @@ function ensureTracker3D() {
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
   camera.position.set(0, 22, 26);
-  camera.lookAt(0, 0, 0);
+  // Mira num ponto acima do relvado (não no centro do campo) — desce o relvado/balizas/bandeiras
+  // para a metade de baixo do enquadramento, deixando espaço livre em cima para a bancada real da
+  // foto de fundo (img/tracker-stadium-bg.jpg); sem isto o campo 3D ficava desenhado por cima da
+  // bancada em vez de assentar nela.
+  camera.lookAt(0, 7, 0);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setClearColor(0x000000, 0);

@@ -428,8 +428,12 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
    A foto da bancada (img/tracker-stadium-bg.jpg) fica como fundo deste contentor, atrás do
    <canvas> — o renderer agora é transparente (alpha:true, scene.background=null em
    ensureTracker3D) para deixar a foto aparecer à volta do relvado/balizas/bandeiras 3D, em vez
-   do piso cinzento liso que estava aqui antes. */
-.tp-canvas-frame{position:relative;width:100%;aspect-ratio:100/64;border-radius:10px;overflow:hidden;background:#04100a url("img/tracker-stadium-bg.jpg") center 70%/cover no-repeat}
+   do piso cinzento liso que estava aqui antes. A foto em si já vem cortada (só bancada/holofotes/
+   placares, sem a relva fotografada) — punha o campo 3D a ficar "por cima" da relva da foto, duas
+   relvas diferentes a encontrarem-se numa linha dura. background-size 100% auto (não cover) para
+   não dar zoom à imagem; a câmara 3D (ver ensureTracker3D) foi inclinada para deixar espaço no
+   topo do enquadramento para a bancada em vez de o relvado 3D lhe ficar por cima. */
+.tp-canvas-frame{position:relative;width:100%;aspect-ratio:100/64;border-radius:10px;overflow:hidden;background:#0a1a10 url("img/tracker-stadium-bg.jpg") center top/100% auto no-repeat}
 .tp-canvas-frame canvas{position:absolute;inset:0;width:100%!important;height:100%!important;display:block;touch-action:none}
 /* Flash de golo — sobrepõe o campo por alguns segundos quando um golo novo e confirmado aparece
    na linha do tempo real do jogo (nunca antecipado/inventado); agora uma camada HTML normal por
