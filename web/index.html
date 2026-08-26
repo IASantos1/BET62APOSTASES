@@ -386,8 +386,38 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 /* Mini campo embutido no cabeçalho ao vivo (ver renderMatchTracker) — versão mais compacta do
    mesmo campo, mostrado em vez do gráfico de eventos quando este jogo tem cobertura real de
    posição da bola; o gráfico continua a ser a alternativa para jogos sem essa cobertura. */
+.mt-mini-pitch{margin-top:12px;padding-top:0;border-top:none}
 .mt-mini-pitch .tracker-pitch-frame{max-width:100%}
 .mt-mini-pitch .tracker-pitch-caption{margin-top:6px}
+/* Painel do Match Tracker pedido pelo utilizador com uma referência visual: cabeçalho próprio
+   embutido (relógio + equipas + placar + AO VIVO) por cima do campo, em vez do bloco separado
+   .mt-teams-top/.mt-scoreboard que ficava duplicado por cima do mini campo (marcado com um X num
+   print real do utilizador) — esse bloco antigo passa a ficar escondido sempre que este painel
+   aparece (ver #mt-basic-header em renderMatchTracker/renderMatchHeaderVisual). Cores da própria
+   app (dourado=casa, branco=fora, mesma convenção já usada no gráfico de eventos), nunca as cores
+   da imagem de referência. */
+.tp-panel{border-radius:10px;overflow:hidden}
+.tp-panel .tracker-pitch-frame{border-radius:0}
+.tp-header-bar{display:flex;align-items:center;gap:8px;background:#0e1210;padding:8px 10px;color:#fff}
+.tp-clock-badge{background:rgba(255,255,255,.1);border-radius:6px;padding:3px 8px;font-family:'Bebas Neue',sans-serif;font-size:.85rem;letter-spacing:.5px;white-space:nowrap;flex-shrink:0}
+.tp-clock-badge.clock-missing{color:var(--red)}
+.tp-team-cluster{flex:1;display:flex;align-items:center;min-width:0}
+.tp-team-bar{flex:1;display:flex;align-items:center;gap:5px;font-size:.68rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.tp-team-bar.away{justify-content:flex-end;text-align:right}
+.tp-team-dot{width:7px;height:7px;border-radius:50%;background:var(--gold);flex-shrink:0}
+.tp-team-bar.away .tp-team-dot{background:#fff;border:1px solid var(--muted)}
+.tp-score-block{background:rgba(255,255,255,.12);border-radius:6px;padding:2px 8px;font-family:'Bebas Neue',sans-serif;font-size:.95rem;margin:0 6px;white-space:nowrap;flex-shrink:0}
+.tp-live-badge{display:flex;align-items:center;gap:4px;font-size:.6rem;font-weight:700;color:var(--red);white-space:nowrap;flex-shrink:0}
+.tp-live-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--red);animation:pulse 1.4s infinite}
+@media (prefers-reduced-motion: reduce){.tp-live-badge .dot{animation:none}}
+.tp-period-pill{text-align:center;background:#0e1210;color:var(--muted);font-size:.6rem;font-weight:700;letter-spacing:.5px;padding:0 0 5px}
+.tp-stat-bar{display:flex;gap:1px;background:var(--border)}
+.tp-stat-box{flex:1;background:#0e1210;color:#fff;font-size:.62rem;font-weight:700;text-align:center;padding:6px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mt-mini-pitch .tp-header-bar,.mt-mini-pitch .tp-stat-bar{padding-left:8px;padding-right:8px}
+.mt-mini-pitch .tp-clock-badge{font-size:.7rem}
+.mt-mini-pitch .tp-score-block{font-size:.8rem}
+.mt-mini-pitch .tp-team-bar{font-size:.6rem}
+.mt-mini-pitch .tp-stat-box{font-size:.54rem;padding:5px 3px}
 /* "Jogo": comparação em barra dupla lado a lado (golos/posse/remates...), casa à esquerda em
    --red, fora à direita em --gold — paleta própria da app, nunca as cores da referência. */
 .jogo-stat-row{margin-bottom:14px}
