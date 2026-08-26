@@ -365,7 +365,7 @@ function paintPrematchList(container, realEvents) {
     (e) => `
       <div class="live-card" onclick="openMarket('${e.id}', false)">
         <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime)}</span></div>
-        <div class="lc-teams"><span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span></div>
+        <div class="lc-teams">${teamLogoImg(e.homeLogo,"sm",e.home)}<span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span>${teamLogoImg(e.awayLogo,"sm",e.away)}</div>
         ${quickOddsHtml(e, e.odds?.[0], false)}
       </div>`
   );
@@ -590,6 +590,7 @@ function quickPick(event, key, selection) {
 function primarySuspendedLabel(e) {
   if (e.suspendedReason === "goal") return "Grande Chance";
   if (e.suspendedReason === "var") return "Revisão VAR";
+  if (e.suspendedReason === "penalty") return "Pênalti a Marcar";
   return "Suspenso";
 }
 
@@ -640,11 +641,10 @@ function oddsArrowHtml(key, value) {
 function showPage(page) {
   if (pageHistory[pageHistory.length - 1] !== page) pageHistory.push(page);
   closeDrawers();
-  // Sai da página de mercado: pára o motor 3D do mini campo (ver pauseTracker3D em app.js) — a
-  // cena e o <canvas> continuam vivos (nada é destruído), só o loop de animação para de correr
-  // sem estar visível a ninguém. Volta a arrancar sozinho quando renderMatchTracker é chamado de
-  // novo (mountTracker3D reativa-o).
-  if (page !== "market") pauseTracker3D();
+  // Sai da página de mercado: pára o motor 2D do mini campo (tracker2d.js) — o canvas e o seu
+  // estado interno continuam vivos (nada é destruído), apenas se deixa de fazer repaints até
+  // ser montado de novo quando voltarmos à página de mercado.
+  if (page !== "market") pauseTracker2D();
 
   ["destaques", "profile", "esportes", "cassino", "aovivo", "promocao", "market"].forEach((p) => {
     const el = document.getElementById("page-" + p);
@@ -2147,7 +2147,7 @@ function highlightPrematchCardHtml(e, icon) {
   return `
     <div class="live-card" onclick="openMarket('${e.id}', false)">
       <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime)}</span></div>
-      <div class="lc-teams"><span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span></div>
+      <div class="lc-teams">${teamLogoImg(e.homeLogo,"sm",e.home)}<span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span>${teamLogoImg(e.awayLogo,"sm",e.away)}</div>
       ${quickOddsHtml(e, e.odds?.[0], false)}
     </div>`;
 }
@@ -2405,8 +2405,8 @@ function renderGenericCard(e, clockClass, oddsHtml, icon) {
     <div class="live-card" data-eid="${e.id}" onclick='openMarket(${attrJson(e.id)}, true)'>
       <div class="lc-top"><span>${icon} ${e.league}</span><span class="${clockClass}">${e.minuteOrPeriod}</span></div>
       <div class="event-rows">
-        <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.homeScore}</span>` : ""}<span class="event-team">${e.home}${homeRed}</span></div>
-        <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.awayScore}</span>` : ""}<span class="event-team">${e.away}${awayRed}</span></div>
+        <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.homeScore}</span>` : ""}<span class="event-team">${teamLogoImg(e.homeLogo,"sm",e.home)}<span data-initial-fallback="${teamInitials(e.home)}">${e.home}</span>${homeRed}</span></div>
+        <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.awayScore}</span>` : ""}<span class="event-team">${teamLogoImg(e.awayLogo,"sm",e.away)}<span data-initial-fallback="${teamInitials(e.away)}">${e.away}</span>${awayRed}</span></div>
       </div>
       ${oddsHtml}
     </div>`;
@@ -2574,8 +2574,8 @@ function renderMatchTracker(e) {
   el.innerHTML = `
     <div id="mt-basic-header">
       <div class="mt-teams-top">
-        <div class="mt-team-name">${e.home}</div>
-        <div class="mt-team-name away">${e.away}</div>
+        <div class="mt-team-name">${teamLogoImg(e.homeLogo, "", e.home)}<span data-initial-fallback="${teamInitials(e.home)}">${e.home}</span></div>
+        <div class="mt-team-name away"><span data-initial-fallback="${teamInitials(e.away)}">${e.away}</span>${teamLogoImg(e.awayLogo, "", e.away)}</div>
       </div>
       <div class="mt-scoreboard">
         <div class="mt-live"><span class="dot"></span> AO VIVO</div>
@@ -2628,8 +2628,11 @@ function renderMatchHeaderVisual(e) {
 // A escala é dinâmica (pulseMaxMinute) para nunca "apagar"/comprimir o jogo perto do minuto 90:
 // prolonga-se automaticamente para acompanhar o minuto atual real, incluindo prolongamento.
 let matchPulseState = { eventId: null, events: [], fetchedAt: 0 };
+// Expor para o motor 2D (tracker2d.js) — `let` em script clássico não é global por defeito;
+// a referência é constante (apenas as propriedades internas são mutadas nos polls).
+window.matchPulseState = matchPulseState;
 const MATCH_PULSE_REFRESH_MS = 20000;
-const PULSE_MARKER_ICON = { goal: "⚽", redcard: "🟥", yellowcard: "🟨", var: "📺" };
+const PULSE_MARKER_ICON = { goal: "⚽", redcard: "🟥", yellowcard: "🟨", var: "📺", penalty: "🎯", goal_disallowed: "⛔" };
 function currentMatchMinute(e) {
   const m = /^(\d+)/.exec(e.minuteOrPeriod || "");
   return m ? parseInt(m[1], 10) : null;
@@ -2661,7 +2664,7 @@ function renderMatchPulseTrack(e) {
           const tooltip = `${ev.minute} ${ev.label}${ev.playerName ? ": " + ev.playerName : ""} (${ev.team})`;
           return `<div class="mt-pulse-marker ${ev.isHome ? "home" : "away"}" style="left:${pulsePct(minute, maxMinute)}%" title="${tooltip}">
             <span class="mt-pulse-icon">${PULSE_MARKER_ICON[ev.kind]}</span>
-            ${ev.playerName ? `<span class="mt-pulse-name">${ev.playerName}</span>` : ""}
+            ${ev.playerName || ev.playerPhotoUrl ? `<span class="mt-pulse-name">${playerImg(ev.playerPhotoUrl, ev.playerName)}${ev.playerName || ""}</span>` : ""}
           </div>`;
         })
         .join("")}
@@ -2790,6 +2793,33 @@ function teamInitials(name) {
   if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
   return name.trim().slice(0, 2).toUpperCase();
 }
+// Imagem de equipa: <img> com logótipo se `url` for truthy (Sportmonks image_path já vem preenchido
+// em LiveEvent.homeLogo/awayLogo — ver backend), senão vazio. O onerror troca a img por um dataURI
+// 1x1 transparente para não aparecer o "broken image" e o fallback visual (sigla/cor) já existente
+// no container fica visível (não desaparece).
+function teamLogoImg(url, size, alt) {
+  if (!url) return "";
+  const cls = size === "sm" ? "tlogo sm" : size === "bt" ? "tlogo bt" : "tlogo";
+  const a = (alt || "").replace(/"/g, "");
+  return `<img class="${cls}" src="${url}" alt="${a}" referrerpolicy="no-referrer" onerror="this.removeAttribute('src');this.style.display='none';try{const p=this.parentElement;if(p&&p.dataset.initialFallback){p.textContent=p.dataset.initialFallback}}catch(_){}">`;
+}
+// Imagem de jogador para linha do tempo/topscorers. Mesmo fallback: onerror limpa a imagem sem ícone
+// partido. Tamanho por defeito 16px (sm), igual aos logos de equipa "sm". Retorna HTML vazio se não
+// houver foto para não quebrar layouts sem suporte a jogador.
+function playerImg(photoUrl, name) {
+  if (!photoUrl) return "";
+  const a = (name || "").replace(/"/g, "");
+  return `<img class="tlogo sm" src="${photoUrl}" alt="${a}" referrerpolicy="no-referrer" onerror="this.removeAttribute('src');this.style.display='none'">`;
+}
+// Troca o texto (iniciais) de um .bt-team-mark (ex: #tracker-home-mark) por <img> com o logo, se
+// existir. Mantém o dataset de fallback para o onerror o repôr caso o CDN devolva 404.
+function applyTeamLogoToMark(el, logoUrl, fallbackName) {
+  if (!el) return;
+  const fallback = teamInitials(fallbackName);
+  el.dataset.initialFallback = fallback;
+  if (!logoUrl) { el.textContent = fallback; return; }
+  el.innerHTML = `<img class="bt-team-img" src="${logoUrl}" alt="${(fallbackName||"").replace(/"/g,'')}" referrerpolicy="no-referrer" onerror="this.removeAttribute('src');this.remove();const p=this.parentElement;if(p&&p.dataset.initialFallback){p.textContent=p.dataset.initialFallback}">`;
+}
 // Cabeçalho do modal — placar integrado no visual pedido pelo utilizador (modelo
 // BET62trackerpreview.html): marca redonda com iniciais + nome + placar dividido + relógio +
 // competição. O painel do mini campo (pitchHeaderHtml) deixa de repetir esta linha dentro do
@@ -2799,8 +2829,8 @@ function renderTrackerHeader(e) {
   if (!homeEl) return;
   homeEl.textContent = e.home;
   document.getElementById("tracker-away").textContent = e.away;
-  document.getElementById("tracker-home-mark").textContent = teamInitials(e.home);
-  document.getElementById("tracker-away-mark").textContent = teamInitials(e.away);
+  applyTeamLogoToMark(document.getElementById("tracker-home-mark"), e.homeLogo, e.home);
+  applyTeamLogoToMark(document.getElementById("tracker-away-mark"), e.awayLogo, e.away);
   const hasScore = e.homeScore !== undefined && e.awayScore !== undefined;
   document.getElementById("tracker-home-score").textContent = hasScore ? e.homeScore : "–";
   document.getElementById("tracker-away-score").textContent = hasScore ? e.awayScore : "–";
@@ -2941,9 +2971,9 @@ function pitchHeaderHtml(e, latest, opts) {
     : `<div class="tp-header-bar">
       <div class="tp-clock-badge${clockClass}">${e.minuteOrPeriod || "-"}</div>
       <div class="tp-team-cluster">
-        <div class="tp-team-bar home${homePulse}"><span class="tp-team-dot"></span>${e.home}</div>
+        <div class="tp-team-bar home${homePulse}">${teamLogoImg(e.homeLogo,"sm",e.home)}<span class="tp-team-dot"></span>${e.home}</div>
         <div class="tp-score-block">${hasScore ? `${e.homeScore} - ${e.awayScore}` : "vs"}</div>
-        <div class="tp-team-bar away${awayPulse}">${e.away}<span class="tp-team-dot"></span></div>
+        <div class="tp-team-bar away${awayPulse}">${e.away}${teamLogoImg(e.awayLogo,"sm",e.away)}<span class="tp-team-dot"></span></div>
       </div>
       <div class="tp-live-badge"><span class="dot"></span>AO VIVO</div>
     </div>`;
@@ -3225,7 +3255,7 @@ function showGoalFlashOverlay(goalEvent) {
   if (!frame) return;
   const flash = document.createElement("div");
   flash.className = "tp-goal-flash";
-  flash.innerHTML = `<span class="tp-goal-net">⚽🥅</span><span>GOLO!</span>${goalEvent.playerName ? `<span class="tp-goal-player">${goalEvent.playerName} (${goalEvent.team})</span>` : ""}`;
+  flash.innerHTML = `<span class="tp-goal-net">⚽🥅</span><span>GOLO!</span>${goalEvent.playerName ? `<span class="tp-goal-player">${playerImg(goalEvent.playerPhotoUrl, goalEvent.playerName)}${goalEvent.playerName} (${goalEvent.team})</span>` : ""}`;
   frame.appendChild(flash);
   setTimeout(() => flash.remove(), 4000);
 }
@@ -3278,10 +3308,9 @@ function updateTracker3DFromPoints(e, points, compact) {
 }
 
 // Ponto de entrada partilhado entre o cabeçalho compacto (#mt-pulse) e o modal cheio
-// (#tracker-pitch-wrap) — pedido explícito do utilizador para o mini campo ser 3D a sério, ligado
-// aos mesmos dados reais que já alimentavam a versão 2D. Constrói o "chrome" HTML (cabeçalho +
-// barra de estatísticas, reaproveitados tal e qual) em torno de um .tp-canvas-frame vazio, carrega
-// o Three.js só quando é mesmo preciso, e move o MESMO <canvas> partilhado para dentro dele.
+// (#tracker-pitch-wrap). Constrói o "chrome" HTML (cabeçalho + barra de estatísticas) em
+// torno de um .tp-canvas-frame vazio, e usa o MESMO <canvas> partilhado do motor 2D
+// (tracker2d.js), reancorando-o de cabeçalho ↔ modal tal como o 3D fazia antes.
 function renderPitchInto(el, points, e, opts) {
   if (!el) return;
   const compact = !!(opts && opts.compact);
@@ -3296,15 +3325,10 @@ function renderPitchInto(el, points, e, opts) {
 
   el.innerHTML = `<div class="tp-panel">${header}<div class="tp-canvas-frame"></div>${pitchStatBarHtml(e)}</div>`;
   const frame = el.querySelector(".tp-canvas-frame");
-  loadThreeJs()
-    .then(() => {
-      if (!document.body.contains(frame)) return; // já saiu deste evento/página entretanto
-      mountTracker3D(frame, !compact);
-      updateTracker3DFromPoints(e, points, compact);
-    })
-    .catch(() => {
-      if (document.body.contains(frame)) frame.innerHTML = '<div class="empty-note">Não foi possível carregar o campo 3D</div>';
-    });
+  // Motor 2D é síncrono (não há bundle para carregar) — pinta imediatamente.
+  // (frame pode já ter sido montado por outro caller — o mount é idempotente.)
+  mountTracker2D(frame);
+  updateTracker2DFromPoints(e, points, compact);
 }
 
 // ====================== ESTATÍSTICAS (Margens de Vitória / H2H / Classificação) ======================
@@ -3599,7 +3623,7 @@ async function renderTopscorers(e) {
           .map(
             (r) => `
           <div class="standings-row">
-            <span class="st-rank">${r.rank}</span><span class="st-team">${r.playerName} <span style="color:var(--muted)">— ${r.team}</span></span><span class="st-pts">${r.goals}</span>
+            <span class="st-rank">${r.rank}</span><span class="st-team">${playerImg(r.playerPhoto, r.playerName)}${teamLogoImg(r.teamLogo, "sm", r.team)} ${r.playerName} <span style="color:var(--muted)">— ${r.team}</span></span><span class="st-pts">${r.goals}</span>
           </div>`
           )
           .join("")}
@@ -3686,7 +3710,7 @@ async function renderTeamForm(e) {
 // Sportmonks — ver GET /events/:id/timeline) — sem equivalente para jogos da Pulsescore, esses
 // devolvem lista vazia do backend e caem na mensagem "sem dados" abaixo, nunca um erro.
 let timelineLoadedForEventId = null;
-const TIMELINE_EVENT_ICON = { goal: "⚽", yellowcard: "🟨", redcard: "🟥", substitution: "🔄", var: "📺", other: "•" };
+const TIMELINE_EVENT_ICON = { goal: "⚽", yellowcard: "🟨", redcard: "🟥", substitution: "🔄", var: "📺", penalty: "🎯", goal_disallowed: "⛔", other: "•" };
 async function renderTimeline(e) {
   const el = document.getElementById("stats-body-timeline");
   if (e.sport !== "football") {
@@ -3710,7 +3734,15 @@ async function renderTimeline(e) {
           <div class="timeline-row">
             <span class="timeline-minute">${ev.minute}</span>
             <span class="timeline-icon">${TIMELINE_EVENT_ICON[ev.kind] || "•"}</span>
-            <span class="timeline-text">${ev.label}${ev.playerName ? `: ${ev.playerName}` : ""}${ev.relatedPlayerName ? ` <span style="color:var(--muted)">↔ ${ev.relatedPlayerName}</span>` : ""} <span style="color:var(--muted)">(${ev.team})</span></span>
+            <span class="timeline-text">${ev.label}${
+              ev.playerName || ev.playerPhotoUrl
+                ? `: ${playerImg(ev.playerPhotoUrl, ev.playerName)}<span>${ev.playerName || ""}</span>`
+                : ""
+            }${
+              ev.relatedPlayerName || ev.relatedPlayerPhotoUrl
+                ? ` <span style="color:var(--muted)">↔ ${playerImg(ev.relatedPlayerPhotoUrl, ev.relatedPlayerName)}<span>${ev.relatedPlayerName || ""}</span></span>`
+                : ""
+            } <span style="color:var(--muted)">(${ev.team})</span></span>
           </div>`
           )
           .join("")}

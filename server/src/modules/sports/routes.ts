@@ -5,7 +5,7 @@ import { getPrematchEvents } from "./prematch/service";
 import { getTodayCompetitions } from "./competitions/service";
 import { fetchEventById, fetchLiveEventById } from "./pulsescore/client";
 import { enrichEventFromOtherBookmakers } from "./pulsescore/crossBookmakerFallback";
-import { getHeadToHead, getPredictions, getStandings, type HeadToHeadMatch } from "./apifootball/client";
+import { getHeadToHead, getPredictions, getStandings, getFixtureStatistics, type HeadToHeadMatch } from "./apifootball/client";
 import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent, getFullFixtureMapping } from "./mapping/service";
 import { getUnifiedMatchData } from "./unified/service";
 import { getSportmonksEventById, getSportmonksFootballPrematchDiagnosis } from "./sportmonks/prematch";
@@ -17,9 +17,13 @@ import {
   fetchTodayRawFixtureForLiveDiagnosis,
   getHeadToHeadForFixture,
   getMatchTimeline,
+  getPlayerCachedPhoto,
   getStandingsBySeason,
+  getTeamCachedLogo,
   getTeamFormForFixture,
   getTopscorersBySeason,
+  importAllPlayers,
+  importAllTeams,
   normalizeFixtureDetail,
   normalizeBallPositions,
   normalizeStandingsRow,
@@ -328,7 +332,19 @@ router.get(
 router.get(
   "/events/:id/stats",
   asyncHandler(async (req, res) => {
-    const stats = await hybridSportsService.getStatistics(req.params.id);
+    // ⚠️ CORREÇÃO (2026-08-26): híbrido tenta primeiro hybridSportsService.getStatistics() —
+    // que consulta o Map de eventos AO VIVO e resolve o fixture AF mapeado. Para scheduled,
+    // o Map pode ainda não ter o evento (antes do sync do prematch, ou Sportmonks), por isso
+    // adiciona fallback: findCachedEvent (procura também no cache de pré-jogo Sportmonks) +
+    // resolveFixtureForEvent (lazy mapping) + getFixtureStatistics diretamente via API-Football.
+    let stats = await hybridSportsService.getStatistics(req.params.id).catch(() => null);
+    if (!stats) {
+      const event = findCachedEvent(req.params.id);
+      if (event && event.sport === "football") {
+        const resolved = await resolveFixtureForEvent(event).catch(() => null);
+        if (resolved) stats = await getFixtureStatistics(resolved.fixtureId).catch(() => null);
+      }
+    }
     if (!stats) throw Errors.notFound("Estatísticas indisponíveis para este evento");
     res.json(stats);
   })
@@ -500,6 +516,58 @@ router.get(
 
     const coordinates = await fetchBallCoordinates(fixtureId).catch(() => []);
     res.json({ points: normalizeBallPositions(coordinates) });
+  })
+);
+
+// Logos de equipa Sportmonks — 302 transparente para o CDN deles (cdn.sportmonks.com).
+// Motivo: há setups (Cloudflare, CSPs, etc.) onde o browser não carrega direto imagens de CDNs
+// terceiros ou bloqueia por política de referrer; este endpoint funciona como fallback. Também
+// serve de atalho só por ID (url amigável, tipo /teams/logo/53) sem ter de carregar o image_path
+// de cada resposta. 404 se o ID não for conhecido no cache local de teams.
+router.get("/teams/logo/:id", (req, res) => {
+  const rawId = Number(req.params.id);
+  if (!Number.isFinite(rawId)) return res.status(400).end();
+  const url = getTeamCachedLogo(rawId);
+  if (!url) return res.status(404).end();
+  res.redirect(302, url);
+});
+
+// Fotos de jogadores Sportmonks — mesma filosofia do endpoint /teams/logo acima. 302 transparente
+// para o CDN deles; 404 se o jogador não for conhecido no cache local (ainda não foi feito o
+// /import-players, ou a Sportmonks não tem foto desse jogador — image_path = placeholder).
+router.get("/players/photo/:id", (req, res) => {
+  const rawId = Number(req.params.id);
+  if (!Number.isFinite(rawId)) return res.status(400).end();
+  const url = getPlayerCachedPhoto(rawId);
+  if (!url) return res.status(404).end();
+  res.redirect(302, url);
+});
+
+// Import one-shot de todos os teams (Get All Teams da Sportmonks) para preencher o cache de
+// logos (getTeamCachedLogo). Uma vez corrido, todos os eventos que venham com participants SEM
+// image_path (alguns endpoints omitiam este campo no passado) já têm backfill automático para o
+// cache. Chamada admin-on-demand (não é chamada no startup normal do servidor — 25.000 equipas
+// = 500 pedidos, fazê-lo no boot podia partir rate limits).
+router.get(
+  "/sportmonks-debug/import-teams",
+  asyncHandler(async (_req, res) => {
+    if (!process.env.SPORTMONKS_API_KEY) return res.json({ ok: false, message: "SPORTMONKS_API_KEY não configurada" });
+    const r = await importAllTeams();
+    res.json({ ok: r.errors === 0, loaded: r.total, errors: r.errors });
+  })
+);
+
+// Import one-shot de todos os jogadores (Get All Players da Sportmonks). Preenche o cache de
+// fotos (getPlayerCachedPhoto) que a timeline usa para jogadores em golos/cartões/substituições
+// e a lista de artilheiros. Chamada admin-on-demand por ser um import pesado: ~250.000 jogadores
+// em planos completos = 5000 páginas × 50 = 5000 pedidos. Para planos Starter (5 ligas) é bem
+// menor.
+router.get(
+  "/sportmonks-debug/import-players",
+  asyncHandler(async (_req, res) => {
+    if (!process.env.SPORTMONKS_API_KEY) return res.json({ ok: false, message: "SPORTMONKS_API_KEY não configurada" });
+    const r = await importAllPlayers();
+    res.json({ ok: r.errors === 0, loaded: r.total, errors: r.errors });
   })
 );
 

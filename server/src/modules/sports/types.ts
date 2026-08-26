@@ -111,5 +111,7 @@ export interface LiveEvent {
   // utilizador ("a documentação fornece os dados e a gente recria aqui a forma que a gente quer
   // que apareça"). undefined = sem eventos disponíveis para decidir, ou motivo não reconhecido —
   // o frontend mostra "Suspenso" genérico nesse caso.
-  suspendedReason?: "goal" | "var";
+  suspendedReason?: "goal" | "var" | "penalty";
+  homeLogo?: string;
+  awayLogo?: string;
 }

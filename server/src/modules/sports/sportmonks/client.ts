@@ -77,7 +77,15 @@ async function sportmonksFetch<T>(path: string, params: Record<string, string | 
       upstreamBody: body.slice(0, 500),
     });
   }
-  return res.json() as Promise<T>;
+  const parsed = (await res.json()) as T & { rate_limit?: { resets_in_seconds: number; remaining: number; requested_entity: string } };
+  // Rate limit POR ENTIDADE (confirmado na documentação oficial: "3000 API calls per entity per hour",
+  // livescores / odds / fixtures são entidades diferentes). Loggar apenas quando a entidade fica com
+  // < 10% da cota restante (300/3000) para não fazer spam de logs.
+  const rl = parsed.rate_limit;
+  if (rl && rl.remaining <= 300) {
+    logger.warn({ path, entity: rl.requested_entity, remaining: rl.remaining, resetsInS: rl.resets_in_seconds }, "Sportmonks: cota da entidade a esgotar (<=10%)");
+  }
+  return parsed as T;
 }
 
 // --- Formas confirmadas (ver comentário do módulo) ---
@@ -109,6 +117,7 @@ interface SportmonksParticipant {
   id: number;
   name: string;
   short_code?: string;
+  image_path?: string;
   meta?: { location?: "home" | "away"; winner?: boolean; position?: number };
 }
 interface SportmonksFixture {
@@ -273,17 +282,19 @@ function normalizeFixture(fixture: SportmonksFixture, league: SportmonksLeague |
     home: home.name,
     away: away.name,
     minuteOrPeriod: "",
-    // Sem amostra de um jogo por começar/ao vivo (a única amostra recebida é sempre de uma ronda
-    // já terminada), por isso NUNCA se assume "ao vivo" pelo state_id — só "agendado" (pela hora
-    // real vs. agora) ou "terminado" (fallback), evitando inventar significado para um enum não
-    // confirmado. A classificação Pré-jogo/Ao Vivo real fica por wiring futuro quando houver uma
-    // amostra real de state_id de um jogo a decorrer.
-    status: hasKickedOff ? "finished" : "scheduled",
+    // ⚠️ CORREÇÃO (2026-08-26): anterior era "finished" para qualquer jogo já começado, inclusive
+    // os ainda a decorrer — bug que causava inconsistência downstream (rotas que liam status para
+    // decidir comportamento). Agora "live" quando a hora já passou (a mesma convenção usada por
+    // normalizeFixtureDetail() mais abaixo). O híbrido e o prematch continuam a filtrar
+    // corretamente: prematch mostra só "scheduled", Ao Vivo mostra o que vem de /livescores/inplay.
+    status: hasKickedOff ? "live" : "scheduled",
     odds: finalizeMarketOrder(groupOddsIntoMarkets(fixture.odds)),
     updatedAt: new Date().toISOString(),
     source: "sportmonks",
     startTime: startTimeIso,
     country: league?.country?.iso2,
+    homeLogo: home.image_path || getTeamCachedLogo(home.id) || undefined,
+    awayLogo: away.image_path || getTeamCachedLogo(away.id) || undefined,
   };
 }
 
@@ -399,6 +410,22 @@ export async function fetchLivescoresInplay(): Promise<SportmonksLiveFixture[]> 
 }
 
 /**
+ * GET /livescores/latest — CONFIRMADO pela documentação oficial v3
+ * (https://docs.sportmonks.com/v3/endpoints-and-entities/endpoints/livescores/get-latest-updated-livescores):
+ * devolve APENAS as fixtures que receberam atualizações nos últimos 10 segundos (placar,
+ * eventos, relógio). Payload muito mais pequeno do que /inplay completo, ideal para polling
+ * RÁPIDO a 1-2 segundos sem pagar o custo de parsear todas as fixtures ao vivo em cada ciclo.
+ * A mesma interface SportmonksLiveFixture serve (/latest é um subconjunto filtrand do mesmo
+ * recurso "Livescore" nos docs). Include mínimo (não pede odds aqui — elas vêm no poll lento).
+ */
+export async function fetchLatestLivescores(): Promise<SportmonksLiveFixture[]> {
+  const data = await sportmonksFetch<{ data: SportmonksLiveFixture[] }>("/livescores/latest", {
+    include: "league.country;participants;periods;scores;events.type",
+  });
+  return data.data ?? [];
+}
+
+/**
  * GET /odds/inplay/fixtures/{id} — CONFIRMADO por uma amostra real completa colada pelo utilizador
  * (várias odds do mesmo jogo com `latest_bookmaker_update` espalhado entre 19:00 e 19:38, ao longo
  * do jogo inteiro — prova de que ESTE endpoint atualiza mesmo durante o jogo, ao contrário de
@@ -431,7 +458,10 @@ export function normalizeLiveFixture(fixture: SportmonksLiveFixture, odds: LiveO
   const activePeriod = periods.find((p) => p.ended === null) ?? periods[periods.length - 1];
   const minuteOrPeriod = activePeriod ? `${activePeriod.minutes}'` : "";
 
-  const finalOdds = finalizeMarketOrder(odds);
+  // ⚠️ CORREÇÃO (2026-08-26): `odds` já vem de fetchInplayOddsForFixture() que internamente chama
+  // finalizeMarketOrder(groupOddsIntoMarkets(...)) — re-aplicar aqui era uma chamada duplicada,
+  // idempotente (não quebrava nada visualmente) mas desperdiçava CPU em cada ciclo de poll Ao Vivo.
+  const finalOdds = odds;
   const suspendedReason = finalOdds[0] && !finalOdds[0].isActive ? detectSuspendedReason(fixture.events) : undefined;
 
   return {
@@ -449,6 +479,8 @@ export function normalizeLiveFixture(fixture: SportmonksLiveFixture, odds: LiveO
     updatedAt: new Date().toISOString(),
     source: "sportmonks",
     country: fixture.league?.country?.iso2,
+    homeLogo: home.image_path || getTeamCachedLogo(home.id) || undefined,
+    awayLogo: away.image_path || getTeamCachedLogo(away.id) || undefined,
   };
 }
 
@@ -469,8 +501,10 @@ interface SportmonksFixtureState {
 // não reconhecidos ficam sem tradução, mostrados com o nome tal como vier. `minute`/`extra_minute`
 // CONFIRMADOS (ex: minute:45, extra_minute:4 = "45+4'", tempo adicionado).
 interface SportmonksEventPlayer {
+  id?: number;
   display_name: string;
   name: string;
+  image_path?: string;
 }
 interface SportmonksEventType {
   name: string;
@@ -480,7 +514,9 @@ interface SportmonksMatchEvent {
   participant_id: number;
   type_id: number;
   player_name?: string | null;
+  player_id?: number | null;
   related_player_name?: string | null;
+  related_player_id?: number | null;
   addition?: string | null;
   minute: number;
   extra_minute?: number | null;
@@ -581,10 +617,12 @@ export function normalizeBallPositions(coordinates: SportmonksBallCoordinate[], 
 
 export interface MatchEventRow {
   minute: string; // "76'" ou "45+4'" (tempo adicionado)
-  kind: "goal" | "yellowcard" | "redcard" | "substitution" | "var" | "other";
+  kind: "goal" | "yellowcard" | "redcard" | "substitution" | "var" | "penalty" | "goal_disallowed" | "other";
   label: string;
   playerName?: string; // ausente em eventos sem jogador associado (ex: revisão VAR), nunca "?"
+  playerPhotoUrl?: string; // foto do jogador acima, se disponível (Sportmonks /players/{id}.image_path)
   relatedPlayerName?: string; // só substituições — o outro jogador envolvido, sem assumir direção
+  relatedPlayerPhotoUrl?: string; // foto do jogador relacionado (sai da equipa)
   team: string;
   isHome: boolean;
 }
@@ -604,12 +642,14 @@ const VAR_EVENT_TYPE_ID = 10; // CONFIRMADO (ver comentário de SportmonksMatchE
  * motivo sem ter pelo menos um evento real para se basear; o mercado mostra "Suspenso" genérico
  * nesse caso, como já mostrava antes desta função existir.
  */
-function detectSuspendedReason(events: SportmonksMatchEvent[] | undefined): "goal" | "var" | undefined {
+function detectSuspendedReason(events: SportmonksMatchEvent[] | undefined): "goal" | "var" | "penalty" | undefined {
   if (!events?.length) return undefined;
   const minuteValue = (ev: SportmonksMatchEvent) => ev.minute * 100 + (ev.extra_minute ?? 0);
   const mostRecent = [...events].sort((a, b) => minuteValue(b) - minuteValue(a))[0]!;
   if (mostRecent.type_id === VAR_EVENT_TYPE_ID) return "var";
-  if (mostRecent.type?.developer_name === "GOAL") return "goal";
+  const developerName = mostRecent.type?.developer_name ?? "";
+  if (developerName === "PENALTY") return "penalty";
+  if (developerName === "GOAL") return "goal";
   return undefined;
 }
 
@@ -618,12 +658,14 @@ const EVENT_KIND_BY_DEVELOPER_NAME: Record<string, MatchEventRow["kind"]> = {
   YELLOWCARD: "yellowcard",
   REDCARD: "redcard",
   SUBSTITUTION: "substitution",
+  PENALTY: "penalty",
 };
 const EVENT_LABEL_PT: Record<string, string> = {
   GOAL: "Golo",
   YELLOWCARD: "Cartão Amarelo",
   REDCARD: "Cartão Vermelho",
   SUBSTITUTION: "Substituição",
+  PENALTY: "Pênalti Marcado",
 };
 
 /** Linha do tempo do jogo (golos/cartões/substituições/revisões VAR), ordenada por minuto — usa os
@@ -635,16 +677,32 @@ export function getMatchTimeline(fixture: SportmonksFixtureDetail): MatchEventRo
       const developerName = ev.type?.developer_name ?? "";
       const team = fixture.participants?.find((p) => p.id === ev.participant_id);
       const isVar = ev.type_id === VAR_EVENT_TYPE_ID;
-      const kind: MatchEventRow["kind"] = isVar ? "var" : EVENT_KIND_BY_DEVELOPER_NAME[developerName] ?? "other";
-      const label = isVar ? (ev.addition === "Goal Disallowed" ? "Golo Anulado (VAR)" : "Revisão VAR") : EVENT_LABEL_PT[developerName] ?? ev.type?.name ?? "Evento";
+      const isGoalDisallowed = isVar && ev.addition === "Goal Disallowed";
+      const kind: MatchEventRow["kind"] = isGoalDisallowed
+        ? "goal_disallowed"
+        : isVar
+          ? "var"
+          : EVENT_KIND_BY_DEVELOPER_NAME[developerName] ?? "other";
+      const label = isGoalDisallowed
+        ? "Golo Anulado (VAR)"
+        : isVar
+          ? "Revisão VAR"
+          : EVENT_LABEL_PT[developerName] ?? ev.type?.name ?? "Evento";
       const playerName = ev.player?.display_name ?? ev.player_name ?? undefined;
+      const playerPhoto =
+        (ev.player && "image_path" in ev.player
+          ? (ev.player as unknown as { image_path?: string }).image_path
+          : undefined) ?? getPlayerCachedPhoto(ev.player?.id ?? ev.player_id);
+      const relatedPhoto = developerName === "SUBSTITUTION" ? getPlayerCachedPhoto(ev.related_player_id) : undefined;
       return {
         minute: ev.extra_minute ? `${ev.minute}+${ev.extra_minute}'` : `${ev.minute}'`,
         minuteValue: ev.minute * 100 + (ev.extra_minute ?? 0),
         kind,
         label,
         playerName,
+        playerPhotoUrl: playerPhoto || undefined,
         relatedPlayerName: developerName === "SUBSTITUTION" ? (ev.related_player_name ?? undefined) : undefined,
+        relatedPlayerPhotoUrl: relatedPhoto || undefined,
         team: team?.name ?? "",
         isHome: team?.meta?.location === "home",
       };
@@ -696,7 +754,112 @@ export function normalizeFixtureDetail(fixture: SportmonksFixtureDetail): LiveEv
     source: "sportmonks",
     startTime: startTimeIso,
     country: fixture.league?.country?.iso2,
+    homeLogo: home.image_path || getTeamCachedLogo(home.id) || undefined,
+    awayLogo: away.image_path || getTeamCachedLogo(away.id) || undefined,
   };
+}
+
+/**
+ * GET /teams?filters=IdAfter:X — página por página (per_page=50). Devolve todos os teams registados
+ * na Sportmonks para povoar um cache local "id → image_path". Usado como backfill quando uma
+ * fixture não trouxe o image_path dentro de participants (alguns endpoints antigos omitiam este
+ * campo — não há mal nenhum, 0 erros, só falta de informação). A função devolve a contagem total
+ * carregada; o importador é o /api/sports/sportmonks-debug/import-teams abaixo. */
+const TEAM_CACHE_KEY = "sportmonks_team_cache_v1";
+type TeamCacheEntry = { id: number; name: string; image_path: string };
+function getTeamCache(): Map<number, TeamCacheEntry> {
+  const globalKey = globalThis as unknown as { [TEAM_CACHE_KEY]?: Map<number, TeamCacheEntry> };
+  let store = globalKey[TEAM_CACHE_KEY];
+  if (!store) {
+    store = new Map<number, TeamCacheEntry>();
+    globalKey[TEAM_CACHE_KEY] = store;
+  }
+  return store;
+}
+
+export function getTeamCachedLogo(id: number): string | undefined {
+  return getTeamCache().get(id)?.image_path;
+}
+
+export async function importAllTeams(): Promise<{ total: number; errors: number }> {
+  const store = getTeamCache();
+  let total = 0;
+  let errors = 0;
+  let afterId = 0;
+  // IdAfter filtra *estritamente maior que* (ver doc — &filters=IdAfter:758 devolve teams > 758).
+  // Segurança máxima: 500 páginas máximas (25.000 equipas) para nunca ficar num loop infinito se
+  // a API mudar o comportamento do filtro.
+  for (let page = 0; page < 500; page++) {
+    const res = await sportmonksFetch<{
+      data: Array<{ id: number; name: string; image_path?: string }>;
+      pagination?: { has_more?: boolean };
+    }>("/teams", { filters: `IdAfter:${afterId}`, per_page: 50 }).catch(() => null);
+    if (!res?.data?.length) {
+      errors += res ? 0 : 1;
+      break;
+    }
+    for (const t of res.data) {
+      if (t.image_path) store.set(t.id, { id: t.id, name: t.name, image_path: t.image_path });
+      else store.set(t.id, { id: t.id, name: t.name, image_path: "" });
+      afterId = t.id;
+    }
+    total += res.data.length;
+    if (!res.pagination?.has_more) break;
+  }
+  return { total, errors };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLAYERS CACHE (Get All Players Sportmonks v3) — mesma filosofia do teams cache
+// (logotipos equipas). Paginação &filters=IdAfter:X, 50 por página. Atualmente
+// guarda {display_name, image_path} que são os 2 campos que a timeline (golos/
+// cartões/substituições) precisa — um jogador sem foto não "falha", só sem foto.
+// ─────────────────────────────────────────────────────────────────────────────
+const PLAYER_CACHE_KEY = "sportmonks_player_cache_v1";
+type PlayerCacheEntry = { id: number; display_name: string; image_path: string };
+function getPlayerCache(): Map<number, PlayerCacheEntry> {
+  const globalKey = globalThis as unknown as { [PLAYER_CACHE_KEY]?: Map<number, PlayerCacheEntry> };
+  let store = globalKey[PLAYER_CACHE_KEY];
+  if (!store) {
+    store = new Map<number, PlayerCacheEntry>();
+    globalKey[PLAYER_CACHE_KEY] = store;
+  }
+  return store;
+}
+
+export function getPlayerCachedPhoto(id: number | undefined | null): string | undefined {
+  if (!id) return undefined;
+  return getPlayerCache().get(id)?.image_path;
+}
+
+export async function importAllPlayers(): Promise<{ total: number; errors: number }> {
+  const store = getPlayerCache();
+  let total = 0;
+  let errors = 0;
+  let afterId = 0;
+  // Até ~250.000 jogadores dependendo da subscrição (50 por página → 5000 páginas
+  // máximas como teto de segurança anti loop infinito se IdAfter mudar comportamento).
+  for (let page = 0; page < 5000; page++) {
+    const res = await sportmonksFetch<{
+      data: Array<{ id: number; display_name?: string; name?: string; image_path?: string }>;
+      pagination?: { has_more?: boolean };
+    }>("/players", { filters: `IdAfter:${afterId}`, per_page: 50 }).catch(() => null);
+    if (!res?.data?.length) {
+      errors += res ? 0 : 1;
+      break;
+    }
+    for (const p of res.data) {
+      store.set(p.id, {
+        id: p.id,
+        display_name: p.display_name || p.name || "",
+        image_path: p.image_path || "",
+      });
+      afterId = p.id;
+    }
+    total += res.data.length;
+    if (!res.pagination?.has_more) break;
+  }
+  return { total, errors };
 }
 
 /**
@@ -726,8 +889,12 @@ export async function diagnoseLiveOddsMovement(waitMs = 8_000): Promise<{
   const fixture = live[0]!;
 
   const snapshotOf = async (): Promise<Record<string, number>> => {
-    const detail = await fetchFixtureDetail(fixture.id);
-    const primary = groupOddsIntoMarkets(detail.odds).find((m) => /full.?time result/i.test(m.market));
+    // ⚠️ CORREÇÃO (2026-08-26): anterior chamava fetchFixtureDetail(), cujas odds o próprio
+    // módulo confirma estarem congeladas desde o pré-jogo (comentário em fetchInplayOddsForFixture,
+    // L404-L406) — dava um falso negativo "odds não mexeram" mesmo que o feed esteja a funcionar.
+    // Agora usa o endpoint de odds ao vivo CONFIRMADO: GET /odds/inplay/fixtures/{id}.
+    const odds = await fetchInplayOddsForFixture(fixture.id);
+    const primary = odds.find((m) => /full.?time result|1x2|match.?winner/i.test(m.market));
     const out: Record<string, number> = {};
     if (primary) for (const [label, sel] of Object.entries(primary.selections)) out[label] = sel.odd;
     return out;
@@ -1234,8 +1401,14 @@ function buildTeamForm(teamId: number, stages: SportmonksScheduleStage[]): { rec
 
     if (fixture.result_info) {
       const currentScores = (fixture.scores ?? []).filter((s) => s.description === "CURRENT");
-      const ownGoals = currentScores.find((s) => s.participant_id === teamId)?.score.goals;
-      const oppGoals = currentScores.find((s) => s.participant_id === opponent.id)?.score.goals;
+      // ⚠️ CORREÇÃO (2026-08-26): anterior pesquisava scores.participant_id === teamId — esse campo
+      // em alguns endpoints da Sportmonks pode ser o jogador autor (ex: golo próprio), não a
+      // equipa. Alinhado com a lógica CONFIRMADA de normalizeH2HFixture (L1327-L1335), que usa
+      // s.score.participant ("home"|"away") + isHome para saber de que lado estamos.
+      const homeScore = currentScores.find((s) => s.score.participant === "home")?.score.goals;
+      const awayScore = currentScores.find((s) => s.score.participant === "away")?.score.goals;
+      const ownGoals = isHome ? homeScore : awayScore;
+      const oppGoals = isHome ? awayScore : homeScore;
       let result: "V" | "E" | "D" | undefined;
       if (own.meta?.winner === true) result = "V";
       else if (opponent.meta?.winner === true) result = "D";
