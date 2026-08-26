@@ -626,8 +626,13 @@ function normalizeOddValue(raw) {
 // Fix B.1: Classifica uma label como "parece lado Home / Draw / Away / None".
 // Devolve "h" "d" "a" ou null. Usa palavras mais comuns em pt/en 1x2 / moneyline.
 function classifyHdaLabel(labelRaw) {
-  const s = String(labelRaw ?? "")
-    .trim()
+  const rawOrig = String(labelRaw ?? "").trim();
+  // Fix E (odds altas de handicap): REJEITA QUALQUER label que contenha
+  // sinais de linha (+ / − / -) ou dígitos. Handicap e O/U com linha extrema
+  // (ex: "Casa +5.5") têm odds absurdas (151.00) que NUNCA pertencem ao
+  // mercado principal 1X2/Moneyline puro.
+  if (/[+\-−0-9]/.test(rawOrig)) return null;
+  const s = rawOrig
     .toLowerCase()
     // Remove quaisquer anexos de linha (ex: "Casa -1.5" → "casa", "Home +0.5" → "home")
     .replace(/[+-−]\s*\d+([.,]\d+)?$/, "")
@@ -700,6 +705,8 @@ function safeFindPrimaryMarket(e) {
     let grupoValido = true;
     for (const [lbl, sel] of sels) {
       if (!sel || sel.isActive === false) { grupoValido = false; break; }
+      // Fix E (odds altas): NÃO aceita handicap / O/U labels com dígitos ou +−
+      if (/[+\-−0-9]/.test(String(lbl ?? "").trim())) { grupoValido = false; break; }
       const v = normalizeOddValue(sel.odd);
       if (!Number.isFinite(v) || v < 1.01 || v > 1000) { grupoValido = false; break; }
       const c = classifyHdaLabel(lbl);
