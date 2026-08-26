@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../../middleware/errorHandler";
 import { requireAuth, type AuthedRequest } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
-import { placeBets, listMyBets } from "./service";
+import { placeBets, listMyBets, placeFeaturedComboBet } from "./service";
 import { getCashOutOffer, executeCashOut } from "./cashout";
 import { userRateLimit } from "../../lib/userRateLimit";
 import { complianceGate } from "../../lib/complianceGate";
@@ -61,6 +61,26 @@ router.get(
     const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
     const result = await listMyBets(req.user!.id, { cursor });
     res.json(result);
+  })
+);
+
+// "Melhores Escolhas" — coloca uma combinação curada por um admin (ver featuredCombos/service.ts).
+// Corpo mínimo de propósito ({comboId, stake}, nunca seleções/odds do cliente): a odd boostada só
+// é calculada dentro de placeFeaturedComboBet(), a partir das odds REAIS e atuais no momento da
+// colocação — nunca confiada vinda do browser (mesma disciplina de validateSelection()).
+router.post(
+  "/featured-combo",
+  requireAuth,
+  placeBetLimiter,
+  complianceGate({
+    requireKyc: true,
+    requireNotSelfExcluded: true,
+    checkWeeklyLossLimit: true,
+  }),
+  validateBody(z.object({ comboId: z.string().min(1), stake: z.number().positive() })),
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const bet = await placeFeaturedComboBet(req.user!.id, req.body.comboId, req.body.stake);
+    res.status(201).json({ bet });
   })
 );
 

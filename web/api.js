@@ -326,6 +326,15 @@ const Bet62Api = (() => {
      */
     placeBets: (mode, selections, stake) =>
       request("/bets", { method: "POST", body: { mode, selections, stake } }),
+    /**
+     * "Melhores Escolhas" — coloca uma combinação curada por um admin (ver
+     * featuredCombos/service.ts no backend). O boost já vem aplicado às odds reais e atuais no
+     * momento da colocação, calculado inteiramente no servidor.
+     * @param {string} comboId
+     * @param {number} stake
+     */
+    placeFeaturedCombo: (comboId, stake) =>
+      request("/bets/featured-combo", { method: "POST", body: { comboId, stake } }),
     /** @param {string} [cursor] */
     listMyBets: (cursor) =>
       request(`/bets${cursor ? `?cursor=${cursor}` : ""}`),
@@ -381,6 +390,9 @@ const Bet62Api = (() => {
     /** @param {string} eventId */
     getBallPosition: (eventId) =>
       request(`/sports/events/${encodeURIComponent(eventId)}/ball-position`, { auth: false }),
+    /** @param {string} eventId */
+    getFeaturedCombos: (eventId) =>
+      request(`/sports/events/${encodeURIComponent(eventId)}/featured-combos`, { auth: false }),
 
     // Cassino
     /**

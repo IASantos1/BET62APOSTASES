@@ -440,13 +440,22 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
    combinada mostrada é sempre o produto real das odds atuais. Ver buildFeaturedCombo() em app.js. */
 #featured-combo:empty{margin:0}
 .combo-title{font-family:'Bebas Neue',sans-serif;letter-spacing:.6px;font-size:.92rem;color:var(--muted);margin-bottom:8px}
-.combo-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 16px;margin-bottom:16px}
+/* Carrossel horizontal — várias combinações do mesmo evento lado a lado, como na referência
+   visual enviada pelo utilizador (várias fotos, uma combinação por cartão, a espreitar as
+   seguintes na borda). */
+.combo-carousel{display:flex;gap:12px;overflow-x:auto;padding-bottom:6px;margin-bottom:16px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}
+.combo-carousel::-webkit-scrollbar{display:none}
+.combo-card{flex:0 0 82%;max-width:340px;scroll-snap-align:start;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 16px}
+.combo-boost-badge{display:inline-block;background:linear-gradient(90deg,var(--red),var(--gold));color:#fff;font-weight:700;font-size:.72rem;letter-spacing:.02em;border-radius:8px;padding:5px 10px;margin-bottom:10px}
 .combo-leg{display:flex;align-items:baseline;gap:8px;font-size:.82rem;padding:7px 0;border-bottom:1px solid var(--border)}
 .combo-leg:last-of-type{border-bottom:none}
 .combo-leg-dot{width:6px;height:6px;border-radius:50%;background:var(--red);flex-shrink:0}
-.combo-leg-cat{color:var(--muted);font-size:.7rem;text-transform:uppercase;letter-spacing:.02em;flex-shrink:0}
-.combo-odd-row{display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:.88rem}
-.combo-odd-row b{color:var(--gold);font-size:1.15rem}
+.combo-odd-row{display:flex;align-items:baseline;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.combo-odd-old{color:var(--muted);text-decoration:line-through;font-size:.85rem}
+.combo-odd-new{color:var(--gold);font-size:1.2rem;font-weight:700}
+.combo-stake-row{display:flex;gap:8px;margin-top:10px}
+.combo-stake-row input[type="number"]{flex:1;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:.88rem}
+.combo-error{margin:8px 0 0}
 .selection-btn.picked{border-color:var(--red);background:rgba(230,48,39,.1)}
 .selection-btn.picked .sel-odd{color:var(--red)}
 .selection-btn.suspended{cursor:not-allowed;opacity:.5;background:var(--surface2)}

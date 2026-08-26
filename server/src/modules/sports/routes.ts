@@ -27,6 +27,7 @@ import {
   resolveRoundAndSeasonId,
 } from "./sportmonks/client";
 import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
+import { getPricedFeaturedCombosForEvent } from "../featuredCombos/service";
 import { Errors } from "../../lib/errors";
 import { logger } from "../../lib/logger";
 
@@ -499,6 +500,16 @@ router.get(
 
     const coordinates = await fetchBallCoordinates(fixtureId).catch(() => []);
     res.json({ points: normalizeBallPositions(coordinates) });
+  })
+);
+
+// "Melhores Escolhas" (combinações curadas por um admin, ver featuredCombos/service.ts) —
+// qualquer desporto/fonte (não só futebol/Sportmonks, ao contrário das rotas acima), preços
+// recalculados a partir das odds reais e atuais a cada pedido, nunca cacheados.
+router.get(
+  "/events/:id/featured-combos",
+  asyncHandler(async (req, res) => {
+    res.json({ combos: await getPricedFeaturedCombosForEvent(req.params.id) });
   })
 );
 

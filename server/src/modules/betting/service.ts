@@ -9,6 +9,7 @@ import { ALL_SPORTS, type LiveEvent, type Sport } from "../sports/types";
 import { applyFinalOutcome } from "./settlement";
 import { classifyForBetBuilder } from "./settlementRules";
 import { getActiveUserPromotion, splitStakeForBonus, betQualifiesForRollover, applyRolloverContribution } from "../promotions/service";
+import { getActiveFeaturedComboById, priceLegsAgainstEvent, applyBoost, type FeaturedComboLegInput } from "../featuredCombos/service";
 
 type Tx = Prisma.TransactionClient;
 
@@ -151,13 +152,17 @@ export interface PlaceBetsResult {
 }
 
 /** Cria um único Bet combinado (várias seleções, um só stake, odd total = produto das odds) —
- * partilhado por MULTIPLA e BET_BUILDER, que só diferem nas regras de validação antes disto. */
+ * partilhado por MULTIPLA, BET_BUILDER e as combinações "Melhores Escolhas" (ver
+ * placeFeaturedComboBet abaixo), que só diferem nas regras de validação antes disto. `extra` só é
+ * usado pelas "Melhores Escolhas", para gravar a que combinação/boost esta aposta pertence — nunca
+ * afeta o cálculo de payout, que só olha para o produto de BetSelection.odd (ver settlement.ts). */
 async function createCombinedBet(
   userId: string,
   walletId: string,
   type: "MULTIPLA" | "BET_BUILDER",
   validated: ValidatedSelection[],
-  stake: number
+  stake: number,
+  extra?: { featuredComboId: string; boostPercent: number }
 ): Promise<Bet> {
   const totalOdd = validated.reduce((acc, v) => acc.mul(v.odd), new Prisma.Decimal(1));
   const stakeDecimal = new Prisma.Decimal(stake);
@@ -176,6 +181,8 @@ async function createCombinedBet(
         status: "PENDING",
         bonusStakeAmount: split.bonusPortion,
         userPromotionId: split.bonusPortion.greaterThan(0) ? split.userPromotion?.id : null,
+        featuredComboId: extra?.featuredComboId,
+        boostPercent: extra?.boostPercent,
         selections: { create: validated.map(betSelectionCreateData) },
       },
       include: { selections: true },
@@ -297,6 +304,45 @@ export async function placeBets(params: PlaceBetsParams): Promise<PlaceBetsResul
   });
 
   return { bets, errors };
+}
+
+/** Coloca uma aposta a partir de uma "Melhores Escolhas" (FeaturedCombo) — pedido explícito do
+ * utilizador para um "Booster" real, nunca cosmético: cada perna é revalidada aqui contra as odds
+ * REAIS e atuais do evento (mesma disciplina de validateSelection() acima, sem nunca confiar no
+ * que quer que esteja gravado desde a criação da combinação pelo admin), e o boost é aplicado
+ * SÓ DEPOIS dessa validação passar — nunca a uma odd inventada ou desatualizada. O boost é
+ * distribuído geometricamente por todas as pernas (mesma fórmula de getPricedFeaturedCombosForEvent
+ * em featuredCombos/service.ts, para o preço mostrado ao utilizador bater exatamente com o que fica
+ * gravado) e guardado como o `odd` de cada BetSelection — a liquidação (settlement.ts) nunca sabe
+ * que existiu um boost, só vê o produto das odds já guardadas, exatamente como qualquer outra
+ * aposta combinada. */
+export async function placeFeaturedComboBet(userId: string, comboId: string, stake: number): Promise<Bet> {
+  if (await isSelfExcluded(userId)) throw Errors.selfExcluded();
+  if (!stake || stake < MIN_STAKE_EUR) throw Errors.badRequest(`O valor mínimo da aposta é ${MIN_STAKE_EUR.toFixed(2)}€.`);
+
+  const combo = await getActiveFeaturedComboById(comboId);
+  if (!combo) throw Errors.badRequest("Esta combinação já não está disponível. Atualize a página.");
+
+  const event = await resolveCurrentEvent(combo.sport, combo.eventId);
+  if (!event) throw Errors.badRequest("O evento já não está disponível para apostar.");
+  if (event.status === "finished") throw Errors.badRequest(`O evento "${event.home} vs ${event.away}" já terminou.`);
+
+  const legs = combo.legs as unknown as FeaturedComboLegInput[];
+  const pricedLegs = priceLegsAgainstEvent(event, legs);
+  if (!pricedLegs) throw Errors.badRequest("Uma das seleções desta combinação já não está disponível. Atualize a página.");
+
+  const { legs: boostedLegs } = applyBoost(pricedLegs, combo.boostPercent);
+  const validated: ValidatedSelection[] = boostedLegs.map((leg) => ({
+    input: { eventId: combo.eventId, sport: combo.sport, market: leg.market, selection: leg.selection, odd: leg.realOdd },
+    event,
+    odd: leg.boostedOdd,
+  }));
+
+  const wallet = await getWalletByUserId(userId);
+  return createCombinedBet(userId, wallet.id, "BET_BUILDER", validated, stake, {
+    featuredComboId: combo.id,
+    boostPercent: combo.boostPercent,
+  });
 }
 
 export async function listMyBets(userId: string, opts: { limit?: number; cursor?: string } = {}) {

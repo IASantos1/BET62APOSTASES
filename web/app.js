@@ -1522,7 +1522,16 @@ function betTicketHtml(b) {
   const statusMeta = TICKET_STATUS_META[b.status] || { cls: "st-pending", label: b.status };
   const statusCls = anyLegLive && isPending ? "st-live" : statusMeta.cls;
   const statusLabel = anyLegLive && isPending ? "Ao Vivo" : statusMeta.label;
-  const modeLabel = b.type === "MULTIPLA" ? "Múltipla" : b.type === "BET_BUILDER" ? "Bet Builder" : "Simples";
+  // "Melhores Escolhas" reaproveita o tipo BET_BUILDER internamente (mesma liquidação, ver
+  // placeFeaturedComboBet em betting/service.ts) — distingue-se aqui só para mostrar ao
+  // utilizador, nunca muda como a aposta é resolvida.
+  const modeLabel = b.boostPercent
+    ? `🔥 Melhores Escolhas (+${b.boostPercent}%)`
+    : b.type === "MULTIPLA"
+      ? "Múltipla"
+      : b.type === "BET_BUILDER"
+        ? "Bet Builder"
+        : "Simples";
 
   const returnLabel =
     b.status === "WON" ? "Ganho" : b.status === "CASHED_OUT" ? "Recebido" : b.status === "VOID" ? "Devolvido" : b.status === "LOST" ? "Retorno" : "Retorno potencial";
@@ -3699,64 +3708,91 @@ function renderMarketGroups(e) {
   el.innerHTML = entries.map((entry) => marketAccordionHtml(e, entry, isLive)).join("");
 }
 
-// ====================== MELHORES ESCOLHAS (combinação em destaque) ======================
-// Pedido explícito do utilizador, a partir de uma referência visual de uma casa de apostas
-// grande — mas SEM a etiqueta "boost"/desconto dessa referência: este projeto não tem nenhum
-// mecanismo real de desconto por combinação (as "Promoções" existentes são de conta/depósito, ver
-// admin/promotions), inventar uma percentagem de boost mostraria um preço que não corresponde ao
-// pagamento real. Em vez disso, a combinada em destaque usa SEMPRE o produto real das odds atuais
-// de 3 seleções reais (uma por categoria, a de odd mais baixa = mais provável, sem preferência
-// arbitrária) — mesmas categorias e mesmo motor de liquidação da Bet Builder já existente
-// (classifyForBetBuilder/submitBetBuilder), nunca um mercado ou preço sintetizado.
-const FEATURED_COMBO_CATEGORY_KEYS = ["RESULTADO", "BTTS", "GOLS"];
+// ====================== MELHORES ESCOLHAS (combinações reais curadas por um admin) ======================
+// Pedido explícito do utilizador: combinações PRÉ-MONTADAS por um admin (não geradas
+// automaticamente pela Bet Builder), com um "Booster" REAL — a odd boostada vem sempre calculada
+// no servidor a partir das odds reais e atuais do mercado no momento da colocação (ver
+// featuredCombos/service.ts e placeFeaturedComboBet em betting/service.ts), nunca uma percentagem
+// cosmética sobre um número inventado. Várias combinações do mesmo evento aparecem lado a lado
+// num carrossel horizontal (deslizar), como na referência visual enviada.
+let featuredCombosState = { eventId: null, combos: [] };
 
-function buildFeaturedCombo(e) {
-  if (!e || e.sport !== "football" || !e.odds || !e.odds.length) return null;
-  const picks = [];
-  for (const key of FEATURED_COMBO_CATEGORY_KEYS) {
-    const optionsByLabel = new Map();
-    for (const group of e.odds) {
-      if (classifyForBetBuilder(group.market) !== key) continue;
-      for (const [label, sel] of orderedSelectionEntries(group.selections)) {
-        if (!sel.isActive || !Number.isFinite(sel.odd)) continue;
-        if (!optionsByLabel.has(label)) optionsByLabel.set(label, { market: group.market, label, odd: sel.odd });
-      }
-    }
-    if (!optionsByLabel.size) continue;
-    const best = [...optionsByLabel.values()].reduce((a, b) => (b.odd < a.odd ? b : a));
-    picks.push({ category: key, ...best });
-  }
-  if (picks.length < 2) return null; // uma perna só não é uma "combinação"
-  return { picks, combinedOdd: picks.reduce((acc, p) => acc * p.odd, 1) };
-}
-
-function renderFeaturedCombo(e) {
+async function renderFeaturedCombo(e) {
   const el = document.getElementById("featured-combo");
   if (!el) return;
-  const combo = e._finished ? null : buildFeaturedCombo(e);
-  if (!combo) {
+  if (!e || e._finished) {
     el.innerHTML = "";
     return;
   }
-  const catLabel = (key) => BET_BUILDER_CATEGORIES.find((c) => c.key === key)?.label ?? key;
+  try {
+    const { combos } = await Bet62Api.getFeaturedCombos(e.id);
+    if (!currentMarketEvent || currentMarketEvent.id !== e.id) return; // saiu deste evento entretanto
+    featuredCombosState = { eventId: e.id, combos: combos || [] };
+  } catch {
+    featuredCombosState = { eventId: e.id, combos: [] };
+  }
+  renderFeaturedCombosCarousel(e);
+}
+
+function renderFeaturedCombosCarousel(e) {
+  const el = document.getElementById("featured-combo");
+  if (!el) return;
+  const combos = featuredCombosState.eventId === e.id ? featuredCombosState.combos : [];
+  if (!combos.length) {
+    el.innerHTML = "";
+    return;
+  }
   el.innerHTML = `
-    <div class="combo-title">MELHORES ESCOLHAS</div>
+    <div class="combo-title">🔥 MELHORES ESCOLHAS</div>
+    <div class="combo-carousel">${combos.map((c) => featuredComboCardHtml(e, c)).join("")}</div>`;
+}
+
+function featuredComboLegLabel(e, leg) {
+  // translateMarketBaseName() em vez de translateMarketDisplayName(): esta é UMA perna avulsa de
+  // uma combinação curada, não o grupo completo de seleções do mercado — não há como validar a
+  // "forma" esperada (ex: Resultado Final precisa das 3 vias completas) com só uma seleção à
+  // mão, por isso pula essa validação em vez de arriscar mostrar o nome bruto sem necessidade.
+  const marketPt = translateMarketBaseName(leg.market, e.sport) || leg.market;
+  return `${marketPt} - <b>${translateSelectionLabel(leg.selection)}</b>`;
+}
+
+function featuredComboCardHtml(e, combo) {
+  return `
     <div class="combo-card">
-      ${combo.picks
-        .map((p) => `<div class="combo-leg"><span class="combo-leg-dot"></span><span class="combo-leg-cat">${catLabel(p.category)}</span><b>${translateSelectionLabel(p.label)}</b></div>`)
-        .join("")}
-      <div class="combo-odd-row"><span>Odd combinada</span><b>${combo.combinedOdd.toFixed(2)}</b></div>
-      <button class="btn-outline" style="margin-top:10px" onclick="applyFeaturedCombo()">Adicionar ao Boletim</button>
+      <div class="combo-boost-badge">🚀 ${combo.boostPercent}% BOOST</div>
+      ${combo.legs.map((l) => `<div class="combo-leg"><span class="combo-leg-dot"></span>${featuredComboLegLabel(e, l)}</div>`).join("")}
+      <div class="combo-odd-row"><span class="combo-odd-old">${combo.realCombinedOdd.toFixed(2)}</span><span class="combo-odd-new">${combo.boostedCombinedOdd.toFixed(2)}</span></div>
+      <div class="combo-stake-row">
+        <input type="number" min="0.5" step="0.5" placeholder="Valor (€)" id="combo-stake-${combo.id}">
+        <button class="btn-save" style="width:auto;margin-top:0" onclick='submitFeaturedCombo(${attrJson(combo.id)})'>Apostar</button>
+      </div>
+      <div class="combo-error auth-error" id="combo-error-${combo.id}"></div>
     </div>`;
 }
 
-function applyFeaturedCombo() {
-  const e = currentMarketEvent;
-  const combo = buildFeaturedCombo(e);
-  if (!combo) return;
-  betBuilderPicks.clear();
-  combo.picks.forEach((p) => betBuilderPicks.set(p.category, { market: p.market, selection: p.label, odd: p.odd }));
-  selectMarketFilter(BET_BUILDER_LABEL);
+async function submitFeaturedCombo(comboId) {
+  const input = document.getElementById(`combo-stake-${comboId}`);
+  const errEl = document.getElementById(`combo-error-${comboId}`);
+  if (errEl) errEl.classList.remove("show");
+  const stake = Number(input?.value) || 0;
+  if (stake < 0.5) {
+    if (errEl) {
+      errEl.textContent = "Indique o valor da aposta.";
+      errEl.classList.add("show");
+    }
+    return;
+  }
+  try {
+    const { bet } = await Bet62Api.placeFeaturedCombo(comboId, stake);
+    alert(`✅ Aposta colocada!\nRetorno potencial: € ${Number(bet.potentialReturn).toFixed(2)}`);
+    loadBalance();
+    if (currentMarketEvent) renderFeaturedCombo(currentMarketEvent); // atualiza preços/lista
+  } catch (err) {
+    if (errEl) {
+      errEl.textContent = err.message || "Não foi possível colocar a aposta.";
+      errEl.classList.add("show");
+    }
+  }
 }
 
 // ====================== BET BUILDER (apostas combinadas do MESMO jogo) ======================
