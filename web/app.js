@@ -366,7 +366,7 @@ function paintPrematchList(container, realEvents) {
       <div class="live-card" onclick="openMarket('${e.id}', false)">
         <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime)}</span></div>
         <div class="lc-teams">${teamLogoImg(e.homeLogo,"sm",e.home)}<span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span>${teamLogoImg(e.awayLogo,"sm",e.away)}</div>
-        ${quickOddsHtml(e, e.odds?.[0], false)}
+        ${quickOddsHtml(e, findPrimaryMarketForCard(e), false)}
       </div>`
   );
   renderInBlocks(container, cardsHtml);
@@ -605,17 +605,137 @@ function primarySuspendedLabel(e) {
 // visível, correto) mas com o cartão sem odds nenhumas nem aviso, como se o mercado nem
 // existisse — o utilizador pediu explicitamente para nunca ficar "assim sem odds", entrar sempre
 // pelo menos como "Suspenso" até o bookmaker abrir o mercado.
+// =========== CARTÕES (lista eventos) — QUAL É O MERCADO QUE APARECE NO CARTÃO? ===========
+// Esta é a peça que estava a dar "esta tudo errada" na lista de eventos pré-jogo (27/08 snapshot).
+// Problema antigo: 4 lugares diferentes passavam `e.odds?.[0]` cegamente para quickOddsHtml().
+// Consequências (basta backend mandar odds[0] = o que vier, que é frequente):
+//   - Handicap no topo do cartão (devia ser 1X2)
+//   - Mais/Menos, Cantos, "Ausente/Sim / Empate/Sim / Início/Nº" (composite Result+BTTS) no lugar do 1X2
+//   - "Casa 101,00" (apenas 1 odd, sem Empate/Fora — backend só tem 1 seleção no primeiro grupo)
+//   - "Casa 11:00" — hora de kickoff tratada como odd
+// Solução: função FIND + VALIDAÇÃO:
+//   1. PRIORIDADE 1: procurar looksLikePrimaryMarket() (1X2/DNB/DC) em TODAS as odds (não só [0])
+//   2. PRIORIDADE 2: qualquer outro mercado 3-vias (Casa/Empate/Fora) com 3 odds válidas
+//   3. PRIORIDADE 3: qualquer mercado 2-vias (Sim/Não, Over/Under, Casa/Fora) com 2 odds válidas
+//   4. NÃO encontrei nenhum plausível → devolve undefined → quickOddsHtml() mostra SUSPENSO
+//      (melhor do que mostrar odds do mercado errado ou valores "11:00")
+// NOTA: looksLikePrimaryMarket e classificação devolvem sempre boolean/object mesmo com dados null.
+function findPrimaryMarketForCard(e) {
+  if (!e || !Array.isArray(e.odds) || !e.odds.length) return undefined;
+
+  // Helper: isOddValueAcceptable(v) — elimina valores impossíveis como horas ("11:00"), NaN, < 1.01.
+  // Sportmonks/Pulsescore devolvem Number, mas se backend parseou mal (ex: field mapeado horário)
+  // pode vir string com ":" ou data; filtramos aqui.
+  const ACCEPT_MIN = 1.01;
+  const ACCEPT_MAX = 10000;
+  const isOddValueAcceptable = (raw) => {
+    if (raw === null || raw === undefined) return false;
+    if (typeof raw === "string") {
+      // Rejeita explicitamente strings com formato data/hora (":", dias, etc.) — só aceita se
+      // puder ser convertida para número e o resultado bater a substring numérica.
+      if (!/^-?\d+([.,]\d+)?$/.test(raw.trim())) return false;
+      const n = Number(raw.replace(",", "."));
+      if (!Number.isFinite(n)) return false;
+      return n >= ACCEPT_MIN && n <= ACCEPT_MAX;
+    }
+    if (!Number.isFinite(raw)) return false;
+    return raw >= ACCEPT_MIN && raw <= ACCEPT_MAX;
+  };
+
+  // Selecções ativas + valor odd plausível:
+  const countValidSels = (g) => {
+    if (!g || !g.selections) return 0;
+    const entries = Object.entries(g.selections);
+    return entries.reduce((acc, [, sel]) => {
+      if (!sel) return acc;
+      if (sel.isActive === false) return acc;
+      return acc + (isOddValueAcceptable(sel.odd) ? 1 : 0);
+    }, 0);
+  };
+
+  // 1) 1X2 / Match Odds / Winner 3-vias OU Double Chance OU DNB — deteção robusta.
+  //    Mostramos APENAS se tiver 3 odds válidas (DNB 2 odds também OK).
+  const hdaLike = e.odds.find((g) => {
+    if (!g) return false;
+    if (looksLikePrimaryMarket(g)) {
+      const valid = countValidSels(g);
+      // 1X2: 3. DNB/Moneyline: 2. Double Chance: 3. Tudo aceitamos.
+      return valid >= 2;
+    }
+    // Fallback deteção simples por labels se looksLikePrimaryMarket não pegou por linguagem.
+    const labels = Object.keys(g.selections || {}).map((l) => String(l).trim().toLowerCase());
+    const words = ["1", "home", "casa", "draw", "empate", "x", "2", "away", "fora"];
+    const labelMatches = labels.filter((l) => words.includes(l)).length;
+    return labelMatches >= 2 && countValidSels(g) >= 2;
+  });
+  if (hdaLike) return hdaLike;
+
+  // 2) Outros mercados 3-vias quaisquer (3 seleções ativas, valores aceitáveis, 3 labels únicas e
+  //    não claramente composite tipo "Empate Anula Aposta/Nome de equipa"). Mostra apenas se 3 válidas.
+  const other3way = e.odds.find((g) => {
+    if (!g || !g.selections) return false;
+    const entries = Object.entries(g.selections);
+    if (entries.length !== 3) return false;
+    if (countValidSels(g) !== 3) return false;
+    const labels = entries.map(([l]) => String(l).trim().toLowerCase());
+    // Rejeita composite BTTS+Result tipo "Casa/Sim", "Empate/Não".
+    const looksComposite = labels.some((l) => l.includes("/") || l.includes("+"));
+    if (looksComposite) return false;
+    return true;
+  });
+  if (other3way) return other3way;
+
+  // 3) 2-vias (BTTS Sim/Não, Over/Under, Moneyline, Handicap 2-way). Mostra só 2 válidas e não
+  //    composite (evita "Resultado + Ambas Marcam" aqui).
+  const other2way = e.odds.find((g) => {
+    if (!g || !g.selections) return false;
+    const entries = Object.entries(g.selections);
+    if (entries.length !== 2) return false;
+    if (countValidSels(g) !== 2) return false;
+    const labels = entries.map(([l]) => String(l).trim().toLowerCase());
+    const looksComposite = labels.some((l) => l.includes("/") || l.includes("+"));
+    if (looksComposite) return false;
+    return true;
+  });
+  if (other2way) return other2way;
+
+  // 4) Nada plausível — mostra "Suspenso" no cartão.
+  return undefined;
+}
+
 const SUSPENDED_QUICK_ODDS_HTML = (e) => `<div class="lc-odds"><div class="suspended" style="flex:3">${primarySuspendedLabel(e)}</div></div>`;
 function quickOddsHtml(e, group, isLive) {
+  // 2ª linha de defesa: mesmo que callers passem um grupo com valores inválidos, filtramos aqui.
+  // remove seleções inativas ou com odd não-numérica (hora "11:00", etc.) e depois se o número
+  // de botões for 0, mostra Suspenso. Se houver só 1 (só Casa, por ex.), também mostra Suspenso
+  // — "101,00" sem contexto é pior do que "Suspenso".
   if (!group?.selections || !group.isActive) return SUSPENDED_QUICK_ODDS_HTML(e);
-  const entries = orderedSelectionEntries(group.selections).slice(0, 3);
+
+  // Rejeita explicitamente odds formato hora/data aqui (segunda camada).
+  const ACCEPT_MIN = 1.01;
+  const ACCEPT_MAX = 10000;
+  const entriesRaw = orderedSelectionEntries(group.selections);
+  const entries = [];
+  for (const [label, sel] of entriesRaw) {
+    if (!sel || sel.isActive === false) continue;
+    let v = sel.odd;
+    if (typeof v === "string") {
+      if (!/^-?\d+([.,]\d+)?$/.test(v.trim())) continue;
+      v = Number(v.replace(",", "."));
+    }
+    if (!Number.isFinite(v) || v < ACCEPT_MIN || v > ACCEPT_MAX) continue;
+    entries.push([label, { ...sel, odd: v }]);
+    if (entries.length >= 3) break;
+  }
   if (!entries.length) return SUSPENDED_QUICK_ODDS_HTML(e);
+  // Cartões em lista: se só houver 1 seleção plausível, melhor "Suspenso" (o utilizador não
+  // pode apostar de forma sensata em 1 botão sem contexto; é quase certo erro de parse no backend).
+  // Exceção: ténis e basquete 2-vias where sometimes moneyline only 2 buttons OK abaixo; 1 button continua Suspenso.
+  if (entries.length === 1) return SUSPENDED_QUICK_ODDS_HTML(e);
+
   return `<div class="lc-odds">${entries
     .map(([label, sel]) => {
       const labelPt = translateSelectionLabel(label);
-      if (!sel.isActive || !Number.isFinite(sel.odd)) {
-        return `<div class="suspended">${labelPt}<br>Suspenso</div>`;
-      }
       const key = `${e.id}|${group.market}|${label}`;
       const picked = betslipSelections.has(key);
       const selection = { eventId: e.id, sport: e.sport, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
@@ -2154,7 +2274,7 @@ function highlightPrematchCardHtml(e, icon) {
 
 function highlightLiveCardHtml(e, icon) {
   const clockClass = isClockMissing(e) ? "clock-missing" : "";
-  const oddsHtml = quickOddsHtml(e, e.odds?.[0], true);
+  const oddsHtml = quickOddsHtml(e, findPrimaryMarketForCard(e), true);
   return e.statistics?.sets ? renderSetsCard(e, clockClass, oddsHtml, icon[e.sport] || "") : renderGenericCard(e, clockClass, oddsHtml, icon[e.sport] || "");
 }
 
@@ -2433,7 +2553,7 @@ function renderLiveEvents() {
   const cardsHtml = events.map((e) => {
     const clockClass = isClockMissing(e) ? "clock-missing" : "";
     const icon = sportIcon[e.sport] || "";
-    const oddsHtml = quickOddsHtml(e, e.odds?.[0], true);
+    const oddsHtml = quickOddsHtml(e, findPrimaryMarketForCard(e), true);
 
     if (e.statistics?.sets) return renderSetsCard(e, clockClass, oddsHtml, icon);
     return renderGenericCard(e, clockClass, oddsHtml, icon);
@@ -2457,7 +2577,7 @@ function patchLiveEventCard(e) {
   const sportIcon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
   const clockClass = isClockMissing(e) ? "clock-missing" : "";
   const icon = sportIcon[e.sport] || "";
-  const oddsHtml = quickOddsHtml(e, e.odds?.[0], true);
+  const oddsHtml = quickOddsHtml(e, findPrimaryMarketForCard(e), true);
   const html = e.statistics?.sets ? renderSetsCard(e, clockClass, oddsHtml, icon) : renderGenericCard(e, clockClass, oddsHtml, icon);
   const wrapper = document.createElement("div");
   wrapper.innerHTML = html.trim();
