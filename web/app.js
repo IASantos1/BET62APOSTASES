@@ -366,7 +366,7 @@ function paintPrematchList(container, realEvents) {
       <div class="live-card" onclick="openMarket('${e.id}', false)">
         <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime)}</span></div>
         <div class="lc-teams">${teamLogoImg(e.homeLogo,"sm",e.home)}<span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span>${teamLogoImg(e.awayLogo,"sm",e.away)}</div>
-        ${quickOddsHtml(e, e.odds?.[0], false)}
+        ${quickOddsHtml(e, safeFindPrimaryMarket(e) ?? e.odds?.[0], false)}
       </div>`
   );
   renderInBlocks(container, cardsHtml);
@@ -606,16 +606,77 @@ function primarySuspendedLabel(e) {
 // existisse — o utilizador pediu explicitamente para nunca ficar "assim sem odds", entrar sempre
 // pelo menos como "Suspenso" até o bookmaker abrir o mercado.
 const SUSPENDED_QUICK_ODDS_HTML = (e) => `<div class="lc-odds"><div class="suspended" style="flex:3">${primarySuspendedLabel(e)}</div></div>`;
+// =========== VALIDADORES MÍNIMOS (apenas para CARTÕES da lista) =================
+// Estes helpers são propositadamente ULTRA-SIMPLES e conservadores:
+//   - Nunca mudam o comportamento se não houver dados suspeitos
+//   - Só rejeitam o que é OBVIAMENTE errado (horário "19:00" como odd, labels
+//     "Nem / Sem gol / Placar Empate" no lugar de Casa/Empate/Fora etc.)
+//   - Se existir dúvida: mantém o dado original e não bloqueia nada.
+function normalizeOddValue(raw) {
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : NaN;
+  if (typeof raw !== "string") return NaN;
+  const s = raw.trim();
+  // Fix A.1: Rejeita EXPLICITAMENTE strings com ":" (horário: "19:00", "21:00") ou "/"
+  // (datas "27/08") — nunca são odds válidas.
+  if (s.includes(":") || s.includes("/")) return NaN;
+  // Só aceita dígitos + 1 separador decimal (ponto ou vírgula pt-PT).
+  if (!/^-?\d+([.,]\d+)?$/.test(s)) return NaN;
+  return Number(s.replace(",", "."));
+}
+// Fix B.1: Classifica uma label como "parece lado Home / Draw / Away / None".
+// Devolve "h" "d" "a" ou null. Usa palavras mais comuns em pt/en 1x2 / moneyline.
+function classifyHdaLabel(labelRaw) {
+  const s = String(labelRaw ?? "")
+    .trim()
+    .toLowerCase()
+    // Remove quaisquer anexos de linha (ex: "Casa -1.5" → "casa", "Home +0.5" → "home")
+    .replace(/[+-−]\s*\d+([.,]\d+)?$/, "")
+    .trim();
+  if (!s) return null;
+  if (["1", "home", "casa", "casa.", "homes", "h"].includes(s)) return "h";
+  if (["x", "2", "draw", "tie", "empate", "empates", "draws", "ties", "d"].includes(s) || /^draw\b|^empate\b|^tie\b/.test(s)) return "d";
+  if (["2", "away", "fora", "aways", "a", "visitante"].includes(s)) return "a";
+  return null;
+}
 function quickOddsHtml(e, group, isLive) {
   if (!group?.selections || !group.isActive) return SUSPENDED_QUICK_ODDS_HTML(e);
-  const entries = orderedSelectionEntries(group.selections).slice(0, 3);
-  if (!entries.length) return SUSPENDED_QUICK_ODDS_HTML(e);
+
+  // Fix A: filtrar entries por valor ODD aceitável (não horário, não data, faixa 1.01–1000)
+  // Cartões mostram sempre o mercado PRINCIPAL 1X2 / Moneyline; odds > 1000 aqui são 99.9% erro.
+  const MIN_ODD = 1.01;
+  const MAX_ODD = 1000;
+  const entriesFiltered = [];
+  for (const [label, sel] of orderedSelectionEntries(group.selections)) {
+    if (!sel || sel.isActive === false) continue;
+    const v = normalizeOddValue(sel.odd);
+    if (!Number.isFinite(v)) continue;
+    if (v < MIN_ODD || v > MAX_ODD) continue;
+    entriesFiltered.push([label, { ...sel, odd: v }]);
+    if (entriesFiltered.length >= 3) break;
+  }
+  if (!entriesFiltered.length) return SUSPENDED_QUICK_ODDS_HTML(e);
+
+  // Fix B: os botões do cartão NÃO PODEM ser "Nem / Sem gol / Placar Empate".
+  // Requisitos mínimos:
+  //   3 botões → {h, d, a} (1X2 completo) OU no mínimo 2 de {h,d,a} + 1 outro não suspeito.
+  //   2 botões → {h, a} (moneyline casa/fora).
+  //   1 botão → SEMPRE suspenso (1 botão sem contexto é erro 99%).
+  const labels = entriesFiltered.map(([l]) => classifyHdaLabel(l));
+  const counts = { h: 0, d: 0, a: 0, null: 0 };
+  for (const l of labels) counts[l === null ? "null" : l]++;
+  const looksOk =
+    (entriesFiltered.length === 3 && (counts.h + counts.d + counts.a >= 2)) ||
+    (entriesFiltered.length === 2 && counts.h >= 1 && counts.a >= 1);
+  if (!looksOk) {
+    // Qualquer outro caso (1 botão só, 2 botões sem casa/fora, 3 botões de BTTS etc.)
+    // mostra "Suspenso" em vez de odds descontextualizadas.
+    return SUSPENDED_QUICK_ODDS_HTML(e);
+  }
+
+  const entries = entriesFiltered;
   return `<div class="lc-odds">${entries
     .map(([label, sel]) => {
       const labelPt = translateSelectionLabel(label);
-      if (!sel.isActive || !Number.isFinite(sel.odd)) {
-        return `<div class="suspended">${labelPt}<br>Suspenso</div>`;
-      }
       const key = `${e.id}|${group.market}|${label}`;
       const picked = betslipSelections.has(key);
       const selection = { eventId: e.id, sport: e.sport, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
@@ -623,6 +684,35 @@ function quickOddsHtml(e, group, isLive) {
       return `<div class="${picked ? "picked" : ""}" onclick='quickPick(event, ${attrJson(key)}, ${attrJson(selection)})'>${labelPt}<br>${sel.odd.toFixed(2)}${arrow}</div>`;
     })
     .join("")}</div>`;
+}
+// Fix C + D: safeFindPrimaryMarket(e) — ULTRA conservador. 0 heurísticas.
+// Passa por TODAS as odds do evento (não só [0]) e retorna o PRIMEIRO grupo que
+// é 1X2/Moneyline a 2/3 botões válidos. Se NÃO encontrar nenhum → retorna undefined,
+// os callers usam `?? e.odds?.[0]` para ficar exatamente como 01e8626. NUNCA destrói UX.
+function safeFindPrimaryMarket(e) {
+  if (!e || !Array.isArray(e.odds) || !e.odds.length) return undefined;
+  for (let gIdx = 0; gIdx < e.odds.length; gIdx++) {
+    const g = e.odds[gIdx];
+    if (!g || !g.selections || g.isActive === false) continue;
+    const sels = Object.entries(g.selections);
+    if (sels.length < 2 || sels.length > 3) continue;
+    let h = 0, d = 0, a = 0;
+    let grupoValido = true;
+    for (const [lbl, sel] of sels) {
+      if (!sel || sel.isActive === false) { grupoValido = false; break; }
+      const v = normalizeOddValue(sel.odd);
+      if (!Number.isFinite(v) || v < 1.01 || v > 1000) { grupoValido = false; break; }
+      const c = classifyHdaLabel(lbl);
+      if (c === "h") h++;
+      else if (c === "d") d++;
+      else if (c === "a") a++;
+    }
+    if (!grupoValido) continue;
+    const totalHda = h + d + a;
+    if (sels.length === 3 && totalHda >= 2) return g;
+    if (sels.length === 2 && h >= 1 && a >= 1) return g;
+  }
+  return undefined;
 }
 
 // Setas de subida/descida das odds: guarda o último valor visto por seleção (mesma chave
@@ -2148,13 +2238,13 @@ function highlightPrematchCardHtml(e, icon) {
     <div class="live-card" onclick="openMarket('${e.id}', false)">
       <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime)}</span></div>
       <div class="lc-teams">${teamLogoImg(e.homeLogo,"sm",e.home)}<span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span>${teamLogoImg(e.awayLogo,"sm",e.away)}</div>
-      ${quickOddsHtml(e, e.odds?.[0], false)}
+      ${quickOddsHtml(e, safeFindPrimaryMarket(e) ?? e.odds?.[0], false)}
     </div>`;
 }
 
 function highlightLiveCardHtml(e, icon) {
   const clockClass = isClockMissing(e) ? "clock-missing" : "";
-  const oddsHtml = quickOddsHtml(e, e.odds?.[0], true);
+  const oddsHtml = quickOddsHtml(e, safeFindPrimaryMarket(e) ?? e.odds?.[0], true);
   return e.statistics?.sets ? renderSetsCard(e, clockClass, oddsHtml, icon[e.sport] || "") : renderGenericCard(e, clockClass, oddsHtml, icon[e.sport] || "");
 }
 
@@ -2433,7 +2523,7 @@ function renderLiveEvents() {
   const cardsHtml = events.map((e) => {
     const clockClass = isClockMissing(e) ? "clock-missing" : "";
     const icon = sportIcon[e.sport] || "";
-    const oddsHtml = quickOddsHtml(e, e.odds?.[0], true);
+    const oddsHtml = quickOddsHtml(e, safeFindPrimaryMarket(e) ?? e.odds?.[0], true);
 
     if (e.statistics?.sets) return renderSetsCard(e, clockClass, oddsHtml, icon);
     return renderGenericCard(e, clockClass, oddsHtml, icon);
@@ -2457,7 +2547,7 @@ function patchLiveEventCard(e) {
   const sportIcon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
   const clockClass = isClockMissing(e) ? "clock-missing" : "";
   const icon = sportIcon[e.sport] || "";
-  const oddsHtml = quickOddsHtml(e, e.odds?.[0], true);
+  const oddsHtml = quickOddsHtml(e, safeFindPrimaryMarket(e) ?? e.odds?.[0], true);
   const html = e.statistics?.sets ? renderSetsCard(e, clockClass, oddsHtml, icon) : renderGenericCard(e, clockClass, oddsHtml, icon);
   const wrapper = document.createElement("div");
   wrapper.innerHTML = html.trim();
