@@ -89,6 +89,7 @@ interface WsEvent {
   country?: string;
   matchClock?: WsMatchClock;
   statistics?: { football?: { home?: WsTeamStats; away?: WsTeamStats }; sets?: WsSetsStats };
+  moreInfo?: { currentPeriod?: string; gamePoints?: { home?: string | number; away?: string | number } };
 }
 interface WsFrame {
   type?: string; // "connected" handshake frame
@@ -108,10 +109,24 @@ interface WsFrame {
 // Pulsescore envia em vantagem ainda não foi confirmado — o placar continuava a desaparecer
 // mesmo depois deste fallback, o que sugere que `score` pode ficar totalmente ausente nesse
 // instante. O log com `sport === "tennis"` serve para capturar a forma real da próxima vez.
-function parseScore(score: WsEvent["score"], sport: Sport): { homeScore?: number | string; awayScore?: number | string } {
+function parseWsTennisGamePoints(
+  sport: Sport,
+  moreInfo: WsEvent["moreInfo"] | undefined
+): { homeScore?: number | string; awayScore?: number | string } {
+  if (sport !== "tennis") return {};
+  const gp = moreInfo?.gamePoints;
+  if (gp?.home == null || gp?.away == null) return {};
+  return { homeScore: gp.home, awayScore: gp.away };
+}
+
+function parseScore(
+  score: WsEvent["score"],
+  sport: Sport,
+  moreInfo?: WsEvent["moreInfo"]
+): { homeScore?: number | string; awayScore?: number | string } {
   if (!score) {
     if (sport === "tennis") logger.info("Pulsescore WS: ténis sem campo score (possível estado de vantagem)");
-    return {};
+    return parseWsTennisGamePoints(sport, moreInfo);
   }
   if (typeof score === "string") {
     const [h, a] = score.split("-").map((p) => Number(p.trim()));
@@ -179,7 +194,7 @@ function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
     league: e.league,
     home: e.home,
     away: e.away,
-    ...parseScore(e.score, sport),
+    ...parseScore(e.score, sport, e.moreInfo),
     minuteOrPeriod: formatWsMatchClock(e.matchClock, e.live === false ? "" : "AO VIVO"),
     status: e.live === false ? "scheduled" : "live",
     odds: markets.map(normalizeWsMarket),
