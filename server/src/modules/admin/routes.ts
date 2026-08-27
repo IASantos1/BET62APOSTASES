@@ -7,6 +7,9 @@ import { Errors, AppError } from "../../lib/errors";
 import { getApiFootballStatus } from "../sports/apifootball/client";
 import { fetchLeaguesFirstPageRaw } from "../sports/sportmonks/client";
 import { getSportmonksFootballPrematchDiagnosis } from "../sports/sportmonks/prematch";
+import { pulsescoreWs } from "../sports/pulsescore/wsClient";
+import { hybridSportsService } from "../sports/hybridService";
+import { ALL_SPORTS } from "../sports/types";
 import { userRateLimit } from "../../lib/userRateLimit";
 import { approveAndPayWithdrawal, rejectWithdrawal } from "../payments/revolut/service";
 import { listBetsNeedingReview, manualSettleSelection } from "../betting/service";
@@ -631,6 +634,34 @@ router.get(
       const details = err instanceof AppError ? err.details : undefined;
       res.json({ ok: false, message: err instanceof Error ? err.message : "Erro desconhecido", details });
     }
+  })
+);
+
+// Diagnóstico do WebSocket da Pulsescore (pulsescore/wsClient.ts) — pedido explícito do
+// utilizador para perceber porque é que o placar do ténis não atualizava a cada 1s como
+// esperado. O plano contratado (MAX, 149€/mês) só dá `maxConnections=3` ligações WebSocket em
+// simultâneo (1 frame/s cada); os desportos SEM ligação caem para o polling REST de
+// hybridService.ts, que só corre a cada 25s (POLL_INTERVAL_MS) — daí o placar "atrasado" sem
+// nenhum erro nem exceção, é mesmo o limite do plano a decidir quais 3 desportos (dos até 8
+// possíveis) ficam em tempo real quase instantâneo agora, e os restantes ficam em polling REST.
+// `wsCovered` são os desportos com ligação ligada NESTE MOMENTO — muda sozinho a cada
+// REFRESH_INTERVAL_MS (60s) consoante o nº de jogos ao vivo de cada desporto.
+router.get(
+  "/pulsescore/ws-status",
+  asyncHandler(async (_req, res) => {
+    const wsCovered = [...pulsescoreWs.activeSports()];
+    const bySport = ALL_SPORTS.map((sport) => ({
+      sport,
+      viaWebSocket: wsCovered.includes(sport),
+      liveEventsNow: hybridSportsService.snapshot(sport).length,
+    }));
+    res.json({
+      ok: true,
+      maxWebSocketConnections: 3,
+      sportsViaWebSocket: wsCovered,
+      updateCadence: { webSocket: "~1s (por frame da Pulsescore)", restPolling: "25s (POLL_INTERVAL_MS em hybridService.ts)" },
+      bySport,
+    });
   })
 );
 
