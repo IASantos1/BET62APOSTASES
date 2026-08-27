@@ -146,12 +146,22 @@ function formatWsMatchClock(clock: WsMatchClock | undefined, fallback: string): 
 
 // Mantém as seleções inativas em vez de as descartar (ver LiveSelection em types.ts) — mesma
 // lógica do REST em client.ts, para o frontend as mostrar suspensas em vez de desaparecerem.
+// ⚠️ CORREÇÃO (2026-08-27): esta função descartava `s.name` sempre que `s.rawName` existisse — a
+// KEY da seleção (usada como rótulo no frontend) ficava só com rawName, que no ténis costuma vir
+// truncado/abreviado (ex: "Vi Sachko") de forma diferente do nome do participante no evento
+// (e.home "Vitaliy Sachko"), e `s.name` (o nome mais completo/normalizado, o mesmo campo que
+// normalizeMarket() no client.ts REST já guarda em canonicalName) nunca chegava ao frontend — só
+// existia no client.ts REST, não neste caminho WebSocket, que é o que serve os desportos mais
+// movimentados (ver comentário grande no topo do módulo) e portanto o ténis na prática. Bug real
+// reportado com prints: dezenas de jogos de ténis ao vivo "Suspenso" no cartão apesar do mercado
+// aberto — a correção no frontend (looksLikeTwoWayParticipants/classifySelection, ver app.js)
+// dependia deste campo e nunca tinha dados para comparar.
 function normalizeWsMarket(m: WsMarket): LiveOdds {
   const selections = (m.selections ?? [])
     .map((s): [string, LiveSelection] | null => {
       const odd = Number(s.odds ?? s.decimal ?? NaN);
       if (Number.isNaN(odd)) return null;
-      return [s.rawName ?? s.name ?? "?", { odd, isActive: s.isActive !== false }];
+      return [s.rawName ?? s.name ?? "?", { odd, isActive: s.isActive !== false, canonicalName: s.name }];
     })
     .filter((entry): entry is [string, LiveSelection] => entry !== null);
   const isActive = selections.length === 0 || selections.some(([, sel]) => sel.isActive);
