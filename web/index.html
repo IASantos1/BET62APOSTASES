@@ -447,7 +447,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
    confiar só em width:100%;height:auto) que corrigiu o bug real de distorção do campo 2D (SVG)
    ainda mais antigo. Fundo escuro sólido enquanto a biblioteca (~480kb, carregada só quando
    necessário) não chegou — a própria cena 3D já traz o "céu" escuro do estádio. */
-.tp-canvas-frame{position:relative;width:100%;aspect-ratio:100/64;border-radius:10px;overflow:hidden;background:#020504}
+.tp-canvas-frame{position:relative;width:100%;aspect-ratio:100/64;border-radius:10px;overflow:hidden;background:linear-gradient(180deg,#29553f 0%,#173224 42%,#0f1d17 100%)}
 .tp-canvas-frame canvas{position:absolute;top:0;right:0;bottom:0;left:0;inset:0;width:100%!important;height:100%!important;display:block;touch-action:none}
 /* Flash de golo — sobrepõe o campo por alguns segundos quando um golo novo e confirmado aparece
    na linha do tempo real do jogo (nunca antecipado/inventado); agora uma camada HTML normal por
@@ -472,8 +472,8 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .tp-panel{border-radius:10px;overflow:hidden}
 .tp-panel .tp-canvas-frame{border-radius:0}
 .tp-canvas-note{position:absolute;left:8px;bottom:6px;z-index:2;color:rgba(255,255,255,.4);font-family:'JetBrains Mono','SF Mono',Consolas,monospace;font-size:.55rem;letter-spacing:.03em;pointer-events:none}
-.tp-header-bar{display:flex;align-items:center;gap:8px;background:#0e1210;padding:8px 10px;color:#fff}
-.tp-clock-badge{background:rgba(255,255,255,.1);border-radius:6px;padding:3px 8px;font-family:'Bebas Neue',sans-serif;font-size:.85rem;letter-spacing:.5px;white-space:nowrap;flex-shrink:0}
+.tp-header-bar{display:flex;align-items:center;gap:8px;background:linear-gradient(180deg,#18241d,#101713);padding:8px 10px;color:#fff}
+.tp-clock-badge{background:rgba(255,255,255,.16);border-radius:6px;padding:3px 8px;font-family:'Bebas Neue',sans-serif;font-size:.85rem;letter-spacing:.5px;white-space:nowrap;flex-shrink:0}
 .tp-clock-badge.clock-missing{color:var(--red)}
 .tp-team-cluster{flex:1;display:flex;align-items:center;min-width:0}
 .tp-team-bar{flex:1;display:flex;align-items:center;gap:5px;font-size:.68rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
@@ -488,13 +488,13 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .tp-team-bar.zone-pulse .tp-team-dot{background:var(--red);border-color:var(--red)}
 @keyframes zone-pulse-text{0%,100%{opacity:1}50%{opacity:.5}}
 @media (prefers-reduced-motion: reduce){.tp-team-bar.zone-pulse{animation:none}}
-.tp-score-block{background:rgba(255,255,255,.12);border-radius:6px;padding:2px 8px;font-family:'Bebas Neue',sans-serif;font-size:.95rem;margin:0 6px;white-space:nowrap;flex-shrink:0}
+.tp-score-block{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.08);border-radius:6px;padding:2px 8px;font-family:'Bebas Neue',sans-serif;font-size:.95rem;margin:0 6px;white-space:nowrap;flex-shrink:0}
 .tp-live-badge{display:flex;align-items:center;gap:4px;font-size:.6rem;font-weight:700;color:var(--red);white-space:nowrap;flex-shrink:0}
 .tp-live-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--red);animation:pulse 1.4s infinite}
 @media (prefers-reduced-motion: reduce){.tp-live-badge .dot{animation:none}}
-.tp-period-pill{text-align:center;background:#0e1210;color:var(--muted);font-size:.6rem;font-weight:700;letter-spacing:.5px;padding:0 0 5px}
-.tp-stat-bar{display:flex;gap:1px;background:var(--border)}
-.tp-stat-box{flex:1;background:#0e1210;color:#fff;font-size:.62rem;font-weight:700;text-align:center;padding:6px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tp-period-pill{text-align:center;background:#101713;color:#b9c4bd;font-size:.6rem;font-weight:700;letter-spacing:.5px;padding:0 0 5px}
+.tp-stat-bar{display:flex;gap:1px;background:rgba(255,255,255,.08)}
+.tp-stat-box{flex:1;background:#131b17;color:#fff;font-size:.62rem;font-weight:700;text-align:center;padding:6px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mt-mini-pitch .tp-header-bar,.mt-mini-pitch .tp-stat-bar{padding-left:8px;padding-right:8px}
 .mt-mini-pitch .tp-clock-badge{font-size:.7rem}
 .mt-mini-pitch .tp-score-block{font-size:.8rem}
