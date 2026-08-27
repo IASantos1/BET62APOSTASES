@@ -132,14 +132,14 @@ function parseScore(
     const [h, a] = score.split("-").map((p) => Number(p.trim()));
     if (h === undefined || a === undefined || Number.isNaN(h) || Number.isNaN(a)) {
       if (sport === "tennis") logger.info({ score }, "Pulsescore WS: ténis com score em string não parseável");
-      return {};
+      return parseWsTennisGamePoints(sport, moreInfo);
     }
     return { homeScore: h, awayScore: a };
   }
   if (typeof score === "object") {
     if (score.home == null || score.away == null) {
       if (sport === "tennis") logger.info({ score }, "Pulsescore WS: ténis sem score.home/away parseável (possível estado de vantagem)");
-      return {};
+      return parseWsTennisGamePoints(sport, moreInfo);
     }
     const h = Number(score.home);
     const a = Number(score.away);
@@ -188,13 +188,30 @@ function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
   const markets = sortNumericMarketFamilies(orderMarketsWithPrimaryFirst(e.markets ?? []));
   const football = e.statistics?.football;
   const sets = e.statistics?.sets;
+  const scoreData = parseScore(e.score, sport, e.moreInfo);
+  if (sport === "tennis" && sets && (scoreData.homeScore == null || scoreData.awayScore == null)) {
+    logger.info(
+      {
+        eventId: e.eventId,
+        league: e.league,
+        home: e.home,
+        away: e.away,
+        score: e.score,
+        gamePoints: e.moreInfo?.gamePoints,
+        currentPeriod: e.moreInfo?.currentPeriod,
+        matchClock: e.matchClock,
+        sets,
+      },
+      "Pulsescore WS: ténis sem pontos do game atual; cartão ficará só com sets"
+    );
+  }
   return {
     id: `pulsescore:${e.eventId}`,
     sport,
     league: e.league,
     home: e.home,
     away: e.away,
-    ...parseScore(e.score, sport, e.moreInfo),
+    ...scoreData,
     minuteOrPeriod: formatWsMatchClock(e.matchClock, e.live === false ? "" : "AO VIVO"),
     status: e.live === false ? "scheduled" : "live",
     odds: markets.map(normalizeWsMarket),
