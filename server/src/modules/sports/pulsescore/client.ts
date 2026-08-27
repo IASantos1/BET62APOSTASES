@@ -785,6 +785,23 @@ function normalizeEvent(e: PulsescoreEvent, sport: Sport, bookmakerSlug?: string
   // Já não filtra mercados inativos aqui — passam para o frontend com isActive:false para
   // aparecerem suspensos (não clicáveis) em vez de desaparecerem silenciosamente.
   const orderedMarkets = sortNumericMarketFamilies(orderMarketsWithPrimaryFirst(withSyntheticMoneyline(e.markets)));
+  const scoreData = parsePulsescoreScore(e.score, sport, e.moreInfo);
+  if (sport === "tennis" && e.statistics?.sets && (scoreData.homeScore == null || scoreData.awayScore == null)) {
+    logger.info(
+      {
+        eventId: e.eventId,
+        league: e.league,
+        home: e.home,
+        away: e.away,
+        score: e.score,
+        gamePoints: e.moreInfo?.gamePoints,
+        currentPeriod: e.moreInfo?.currentPeriod,
+        matchClock: e.matchClock,
+        sets: e.statistics.sets,
+      },
+      "Pulsescore REST: ténis sem pontos do game atual; cartão ficará só com sets"
+    );
+  }
   return {
     id: `pulsescore:${e.eventId}`,
     sport,
@@ -795,7 +812,7 @@ function normalizeEvent(e: PulsescoreEvent, sport: Sport, bookmakerSlug?: string
     // próprio REST /live-events) — indefinido se a bookmaker atual não os devolver (ex: a
     // anterior "10bet"), caso em que o frontend esconde a linha de placar em vez de inventar
     // um "0-0".
-    ...parsePulsescoreScore(e.score, sport, e.moreInfo),
+    ...scoreData,
     minuteOrPeriod: formatMatchClock(e.matchClock, e.live ? "AO VIVO" : ""),
     status: e.live ? "live" : "scheduled",
     odds: orderedMarkets.map((m) => normalizeMarket(m, bm)),
