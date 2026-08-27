@@ -2,6 +2,7 @@ import type { Server as HttpServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { logger } from "../../../lib/logger";
 import { hybridSportsService } from "../hybridService";
+import { sanitizePublicEvent, sanitizePublicEvents } from "../publicEvent";
 import { ALL_SPORTS, type Sport } from "../types";
 import { createRedisDuplicateClient, getRedisClient, isRedisReady } from "../../../lib/redis";
 import type Redis from "ioredis";
@@ -94,7 +95,7 @@ export function attachSportsWebsocketGateway(httpServer: HttpServer) {
         // mostra tudo o que recebe daqui sem filtrar status). O hybridSportsService também guarda
         // jogos "scheduled" (ver comentário em routes.ts GET /events, mesmo filtro) — sem isto,
         // jogos de pré-jogo apareciam na lista "Ao Vivo" assim que a ligação abria.
-        events: hybridSportsService.snapshot().filter((e) => state.sports.has(e.sport) && e.status === "live"),
+        events: sanitizePublicEvents(hybridSportsService.snapshot().filter((e) => state.sports.has(e.sport) && e.status === "live")),
       })
     );
 
@@ -126,9 +127,10 @@ export function attachSportsWebsocketGateway(httpServer: HttpServer) {
     // renova um jogo "scheduled" no hybrid (syncScheduledToHybrid, a cada 40s) esse evento
     // passava por aqui como uma atualização "Ao Vivo" normal.
     if (event.status !== "live") return;
-    const frame = JSON.stringify({ type: "update", event });
+    const publicEvent = sanitizePublicEvent(event);
+    const frame = JSON.stringify({ type: "update", event: publicEvent });
     if (subscribed && publisher) {
-      publisher.publish(CHANNEL_EVENT, JSON.stringify(event)).catch((err) => {
+      publisher.publish(CHANNEL_EVENT, JSON.stringify(publicEvent)).catch((err) => {
         logger.warn({ err: String(err).slice(0, 200) }, "[WS REDIS] falhou publish event; fallback a broadcast local");
         for (const client of clients) {
           if (client.sports.has(event.sport) && client.socket.readyState === WebSocket.OPEN) {
