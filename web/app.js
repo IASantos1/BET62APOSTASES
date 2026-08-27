@@ -606,6 +606,20 @@ function primarySuspendedLabel(e) {
 // existisse — o utilizador pediu explicitamente para nunca ficar "assim sem odds", entrar sempre
 // pelo menos como "Suspenso" até o bookmaker abrir o mercado.
 const SUSPENDED_QUICK_ODDS_HTML = (e) => `<div class="lc-odds"><div class="suspended" style="flex:3">${primarySuspendedLabel(e)}</div></div>`;
+// Mercado principal (1X2/moneyline) com um lado tão favorito que a odd já não representa uma
+// escolha real entre dois resultados (ex.: 1.01 vs 15.00, prorrogação de um jogo já decidido) —
+// pedido explícito do utilizador: em vez de dois botões (um quase sem valor, outro sem chance
+// real), mostra-se um único bloco "Aposta Já" — sem onclick próprio (um clique cai para o
+// onclick do cartão/openMarket por propagação, tal como já acontece com Suspenso) — no cartão E
+// na página de mercado completa (ver marketAccordionHtml), nunca só numa das duas telas.
+// Cor propositadamente AMARELA/dourada (bet-now, ver CSS), não cinzenta como o Suspenso: ao
+// contrário do Suspenso (mercado indisponível, não clicável), "Aposta Já" continua clicável e é
+// uma chamada à ação — pedido explícito do utilizador para não parecer um bloco desativado.
+const EXTREME_FAVORITE_ODD_MAX = 1.05;
+function isExtremeFavoriteOdd(v) {
+  return Number.isFinite(v) && v <= EXTREME_FAVORITE_ODD_MAX;
+}
+const BET_NOW_QUICK_ODDS_HTML = `<div class="lc-odds"><div class="bet-now" style="flex:3">Aposta Já</div></div>`;
 // =========== VALIDADORES MÍNIMOS (apenas para CARTÕES da lista) =================
 // Estes helpers são propositadamente ULTRA-SIMPLES e conservadores:
 //   - Nunca mudam o comportamento se não houver dados suspeitos
@@ -763,6 +777,7 @@ function quickOddsHtml(e, group, isLive) {
     // mostra "Suspenso" em vez de odds descontextualizadas.
     return SUSPENDED_QUICK_ODDS_HTML(e);
   }
+  if (entriesFiltered.some(([, sel]) => isExtremeFavoriteOdd(sel.odd))) return BET_NOW_QUICK_ODDS_HTML;
 
   const entries = entriesFiltered;
   return `<div class="lc-odds">${entries
@@ -2735,12 +2750,18 @@ function renderMarketPage() {
   }
 }
 
+// Estado do cabeçalho do Match Tracker já montado — usado pelo patch abaixo para decidir se dá
+// para só atualizar texto/estado (placar, relógio) em vez de reconstruir tudo. Reposto sempre que
+// se cai num dos ramos que faz rebuild completo (evento novo, deixou de estar ao vivo, F1...).
+let matchTrackerMountState = { eventId: null, showVisual: null };
+
 function renderMatchTracker(e) {
   const el = document.getElementById("match-tracker");
   const isLive = e._isLive || e.status === "live";
   refreshBallPositionIfNeeded(e, false); // atualiza o rasto real da bola (cabeçalho + modal, se aberto)
 
   if (e._finished) {
+    matchTrackerMountState = { eventId: null, showVisual: null };
     el.innerHTML = `
       <div class="mt-scheduled">
         <span class="status-badge status-ok">ENCERRADO</span>
@@ -2755,6 +2776,7 @@ function renderMatchTracker(e) {
   }
 
   if (!isLive) {
+    matchTrackerMountState = { eventId: null, showVisual: null };
     el.innerHTML = `
       <div class="mt-scheduled">
         <span class="status-badge status-pending">PRÉ-JOGO</span>
@@ -2771,6 +2793,7 @@ function renderMatchTracker(e) {
   const clockClass = isClockMissing(e) ? " clock-missing" : "";
 
   if (e.sport === "formula1") {
+    matchTrackerMountState = { eventId: null, showVisual: null };
     el.innerHTML = `
       <div class="mt-live"><span class="dot"></span> AO VIVO</div>
       <div style="text-align:center">
@@ -2782,6 +2805,20 @@ function renderMatchTracker(e) {
 
   const hasScore = e.homeScore !== undefined && e.awayScore !== undefined;
   const showVisual = e.sport === "football";
+
+  // OTIMIZAÇÃO FLUIDEZ: em ao vivo este cabeçalho é re-render a cada atualização do WebSocket
+  // (~1x/seg em desportos com cobertura em tempo real, ver wsClient.ts) — reconstruir tudo
+  // (el.innerHTML=...) destruía e recriava #mt-pulse a cada vez, obrigando o <canvas> 3D
+  // partilhado do mini campo a ser reparentado para um nó NOVO a cada segundo. Isso interrompia o
+  // gesto de scroll do utilizador a meio (reportado como "navegar/rolar as páginas não fluido").
+  // Só tenta o patch quando é o MESMO evento e o MESMO modo (showVisual) já montados; qualquer
+  // anomalia estrutural cai no rebuild completo de segurança, tal como o mesmo padrão já usado em
+  // renderMarketGroups/patchLiveMarketGroups.
+  if (patchMatchTrackerBasicHeader(e, showVisual, hasScore, clockClass)) {
+    if (showVisual) renderMatchHeaderVisual(e);
+    return;
+  }
+
   el.innerHTML = `
     <div id="mt-basic-header">
       <div class="mt-teams-top">
@@ -2799,7 +2836,30 @@ function renderMatchTracker(e) {
       <div class="mt-action-btn" onclick="openTracker()"><span class="mt-action-icon"><span class="pitch-icon" style="width:26px;height:18px"></span></span>Match Tracker</div>
       <div class="mt-action-btn" onclick="openStats()"><span class="mt-action-icon">📊</span>Estatísticas</div>
     </div>`;
+  matchTrackerMountState = { eventId: e.id, showVisual };
   if (showVisual) renderMatchHeaderVisual(e);
+}
+
+// Tenta atualizar só o placar/relógio do cabeçalho já montado (ver comentário acima em
+// renderMatchTracker). Devolve false — sem tocar em nada — perante qualquer estrutura inesperada,
+// para o chamador cair sempre no rebuild completo em vez de arriscar um DOM inconsistente.
+function patchMatchTrackerBasicHeader(e, showVisual, hasScore, clockClass) {
+  if (matchTrackerMountState.eventId !== e.id || matchTrackerMountState.showVisual !== showVisual) return false;
+  const basicHeader = document.getElementById("mt-basic-header");
+  const periodEl = basicHeader && basicHeader.querySelector(".mt-period");
+  if (!basicHeader || !periodEl) return false;
+  const scoreEl = basicHeader.querySelector(".mt-score");
+  const vsEl = basicHeader.querySelector(".mt-vs-label");
+  if (hasScore) {
+    if (!scoreEl) return false; // tinha "vs" -> agora tem placar: estrutura mudou, rebuild
+    const scoreText = `${e.homeScore} - ${e.awayScore}`;
+    if (scoreEl.textContent !== scoreText) scoreEl.textContent = scoreText;
+  } else if (!vsEl) {
+    return false; // tinha placar -> agora "vs": estrutura mudou, rebuild
+  }
+  if (periodEl.textContent !== e.minuteOrPeriod) periodEl.textContent = e.minuteOrPeriod;
+  periodEl.classList.toggle("clock-missing", !!clockClass);
+  return true;
 }
 
 // ====================== VISUAL DO CABEÇALHO AO VIVO: mini campo OU gráfico de eventos ======================
@@ -3225,29 +3285,91 @@ function showGoalFlashOverlay(goalEvent) {
 // (#tracker-pitch-wrap). Constrói o "chrome" HTML (cabeçalho + barra de estatísticas) em
 // torno de um .tp-canvas-frame vazio, carrega o motor 3D (tracker3d.js — estádio completo,
 // Three.js) só quando é mesmo preciso, e move o MESMO <canvas> partilhado para dentro dele.
+// Painel já montado por elemento (cabeçalho compacto #mt-pulse OU modal #tracker-pitch-wrap) —
+// ver comentário completo em renderPitchInto sobre o porquê deste cache.
+const pitchPanelMountState = new WeakMap(); // el -> { eventId, compact }
+
 function renderPitchInto(el, points, e, opts) {
   if (!el) return;
   const compact = !!(opts && opts.compact);
   const latest = points.length ? points[0] : null;
   if (!compact) applyZonePulseToScoreboard(latest);
-  const header = pitchHeaderHtml(e, latest, { skipTeamBar: !compact });
 
   if (!points.length) {
-    el.innerHTML = `<div class="tp-panel">${header}<div class="empty-note">${compact ? "Sem dados de posição da bola" : "Sem dados de posição da bola disponíveis para este jogo"}</div></div>`;
+    pitchPanelMountState.delete(el);
+    el.innerHTML = `<div class="tp-panel">${pitchHeaderHtml(e, latest, { skipTeamBar: !compact })}<div class="empty-note">${compact ? "Sem dados de posição da bola" : "Sem dados de posição da bola disponíveis para este jogo"}</div></div>`;
     return;
   }
 
+  // OTIMIZAÇÃO FLUIDEZ: esta função é chamada a cada atualização ao vivo (~1x/seg, tanto pelo
+  // WebSocket como pelo refresh periódico da posição da bola — ver refreshBallPositionIfNeeded)
+  // com o MESMO evento a maior parte do tempo, só a bola se move. Reconstruir sempre
+  // "el.innerHTML=..." destruía o .tp-canvas-frame e obrigava o <canvas> 3D partilhado
+  // (tracker3d.js) a ser reparentado para um nó NOVO todos os segundos — interrompia o gesto de
+  // scroll do utilizador a meio (reportado como "navegar/rolar as páginas não fluido"). Quando é
+  // mesmo o mesmo evento+modo já montado, só atualiza o texto do cabeçalho/barra de stats e a
+  // posição 3D da bola (updateTracker3DFromPoints já era só uma atualização, nunca recriava nada).
+  const mounted = pitchPanelMountState.get(el);
+  const canReuse = mounted && mounted.eventId === e.id && mounted.compact === compact && el.querySelector(".tp-canvas-frame");
+  if (canReuse && patchPitchPanel(el, e, latest, compact)) {
+    updateTracker3DFromPoints(e, points, compact);
+    return;
+  }
+
+  const header = pitchHeaderHtml(e, latest, { skipTeamBar: !compact });
   el.innerHTML = `<div class="tp-panel">${header}<div class="tp-canvas-frame"></div>${pitchStatBarHtml(e)}</div>`;
   const frame = el.querySelector(".tp-canvas-frame");
+  pitchPanelMountState.delete(el);
   ensureTracker3DReady()
     .then(() => {
       if (!document.body.contains(frame)) return; // já saiu deste evento/página entretanto
       mountTracker3D(frame, !compact);
       updateTracker3DFromPoints(e, points, compact);
+      pitchPanelMountState.set(el, { eventId: e.id, compact });
     })
     .catch(() => {
       if (document.body.contains(frame)) frame.innerHTML = '<div class="empty-note">Não foi possível carregar o campo 3D</div>';
     });
+}
+
+// Atualiza só o texto/estado do cabeçalho (relógio, placar, pulso de zona, pílula de parte do
+// jogo) e a barra de estatísticas por baixo do campo — nunca toca em .tp-canvas-frame (onde vive
+// o <canvas> 3D partilhado). Devolve false perante qualquer estrutura inesperada (ex: a pílula de
+// parte do jogo apareceu/desapareceu), para o chamador cair no rebuild completo de segurança.
+function patchPitchPanel(el, e, latest, compact) {
+  const skipTeamBar = !compact;
+  if (!skipTeamBar) {
+    const clockBadge = el.querySelector(".tp-clock-badge");
+    const scoreBlock = el.querySelector(".tp-score-block");
+    const homeBar = el.querySelector(".tp-team-bar.home");
+    const awayBar = el.querySelector(".tp-team-bar.away");
+    if (!clockBadge || !scoreBlock || !homeBar || !awayBar) return false;
+    const clockText = e.minuteOrPeriod || "-";
+    if (clockBadge.textContent !== clockText) clockBadge.textContent = clockText;
+    clockBadge.classList.toggle("clock-missing", isClockMissing(e));
+    const hasScore = e.homeScore !== undefined && e.awayScore !== undefined;
+    const scoreText = hasScore ? `${e.homeScore} - ${e.awayScore}` : "vs";
+    if (scoreBlock.textContent !== scoreText) scoreBlock.textContent = scoreText;
+    let homePulse = false;
+    let awayPulse = false;
+    if (latest && ballDangerZone(latest.x) === "danger") {
+      if (latest.x < 0.5) awayPulse = true;
+      else homePulse = true;
+    }
+    homeBar.classList.toggle("zone-pulse", homePulse);
+    awayBar.classList.toggle("zone-pulse", awayPulse);
+  }
+  const half = deriveHalfLabel(e);
+  const pill = el.querySelector(".tp-period-pill");
+  if (half && pill) {
+    if (pill.textContent !== half) pill.textContent = half;
+  } else if (!!half !== !!pill) {
+    return false; // pílula apareceu/desapareceu -> estrutura mudou, rebuild completo
+  }
+  const statBar = el.querySelector(".tp-stat-bar");
+  if (!statBar) return false;
+  statBar.outerHTML = pitchStatBarHtml(e); // leve (sem canvas), mais simples que diff campo a campo
+  return true;
 }
 
 // ====================== ESTATÍSTICAS (Margens de Vitória / H2H / Classificação) ======================
@@ -4307,6 +4429,7 @@ function patchLiveMarketGroups(e) {
       const first = entry.lines[0];
       const title = translateMarketDisplayName(entry.market, e.sport, Object.keys(first.selections || {}), e.home, e.away, entry.lines.length === 1 ? first.line : undefined);
       const allSuspended = entry.lines.every((g) => !g.isActive);
+      const extremeFavorite = entry.isPrimary && !allSuspended && isExtremeFavoriteOdd(minActiveOdd(entry.lines));
       if (titleEl) {
         const wanted = `${title}${allSuspended ? '<span class="market-suspended-badge">Suspenso</span>' : ""}`;
         if (titleEl.innerHTML !== wanted) { titleEl.innerHTML = wanted; anyMutated = true; }
@@ -4329,6 +4452,11 @@ function patchLiveMarketGroups(e) {
         if (entry.isPrimary && allSuspended) {
           expectedSigs.push(`__primary_suspended__`);
           selFragments.push({ kind: "suspended", label: primarySuspendedLabel(e) });
+        } else if (extremeFavorite) {
+          expectedSigs.push(`__extreme_favorite__`);
+          // kind "bet-now" (não "suspended"): classe/cor própria (amarela), ver BET_NOW_QUICK_ODDS_HTML.
+          selFragments.push({ kind: "bet-now", label: "Aposta Já" });
+          break; // um único botão cobre a entrada toda — ignora as restantes linhas
         } else {
           for (const k of keys) expectedSigs.push(k);
           selFragments.push({ kind: "selections", group: g, withLabel, isFirst, market: entry.market, line: g.line });
@@ -4341,12 +4469,17 @@ function patchLiveMarketGroups(e) {
       let btnIdx = 0;
       const isLive = e._isLive || e.status === "live";
       for (const frag of selFragments) {
-        if (frag.kind === "suspended") {
+        if (frag.kind === "suspended" || frag.kind === "bet-now") {
           const btn = bodyBtns[btnIdx++];
           if (!btn) return false;
           const span = btn.querySelector(".sel-odd");
           if (span && span.textContent !== frag.label) { span.textContent = frag.label; anyMutated = true; }
-          if (!btn.classList.contains("suspended")) { btn.classList.add("suspended"); anyMutated = true; }
+          // As duas classes são mutuamente exclusivas (Suspenso cinzento vs Aposta Já amarelo) —
+          // ao transitar de um estado para o outro no mesmo botão, remove a que já não se aplica.
+          const wantClass = frag.kind;
+          const dropClass = wantClass === "suspended" ? "bet-now" : "suspended";
+          if (!btn.classList.contains(wantClass)) { btn.classList.add(wantClass); anyMutated = true; }
+          if (btn.classList.contains(dropClass)) { btn.classList.remove(dropClass); anyMutated = true; }
           continue;
         }
         const g = frag.group;
@@ -4452,17 +4585,39 @@ function buildMarketDisplayGroups(e) {
   return result;
 }
 
+// Menor odd ativa entre todas as linhas de uma entrada — usado só para o mercado principal
+// (ver EXTREME_FAVORITE_ODD_MAX acima) decidir se já não vale a pena mostrar os botões normais.
+function minActiveOdd(lines) {
+  let min = Infinity;
+  for (const g of lines) {
+    if (!g || !g.isActive || !g.selections) continue;
+    for (const sel of Object.values(g.selections)) {
+      if (!sel || sel.isActive === false) continue;
+      const v = normalizeOddValue(sel.odd);
+      if (Number.isFinite(v) && v < min) min = v;
+    }
+  }
+  return min;
+}
 function marketAccordionHtml(e, entry, isLive) {
   const expanded = marketAccordionState.expanded.has(entry.key);
   const first = entry.lines[0];
   const title = translateMarketDisplayName(entry.market, e.sport, Object.keys(first.selections || {}), e.home, e.away, entry.lines.length === 1 ? first.line : undefined);
   const allSuspended = entry.lines.every((g) => !g.isActive);
   const badgeHtml = allSuspended ? '<span class="market-suspended-badge">Suspenso</span>' : "";
+  const extremeFavorite = entry.isPrimary && !allSuspended && isExtremeFavoriteOdd(minActiveOdd(entry.lines));
   let bodyHtml;
   if (entry.isPrimary && allSuspended) {
     // Mercado principal (1X2/moneyline) totalmente suspenso: um único botão a cobrir a linha
     // toda em vez de 3 caixas "Suspenso" repetidas — ver primarySuspendedLabel().
     bodyHtml = `<div class="selection-row"><div class="selection-btn suspended"><span class="sel-odd">${primarySuspendedLabel(e)}</span></div></div>`;
+  } else if (extremeFavorite) {
+    // Mesma lógica do cartão (quickOddsHtml/EXTREME_FAVORITE_ODD_MAX): um lado tão favorito que
+    // a odd já não representa uma escolha real — mostra "Aposta Já" em vez dos botões normais,
+    // pedido explícito do utilizador para nunca aparecerem odds deste tipo na página do mercado.
+    // Classe "bet-now" (amarela/dourada), não "suspended" (cinzenta) — ver comentário em
+    // BET_NOW_QUICK_ODDS_HTML sobre o porquê da cor diferente.
+    bodyHtml = `<div class="selection-row"><div class="selection-btn bet-now"><span class="sel-odd">Aposta Já</span></div></div>`;
   } else if (entry.lines.length === 1) {
     bodyHtml = normalSelectionRowHtml(e, entry.lines[0], isLive, false);
   } else {
