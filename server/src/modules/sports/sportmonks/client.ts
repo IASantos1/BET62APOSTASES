@@ -219,7 +219,8 @@ function groupOddsIntoMarkets(odds: SportmonksOdd[] | undefined): LiveOdds[] {
   const groups = new Map<string, SportmonksOdd[]>();
   for (const odd of odds) {
     const line = odd.total ?? odd.handicap ?? "";
-    const key = `${odd.market_id}:${line}`;
+    const marketName = odd.market?.name ?? odd.market_description ?? "";
+    const key = `${odd.market_id}:${line}:${marketName}`;
     const group = groups.get(key);
     if (group) group.push(odd);
     else groups.set(key, [odd]);
@@ -273,6 +274,21 @@ function isPrimaryMarketName(market: LiveOdds): boolean {
   return false;
 }
 
+function classifyPrimarySelectionKey(label: string): "h" | "d" | "a" | null {
+  const s = String(label ?? "").trim().toLowerCase();
+  if (["1", "home", "casa", "h"].includes(s)) return "h";
+  if (["x", "draw", "tie", "empate", "d"].includes(s)) return "d";
+  if (["2", "away", "fora", "a", "visitante"].includes(s)) return "a";
+  return null;
+}
+
+function looksLikePrimaryThreeWayMarket(market: LiveOdds): boolean {
+  const entries = Object.entries(market.selections ?? {});
+  if (entries.length !== 3) return false;
+  const kinds = new Set(entries.map(([label, sel]) => classifyPrimarySelectionKey(sel.canonicalName ?? label)).filter(Boolean));
+  return kinds.has("h") && kinds.has("d") && kinds.has("a");
+}
+
 // Fallback empate-last (igual Pulsescore orderMarketsWithPrimaryFirst): se NENHUM dos nomes acima
 // for reconhecido, evita que um mercado com "Tie" / "Empate" fique por acidente em primeiro (ex:
 // Handicap 3-vias misturado com Moneyline). Pulsescore já tem `hasTieSelection() + withTie/withoutTie`.
@@ -288,7 +304,7 @@ function hasDrawSelection(m: LiveOdds): boolean {
 // vez do 1X2 — reportado pelo utilizador com um screenshot real da página Destaques a mostrar
 // exatamente isso.
 function orderSportmonksMarketsWithPrimaryFirst(markets: LiveOdds[]): LiveOdds[] {
-  const primaryIdx = markets.findIndex(isPrimaryMarketName);
+  const primaryIdx = markets.findIndex((market) => isPrimaryMarketName(market) || looksLikePrimaryThreeWayMarket(market));
   if (primaryIdx > 0) {
     const ordered = [...markets];
     const [primary] = ordered.splice(primaryIdx, 1);
