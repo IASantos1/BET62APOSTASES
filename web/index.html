@@ -176,7 +176,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 .fpromo-tile-terms b{color:var(--text)}
 .fpromo-empty{text-align:center;color:var(--muted);padding:30px 0}
 .section-title{font-family:'Bebas Neue',sans-serif;font-size:1.3rem;margin-bottom:12px;letter-spacing:.5px}
-.auth-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:300;align-items:center;justify-content:center;padding:16px}
+.auth-overlay{display:none;position:fixed;top:0;right:0;bottom:0;left:0;inset:0;background:rgba(0,0,0,.75);z-index:300;align-items:center;justify-content:center;padding:16px}
 .auth-overlay.open{display:flex}
 .auth-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;width:100%;max-width:400px;overflow:hidden;max-height:92vh;overflow-y:auto}
 .auth-tabs{display:flex}
@@ -335,10 +335,10 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .mt-pulse-marker.away .mt-pulse-icon{background:#fff;border-color:var(--muted)}
 .mt-pulse-name{font-size:.56rem;font-weight:700;color:var(--muted);white-space:nowrap;max-width:64px;overflow:hidden;text-overflow:ellipsis}
 .mt-pulse-labels{display:flex;justify-content:space-between;font-size:.62rem;color:var(--muted);margin-top:2px;padding:0 2px}
-/* Match Tracker: mini campo 3D real (Three.js, ver ensureTracker3D em app.js) com a posição real
-   da bola (Sportmonks ballCoordinates). O <canvas> WebGL vive dentro de .tp-canvas-frame, um
-   contentor com aspect-ratio fixo — mesma técnica já comprovada noutros sítios da app para o
-   conteúdo nunca sair esticado independentemente do motor de renderização. */
+/* Match Tracker: mini campo 2D real (canvas nativo, ver tracker2d.js) com a posição real da bola
+   (Sportmonks ballCoordinates). O <canvas> vive dentro de .tp-canvas-frame, um contentor com
+   aspect-ratio fixo — mesma técnica já comprovada noutros sítios da app para o conteúdo nunca
+   sair esticado independentemente do motor de renderização. */
 /* Modal do Match Tracker redesenhado a partir do modelo HTML que o utilizador enviou
    (BET62trackerpreview.html) — pedido explícito "usar o mesmo que mandei". Mundo visual próprio
    (verde-escuro estádio + amarelo, tipografia Plus Jakarta Sans/Space Mono), deliberadamente à
@@ -369,11 +369,29 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .bt-score-team span{display:block;margin-top:2px;color:var(--bt-muted);font-family:var(--bt-mono);font-size:8px;letter-spacing:.1em;text-transform:uppercase}
 .bt-team-mark{
   width:32px;height:32px;flex:0 0 auto;position:relative;display:grid;place-items:center;
-  border-radius:50%;font-family:var(--bt-mono);font-size:10px;font-weight:700;
+  border-radius:50%;font-family:var(--bt-mono);font-size:10px;font-weight:700;overflow:hidden;
+  background:var(--surface);border:1px solid var(--border);
 }
-.bt-team-mark::after{content:'';position:absolute;inset:3px;border:1px solid rgba(255,255,255,.5);border-radius:50%}
-.bt-mark-home{color:#dff0d2;background:#2e7659}
-.bt-mark-away{color:#fff0df;background:#bc5953}
+.bt-team-mark img.bt-team-img{
+  width:100%;height:100%;object-fit:contain;display:block;border-radius:50%;background:#fff;padding:3px;
+}
+.bt-team-mark::after{content:'';position:absolute;top:3px;right:3px;bottom:3px;left:3px;inset:3px;border:1px solid rgba(255,255,255,.35);border-radius:50%;pointer-events:none}
+.bt-team-mark.bt-mark-home{color:#dff0d2;background:#2e7659}
+.bt-team-mark.bt-mark-away{color:#fff0df;background:#bc5953}
+/* Team logos inline (ao lado do nome: cabeçalhos, event-rows, live-cards). */
+.tlogo{
+  width:22px;height:22px;flex:0 0 auto;border-radius:50%;background:#fff;border:1px solid var(--border);
+  padding:2px;object-fit:contain;display:block;
+}
+.tlogo.bt{width:32px;height:32px;padding:3px}
+.tlogo.sm{width:16px;height:16px;padding:1px;border-width:1px}
+.lc-teams .tlogo + span, .event-team .tlogo + span, .mt-team-name .tlogo + span,
+.tp-team-bar .tlogo + span, .bt-score-team .tlogo + strong{margin-left:6px}
+.mt-team-name{display:flex;align-items:center;gap:0;min-width:0}
+.mt-team-name.away{flex-direction:row-reverse}
+.tp-team-bar .tlogo{margin-right:4px}
+.tp-team-bar.away .tlogo{margin-right:0;margin-left:4px}
+.event-team{display:flex;align-items:center;gap:6px}
 .bt-score-center{text-align:center}
 .bt-score-numbers{display:flex;justify-content:center;align-items:center;gap:12px;line-height:1}
 .bt-score-numbers b{font-family:var(--bt-mono);font-size:26px;font-weight:700;letter-spacing:-.08em;color:var(--bt-text)}
@@ -420,25 +438,17 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
    mesma disciplina/keyframe de .tp-team-bar.zone-pulse: zona real da bola, nunca "posse". */
 .bt-score-team strong.zone-pulse{color:var(--bt-red);animation:zone-pulse-text 1.3s ease-in-out infinite}
 @media (prefers-reduced-motion: reduce){.bt-score-team strong.zone-pulse{animation:none}}
-/* Match Tracker 3D real (Three.js, ver ensureTracker3D em app.js) — pedido explícito do
-   utilizador para substituir o campo 2D por um mini campo 3D a sério, ligado aos mesmos dados
-   reais (posição da bola, zona de perigo, canto, golo) já usados no 2D. O <canvas> do WebGL vive
-   dentro deste contentor com aspect-ratio fixo — mesma técnica já comprovada (não confiar só em
-   width:100%;height:auto) que corrigiu o bug real de distorção do campo 2D anterior.
-   A foto da bancada (img/tracker-stadium-bg.jpg) fica como fundo deste contentor, atrás do
-   <canvas> — o renderer agora é transparente (alpha:true, scene.background=null em
-   ensureTracker3D) para deixar a foto aparecer à volta do relvado/balizas/bandeiras 3D, em vez
-   do piso cinzento liso que estava aqui antes. A foto em si já vem cortada (só bancada/holofotes/
-   placares, sem a relva fotografada) — punha o campo 3D a ficar "por cima" da relva da foto, duas
-   relvas diferentes a encontrarem-se numa linha dura. background-size 100% auto (não cover) para
-   não dar zoom à imagem; a câmara 3D (ver ensureTracker3D) foi inclinada para deixar espaço no
-   topo do enquadramento para a bancada em vez de o relvado 3D lhe ficar por cima. */
-.tp-canvas-frame{position:relative;width:100%;aspect-ratio:100/64;border-radius:10px;overflow:hidden;background:#0a1a10 url("img/tracker-stadium-bg.jpg") center top/100% auto no-repeat}
-.tp-canvas-frame canvas{position:absolute;inset:0;width:100%!important;height:100%!important;display:block;touch-action:none}
+/* Match Tracker: mini campo 2D real (canvas nativo, ver tracker2d.js) — mostra os mesmos dados
+   reais (posição da bola, zona de perigo, canto, golo) num <canvas> leve, sem a dependência de
+   ~486kb do Three.js que a versão 3D exigia. O <canvas> vive dentro deste contentor com
+   aspect-ratio fixo — mesma técnica já comprovada (não confiar só em width:100%;height:auto) que
+   corrigiu o bug real de distorção do campo 2D (SVG) anterior. */
+.tp-canvas-frame{position:relative;width:100%;aspect-ratio:100/64;border-radius:10px;overflow:hidden;background:#04100a}
+.tp-canvas-frame canvas{position:absolute;top:0;right:0;bottom:0;left:0;inset:0;width:100%!important;height:100%!important;display:block;touch-action:none}
 /* Flash de golo — sobrepõe o campo por alguns segundos quando um golo novo e confirmado aparece
    na linha do tempo real do jogo (nunca antecipado/inventado); agora uma camada HTML normal por
    cima do <canvas> em vez de <foreignObject> dentro de um SVG. */
-.tp-goal-flash{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;background:rgba(12,12,14,.72);color:#fff;font-family:'Bebas Neue',sans-serif;font-size:1.6rem;letter-spacing:1px;opacity:0;pointer-events:none;animation:tp-goal-flash 4s ease-in-out}
+.tp-goal-flash{position:absolute;top:0;right:0;bottom:0;left:0;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;background:rgba(12,12,14,.72);color:#fff;font-family:'Bebas Neue',sans-serif;font-size:1.6rem;letter-spacing:1px;opacity:0;pointer-events:none;animation:tp-goal-flash 4s ease-in-out}
 @keyframes tp-goal-flash{0%{opacity:0}8%{opacity:1}80%{opacity:1}100%{opacity:0}}
 .tp-goal-flash .tp-goal-net{font-size:2.6rem;animation:tp-goal-bounce 0.6s ease-in-out 2}
 @keyframes tp-goal-bounce{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(6px) scale(1.15)}}
@@ -606,6 +616,11 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .selection-btn.picked .sel-odd{color:var(--red)}
 .selection-btn.suspended{cursor:not-allowed;opacity:.5;background:var(--surface2)}
 .selection-btn.suspended .sel-odd{color:var(--muted);font-style:italic;font-weight:600}
+/* Micro-feedback de odd alterada em live: flash suave (1 vez) para não agredir, mas tornar
+   visível que o preço mudou desde o último render — usado no patchLiveMarketGroups incremental.
+   !important força o restart da animação quando a classe é toggle()ada (remove+add + reflow). */
+.selection-btn.odd-flash .sel-odd{animation:odd-flash 650ms ease-out 1 !important}
+@keyframes odd-flash{0%{background:var(--gold);color:#1a1a1a;border-radius:6px}100%{background:transparent;color:var(--text)}}
 .market-suspended-badge{margin-left:8px;font-size:.62rem;font-weight:700;text-transform:uppercase;color:var(--red);background:rgba(230,48,39,.12);border-radius:6px;padding:2px 6px;letter-spacing:.03em}
 .bs-row.bs-row-suspended{opacity:.7;border-color:var(--red)}
 .bs-row.bs-row-adjusted{border-color:var(--gold)}
@@ -650,7 +665,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
   .sidebar-right{right:0;width:100%;max-width:100%;transform:translateX(100%);overflow-y:auto;-webkit-overflow-scrolling:touch}
   .sidebar-right.open{transform:translateX(0)}
   .betslip-close{display:inline-flex}
-  .drawer-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:240}
+  .drawer-overlay{display:none;position:fixed;top:0;right:0;bottom:0;left:0;inset:0;background:rgba(0,0,0,.6);z-index:240}
   .drawer-overlay.open{display:block}
   /* :not(.hidden) — sem isto, este !important ganhava sempre ao .hidden{display:none!important}
      do boletim vazio (mesma especificidade, mas este vem depois no ficheiro), fazendo o botão
@@ -685,7 +700,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .casino-hero{position:relative;border-radius:18px;overflow:hidden;margin-bottom:22px;background:var(--surface)}
 .casino-hero-track{display:flex;transition:transform .5s ease}
 .casino-hero-slide{flex:0 0 100%;min-height:200px;aspect-ratio:16/7;background-size:cover;background-position:center;display:flex;align-items:flex-end;position:relative}
-.casino-hero-slide::after{content:'';position:absolute;inset:0;background:linear-gradient(0deg,rgba(0,0,0,.82) 0%,rgba(0,0,0,.35) 55%,rgba(0,0,0,.05) 100%)}
+.casino-hero-slide::after{content:'';position:absolute;top:0;right:0;bottom:0;left:0;inset:0;background:linear-gradient(0deg,rgba(0,0,0,.82) 0%,rgba(0,0,0,.35) 55%,rgba(0,0,0,.05) 100%)}
 .casino-hero-slide-body{position:relative;z-index:1;padding:18px 22px;max-width:520px}
 .casino-hero-eyebrow{font-size:.72rem;font-weight:700;letter-spacing:.08em;color:var(--gold);text-transform:uppercase;margin-bottom:6px}
 .casino-hero-title{font-family:'Bebas Neue',sans-serif;font-size:1.9rem;line-height:1.05;color:#fff;letter-spacing:.4px;margin-bottom:10px;text-shadow:0 2px 8px rgba(0,0,0,.4)}
@@ -714,9 +729,9 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .casino-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:12px;margin-bottom:18px}
 .casino-game-card{position:relative;border-radius:12px;overflow:hidden;background:var(--surface);border:1px solid var(--border);cursor:pointer;aspect-ratio:3/4}
 .casino-game-card img{width:100%;height:100%;object-fit:cover;display:block}
-.casino-game-card-overlay{position:absolute;inset:0;background:linear-gradient(0deg,rgba(0,0,0,.88) 0%,rgba(0,0,0,0) 45%);display:flex;flex-direction:column;justify-content:flex-end;padding:8px}
-.casino-game-name{color:#fff;font-size:.72rem;font-weight:700;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.casino-game-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);opacity:0;transition:opacity .15s;color:#fff;font-size:1.6rem}
+.casino-game-card-overlay{position:absolute;top:0;right:0;bottom:0;left:0;inset:0;background:linear-gradient(0deg,rgba(0,0,0,.88) 0%,rgba(0,0,0,0) 45%);display:flex;flex-direction:column;justify-content:flex-end;padding:8px}
+.casino-game-name{color:#fff;font-size:.72rem;font-weight:700;line-height:1.2;display:-webkit-box;display:box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;box-orient:vertical;overflow:hidden}
+.casino-game-play{position:absolute;top:0;right:0;bottom:0;left:0;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);opacity:0;transition:opacity .15s;color:#fff;font-size:1.6rem}
 .casino-game-card:hover .casino-game-play{opacity:1}
 .casino-skel-card{aspect-ratio:3/4;border-radius:12px;background:linear-gradient(90deg,var(--surface2) 25%,var(--border) 50%,var(--surface2) 75%);background-size:400% 100%;animation:skeleton-shimmer 1.4s ease-in-out infinite}
 .casino-load-more{display:block;margin:4px auto 24px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:11px 28px;border-radius:24px;font-weight:700;font-size:.82rem;cursor:pointer}
@@ -729,7 +744,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
   .casino-grid{grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
 }
 /* ========== CASINO GAME MODAL (iframe white-label full-screen) ========== */
-.casino-game-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;display:flex;flex-direction:column;align-items:stretch;justify-content:stretch}
+.casino-game-overlay{position:fixed;top:0;right:0;bottom:0;left:0;inset:0;background:rgba(0,0,0,0.92);z-index:9999;display:flex;flex-direction:column;align-items:stretch;justify-content:stretch}
 .casino-game-overlay.hidden{display:none}
 .casino-game-topbar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#000;border-bottom:1px solid #1a1a1a;flex-shrink:0}
 .casino-game-title{display:flex;align-items:center;gap:10px;min-width:0}
@@ -739,15 +754,15 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .casino-game-close{background:transparent;border:1px solid #333;color:#ccc;padding:6px 12px;border-radius:16px;cursor:pointer;font-weight:600;font-size:.8rem;flex-shrink:0}
 .casino-game-close:hover{border-color:var(--red);color:#fff}
 .casino-game-iframe-wrap{flex:1;position:relative;min-height:0;background:#000}
-.casino-game-iframe-wrap iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000}
-.casino-game-loader{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#000;gap:14px;color:#fff;z-index:10}
+.casino-game-iframe-wrap iframe{position:absolute;top:0;right:0;bottom:0;left:0;inset:0;width:100%;height:100%;border:0;background:#000}
+.casino-game-loader{position:absolute;top:0;right:0;bottom:0;left:0;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#000;gap:14px;color:#fff;z-index:10}
 .casino-game-spinner{width:48px;height:48px;border:4px solid #222;border-top-color:var(--red);border-radius:50%;animation:spin 0.8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .casino-game-loader-text{font-size:.95rem;color:#bbb;text-align:center;max-width:420px;padding:0 20px}
 .casino-game-loader-sub{font-size:.8rem;color:#666}
 
 /* ====================== MINHAS APOSTAS: modal + bilhetes ====================== */
-.mybets-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:400;align-items:flex-start;justify-content:center;padding:0}
+.mybets-overlay{display:none;position:fixed;top:0;right:0;bottom:0;left:0;inset:0;background:rgba(0,0,0,.75);z-index:400;align-items:flex-start;justify-content:center;padding:0}
 .mybets-overlay.hidden{display:none}
 .mybets-overlay:not(.hidden){display:flex}
 .mybets-panel{width:100%;max-width:640px;height:100%;background:var(--bg);display:flex;flex-direction:column;box-shadow:-10px 0 40px rgba(0,0,0,.4)}
@@ -1462,6 +1477,7 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 <button class="betslip-fab hidden" id="betslip-fab" onclick="openRightDrawer()" aria-label="Abrir boletim"><span id="betslip-fab-count">0</span></button>
 
 <script src="api.js"></script>
+<script src="tracker2d.js"></script>
 <script src="app.js"></script>
 <script>
 // Registo do service worker — só torna o site instalável (PWA) e dá uma casca offline básica,

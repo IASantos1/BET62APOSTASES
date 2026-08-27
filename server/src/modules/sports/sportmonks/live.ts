@@ -1,52 +1,119 @@
 import { logger } from "../../../lib/logger";
 import { hybridSportsService } from "../hybridService";
-import type { LiveEvent } from "../types";
-import { fetchInplayOddsForFixture, fetchLivescoresInplay, normalizeLiveFixture } from "./client";
+import type { LiveEvent, LiveOdds } from "../types";
+import {
+  fetchInplayOddsForFixture,
+  fetchLatestLivescores,
+  fetchLivescoresInplay,
+  normalizeLiveFixture,
+} from "./client";
 
 /**
  * Poller de Ao Vivo de futebol via Sportmonks (só ativo com FOOTBALL_PROVIDER=sportmonks, ver
- * server.ts) — substitui a Pulsescore/WebSocket para "football" nesse modo (ver hybridService.ts
- * e wsClient.ts, que passam a ignorar futebol quando o interruptor está ligado, para as duas
- * fontes não ficarem a substituir o snapshot uma da outra).
+ * server.ts) — substitui a Pulsescore/WebSocket para "football" nesse modo.
  *
- * Usa GET /livescores/inplay (fetchLivescoresInplay, ver client.ts) para placar/relógio, e
- * GET /odds/inplay/fixtures/{id} (fetchInplayOddsForFixture) para as odds de cada jogo — os dois
- * CONFIRMADOS por amostras reais a atualizar durante o jogo (ao contrário de fetchFixturesBetween/
- * fetchFixtureDetail, cujas odds confirmaram-se congeladas desde antes do apito inicial — ver
- * diagnoseLiveOddsMovement() em client.ts, reportado pelo utilizador como "odds não atualizam").
- * Sem odds para um jogo específico (pedido individual falhou), esse jogo aparece com placar/
- * relógio mas sem mercados, em vez de ficar escondido — nunca inventa odds.
+ * ARQUITETURA DE 2 CAMADAS (nova, 2026-08-26) — documentação oficial Sportmonks v3 confirma:
+ *  • Scores atualizam ≤10s, Events 10–30s, Odds ao vivo cada 2–10s (ver API FAQ).
+ *  • Endpoint /livescores/latest devolve apenas fixtures atualizadas nos últimos 10s, payload
+ *    MUITO menor do que /inplay completo — permite polling a 1-2s só do essencial sem gastar
+ *    cota desnecessária (o rate limit de 3000/hora do plano Pro, por exemplo, não aguentava
+ *    /inplay + odds individuais todos a 2s — daria 8 jogos × 3600/2 ≈ 16200 pedidos/hora).
  *
- * Alimenta hybridSportsService.applyExternalSnapshot("football", events) — o mesmo ponto de
- * entrada usado pela Pulsescore, por isso o WebSocket gateway e a liquidação automática de apostas
- * (server.ts, ligados aos eventos 'event'/'remove') continuam a funcionar sem alterações: um jogo
- * que desaparece de /livescores/inplay (porque terminou) é tratado exatamente como um jogo que
- * desaparece de um snapshot da Pulsescore — remove com a mesma margem (REMOVE_GRACE_MS), liquidando
- * as apostas com o último placar conhecido.
+ * CAMADA RÁPIDA (FAST_POLL_INTERVAL_MS = 2s) — placar, relógio, estado, eventos, motivo suspensão:
+ *  • GET /livescores/latest (1 pedido por ciclo, só fixtures atualizadas recentemente)
+ *  • NÃO pede odds. Publica no hybrid usando MERGE PARCIAL com o evento já existente (preserva
+ *    as odds do último poll ODDS, nunca "apaga mercados" por causa de um ciclo rápido).
+ *  • Quando /latest vem vazio (nenhuma atualização nos 10s anteriores — normal entre golos)
+ *    não publica nada — o hybrid mantém o último snapshot completo.
  *
- * `state_id === 5` ("FT"/"Full Time", CONFIRMADO em três amostras reais distintas nesta base de
- * código — ver comentário de detectSuspendedReason em client.ts) é filtrado ANTES de pedir odds:
- * reportado pelo utilizador com um print real — vários jogos da Carabao Cup a 92'-96' presos em
- * "Ao Vivo" com o mercado principal "Suspenso" (correto: a casa de apostas já não aceita apostas
- * num jogo terminado) mas nunca a sair da lista, porque /livescores/inplay continuou a listá-los
- * mesmo depois do fim. Só se filtra por este valor CONFIRMADO — qualquer outro state_id (incluindo
- * prorrogação/pénaltis, cujos valores nunca se confirmaram) continua a passar normalmente, nunca
- * se arrisca a remover um jogo genuinamente a decorrer.
+ * CAMADA LENTA (ODDS_POLL_INTERVAL_MS = 12s) — mercados (odds) de cada jogo:
+ *  • GET /livescores/inplay para saber a lista de jogos ativos (1 pedido)
+ *  • + N × GET /odds/inplay/fixtures/{id} (N = nº jogos ativos)
+ *  • Publica o evento COMPLETO (odds incluídas) no hybrid — este é o ciclo que "renova" as
+ *    odds de cada jogo a cada 12s (compatível com a frequência da Sportmonks de 2-10s).
+ *
+ * Ambos os ciclos publicam no mesmo channel "football" do hybrid, por isso:
+ *  • O WebSocket gateway (gateway.ts ligado aos eventos 'event'/'remove') continua transparente.
+ *  • A liquidação (checkEarlySettlement / settleEventFinished) recebe sempre o estado mais
+ *    recente, sem qualquer alteração.
+ *  • O REMOVE_GRACE_MS = 90s do hybrid é respeitado pelos dois ciclos.
+ *
+ * CONSUMO ESTIMADO (pico N=8 jogos ao vivo em simultâneo):
+ *  • FAST 2s:    3600/2 × 1   = 1800 pedidos/hora
+ *  • ODDS 12s:  3600/12 × (1+8) = 2700 pedidos/hora
+ *  • TOTAL:      ~4500/h  — ok para Enterprise (5000/h). Para Pro (3000/h) recomendamos
+ *    aumentar FAST_POLL_INTERVAL_MS para 3s (fica 1200+2700 = 3900 — ligeiramente acima) ou
+ *    ODDS para 15s (1800+2160 = 3960) OU ativar modo "odds on-demand" só quando há viewers
+ *    WS numa fixture.
+ *  • Pré-jogo adicional ~3600/h (ver prematch.ts) é contado separadamente na entidade
+ *    "fixtures" do rate limit per entity (Sportmonks cobra por entidade, não global).
  */
-// Um pedido de odds por jogo ao vivo (não em lote — /odds/inplay sem filtro por fixture nunca foi
-// confirmado por amostra real) — por isso o intervalo aqui é maior do que só o placar precisaria:
-// com N jogos ao vivo em simultâneo, cada ciclo gasta N+1 pedidos (1 de /livescores/inplay + N de
-// odds), todos no mesmo balde de limite que fetchFixturesBetween() do pré-jogo (ver aviso em
-// sportmonks/prematch.ts). A 15s, com um pico razoável de N=8 jogos ao vivo, fica-se por
-// ~(3600/15)*9 = 2160 pedidos/hora só aqui — somado ao pior caso do pré-jogo (~1440/hora), dá
-// ~3600/hora no pior cenário, por isso 15s (não menos) é a escolha conservadora face ao limite
-// documentado de 3000/hora por entidade (a conta real mostrou muita mais margem, mas não se confia
-// nisso — pode ser só quota de avaliação temporária).
-const POLL_INTERVAL_MS = 15_000;
+const FAST_POLL_INTERVAL_MS = 2_000;
+const ODDS_POLL_INTERVAL_MS = 12_000;
 
-const FULL_TIME_STATE_ID = 5; // CONFIRMADO — ver comentário do módulo acima
+const FULL_TIME_STATE_ID = 5; // CONFIRMADO por amostras reais (state_id=5 = FT/Full Time)
 
-async function pollOnce() {
+/**
+ * Normaliza uma fixture para LiveEvent MAS sem odds — usado pelo poll rápido. Devolve um
+ * objeto "fraco" com odds.length=0, mas antes de publicar no hybrid fazemos MERGE com o
+ * evento já existente (se existir) para não perder as odds do último poll de ODDS.
+ */
+function normalizeFastFixture(fixture: any): LiveEvent | null {
+  const empty: LiveOdds[] = [];
+  return normalizeLiveFixture(fixture, empty);
+}
+
+/**
+ * Publica "fast updates" (só scores/estado) SEM remover eventos do desporto que NÃO aparecem
+ * no payload de /latest. /latest é INCREMENTAL (só atualizações últimos 10s), não é um
+ * snapshot completo — por isso NÃO podemos chamar applyExternalSnapshot() (que compara IDs e
+ * marca todos os faltantes como "missingSince", removendo ao fim de REMOVE_GRACE_MS todos os
+ * jogos que simplesmente não mudaram nada entre golos).
+ *
+ * Estratégia correta: para cada evento do /latest:
+ *   1. Preservar odds do evento existente no hybrid (poll ODDS é o dono das odds);
+ *   2. Ingerir INDIVIDUALMENTE (ingest = set + emit event), cada um por si;
+ *   3. Nunca tocar nos outros IDs. O poll ODDS (12s) continua a ser o único que corre a
+ *      limpeza de jogos terminados via applyExternalSnapshot completo.
+ */
+function publishFastUpdates(freshFastFixtures: LiveEvent[]) {
+  for (const evt of freshFastFixtures) {
+    const existing = hybridSportsService.getById(evt.id);
+    const merged: LiveEvent =
+      existing && existing.odds.length > 0
+        ? { ...evt, odds: existing.odds, suspendedReason: evt.suspendedReason ?? existing.suspendedReason }
+        : evt;
+    // ingest = events.set + emit 'event' (ver hybridService.ts ingest())
+    (hybridSportsService as any).ingest(merged);
+  }
+}
+
+// --- Poll FAST (2s) — só scores/estado, via /latest (atualizados últimos 10s) ---
+async function pollFastOnce() {
+  try {
+    const latestFixtures = await fetchLatestLivescores();
+    // /latest NÃO garante que lista completa de jogos ao vivo — só os que mudaram. Por NÃO
+    // ser snapshot completo, NÃO filtramos state_id aqui (se um jogo ficou FT há 2min e não
+    // mudou mais, simplesmente não aparece em /latest — o poll ODDS (cada 12s) é que trata
+    // de realmente o remover do hybrid através do /inplay completo). Também não filtramos
+    // por "no changes" — /latest já vem com filtro aplicado na origem.
+    if (!latestFixtures.length) return; // sem atualizações: não publica nada, não toca no estado
+
+    const events: LiveEvent[] = [];
+    for (const f of latestFixtures) {
+      const evt = normalizeFastFixture(f);
+      if (evt) events.push(evt);
+    }
+    if (events.length) publishFastUpdates(events);
+  } catch (err) {
+    // Não loggar a warning em cada falha (faz spam se Sportmonks tiver 1min de 503).
+    // Mantém silencioso; o poll ODDS completo funciona como fallback para recuperação.
+    logger.debug({ err: String(err).slice(0, 200) }, "Sportmonks: poll FAST /latest falhou — mantém estado (fallback via poll ODDS completo)");
+  }
+}
+
+// --- Poll ODDS (12s) — lista completa via /inplay + odds individuais por fixture ---
+async function pollOddsOnce() {
   try {
     const allFixtures = await fetchLivescoresInplay();
     const fixtures = allFixtures.filter((f) => f.state_id !== FULL_TIME_STATE_ID);
@@ -63,11 +130,16 @@ async function pollOnce() {
     });
     hybridSportsService.applyExternalSnapshot("football", events);
   } catch (err) {
-    logger.warn({ err: String(err).slice(0, 200) }, "Sportmonks: falha ao obter /livescores/inplay — mantém o último snapshot de Ao Vivo");
+    logger.warn({ err: String(err).slice(0, 200) }, "Sportmonks: falha ao obter /livescores/inplay completo — mantém o último snapshot de Ao Vivo");
   }
 }
 
 export function startSportmonksLiveFootballPoll(): void {
-  void pollOnce();
-  setInterval(pollOnce, POLL_INTERVAL_MS);
+  // Boot: primeiro o poll ODDS completo (para a lista de jogos e as odds iniciais aparecerem
+  // sem esperar 12s), e só depois arrancamos o FAST a 2s (para já ter algo para preservar
+  // as odds no merge). Ordem é importante.
+  void pollOddsOnce().then(() => {
+    setInterval(pollFastOnce, FAST_POLL_INTERVAL_MS);
+    setInterval(pollOddsOnce, ODDS_POLL_INTERVAL_MS);
+  });
 }

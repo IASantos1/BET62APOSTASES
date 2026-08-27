@@ -365,8 +365,8 @@ function paintPrematchList(container, realEvents) {
     (e) => `
       <div class="live-card" onclick="openMarket('${e.id}', false)">
         <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime)}</span></div>
-        <div class="lc-teams"><span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span></div>
-        ${quickOddsHtml(e, e.odds?.[0], false)}
+        <div class="lc-teams">${teamLogoImg(e.homeLogo,"sm",e.home)}<span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span>${teamLogoImg(e.awayLogo,"sm",e.away)}</div>
+        ${quickOddsHtml(e, safeFindPrimaryMarket(e) ?? e.odds?.[0], false)}
       </div>`
   );
   renderInBlocks(container, cardsHtml);
@@ -590,6 +590,7 @@ function quickPick(event, key, selection) {
 function primarySuspendedLabel(e) {
   if (e.suspendedReason === "goal") return "Grande Chance";
   if (e.suspendedReason === "var") return "Revisão VAR";
+  if (e.suspendedReason === "penalty") return "Pênalti a Marcar";
   return "Suspenso";
 }
 
@@ -605,16 +606,82 @@ function primarySuspendedLabel(e) {
 // existisse — o utilizador pediu explicitamente para nunca ficar "assim sem odds", entrar sempre
 // pelo menos como "Suspenso" até o bookmaker abrir o mercado.
 const SUSPENDED_QUICK_ODDS_HTML = (e) => `<div class="lc-odds"><div class="suspended" style="flex:3">${primarySuspendedLabel(e)}</div></div>`;
+// =========== VALIDADORES MÍNIMOS (apenas para CARTÕES da lista) =================
+// Estes helpers são propositadamente ULTRA-SIMPLES e conservadores:
+//   - Nunca mudam o comportamento se não houver dados suspeitos
+//   - Só rejeitam o que é OBVIAMENTE errado (horário "19:00" como odd, labels
+//     "Nem / Sem gol / Placar Empate" no lugar de Casa/Empate/Fora etc.)
+//   - Se existir dúvida: mantém o dado original e não bloqueia nada.
+function normalizeOddValue(raw) {
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : NaN;
+  if (typeof raw !== "string") return NaN;
+  const s = raw.trim();
+  // Fix A.1: Rejeita EXPLICITAMENTE strings com ":" (horário: "19:00", "21:00") ou "/"
+  // (datas "27/08") — nunca são odds válidas.
+  if (s.includes(":") || s.includes("/")) return NaN;
+  // Só aceita dígitos + 1 separador decimal (ponto ou vírgula pt-PT).
+  if (!/^-?\d+([.,]\d+)?$/.test(s)) return NaN;
+  return Number(s.replace(",", "."));
+}
+// Fix B.1: Classifica uma label como "parece lado Home / Draw / Away / None".
+// Devolve "h" "d" "a" ou null. Usa palavras mais comuns em pt/en 1x2 / moneyline.
+function classifyHdaLabel(labelRaw) {
+  const rawOrig = String(labelRaw ?? "").trim();
+  // Fix E (odds altas de handicap): REJEITA QUALQUER label que contenha
+  // sinais de linha (+ / − / -) ou dígitos. Handicap e O/U com linha extrema
+  // (ex: "Casa +5.5") têm odds absurdas (151.00) que NUNCA pertencem ao
+  // mercado principal 1X2/Moneyline puro.
+  if (/[+\-−0-9]/.test(rawOrig)) return null;
+  const s = rawOrig
+    .toLowerCase()
+    // Remove quaisquer anexos de linha (ex: "Casa -1.5" → "casa", "Home +0.5" → "home")
+    .replace(/[+-−]\s*\d+([.,]\d+)?$/, "")
+    .trim();
+  if (!s) return null;
+  if (["1", "home", "casa", "casa.", "homes", "h"].includes(s)) return "h";
+  if (["x", "2", "draw", "tie", "empate", "empates", "draws", "ties", "d"].includes(s) || /^draw\b|^empate\b|^tie\b/.test(s)) return "d";
+  if (["2", "away", "fora", "aways", "a", "visitante"].includes(s)) return "a";
+  return null;
+}
 function quickOddsHtml(e, group, isLive) {
   if (!group?.selections || !group.isActive) return SUSPENDED_QUICK_ODDS_HTML(e);
-  const entries = orderedSelectionEntries(group.selections).slice(0, 3);
-  if (!entries.length) return SUSPENDED_QUICK_ODDS_HTML(e);
+
+  // Fix A: filtrar entries por valor ODD aceitável (não horário, não data, faixa 1.01–1000)
+  // Cartões mostram sempre o mercado PRINCIPAL 1X2 / Moneyline; odds > 1000 aqui são 99.9% erro.
+  const MIN_ODD = 1.01;
+  const MAX_ODD = 1000;
+  const entriesFiltered = [];
+  for (const [label, sel] of orderedSelectionEntries(group.selections)) {
+    if (!sel || sel.isActive === false) continue;
+    const v = normalizeOddValue(sel.odd);
+    if (!Number.isFinite(v)) continue;
+    if (v < MIN_ODD || v > MAX_ODD) continue;
+    entriesFiltered.push([label, { ...sel, odd: v }]);
+    if (entriesFiltered.length >= 3) break;
+  }
+  if (!entriesFiltered.length) return SUSPENDED_QUICK_ODDS_HTML(e);
+
+  // Fix B: os botões do cartão NÃO PODEM ser "Nem / Sem gol / Placar Empate".
+  // Requisitos mínimos:
+  //   3 botões → {h, d, a} (1X2 completo) OU no mínimo 2 de {h,d,a} + 1 outro não suspeito.
+  //   2 botões → {h, a} (moneyline casa/fora).
+  //   1 botão → SEMPRE suspenso (1 botão sem contexto é erro 99%).
+  const labels = entriesFiltered.map(([l]) => classifyHdaLabel(l));
+  const counts = { h: 0, d: 0, a: 0, null: 0 };
+  for (const l of labels) counts[l === null ? "null" : l]++;
+  const looksOk =
+    (entriesFiltered.length === 3 && (counts.h + counts.d + counts.a >= 2)) ||
+    (entriesFiltered.length === 2 && counts.h >= 1 && counts.a >= 1);
+  if (!looksOk) {
+    // Qualquer outro caso (1 botão só, 2 botões sem casa/fora, 3 botões de BTTS etc.)
+    // mostra "Suspenso" em vez de odds descontextualizadas.
+    return SUSPENDED_QUICK_ODDS_HTML(e);
+  }
+
+  const entries = entriesFiltered;
   return `<div class="lc-odds">${entries
     .map(([label, sel]) => {
       const labelPt = translateSelectionLabel(label);
-      if (!sel.isActive || !Number.isFinite(sel.odd)) {
-        return `<div class="suspended">${labelPt}<br>Suspenso</div>`;
-      }
       const key = `${e.id}|${group.market}|${label}`;
       const picked = betslipSelections.has(key);
       const selection = { eventId: e.id, sport: e.sport, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
@@ -622,6 +689,37 @@ function quickOddsHtml(e, group, isLive) {
       return `<div class="${picked ? "picked" : ""}" onclick='quickPick(event, ${attrJson(key)}, ${attrJson(selection)})'>${labelPt}<br>${sel.odd.toFixed(2)}${arrow}</div>`;
     })
     .join("")}</div>`;
+}
+// Fix C + D: safeFindPrimaryMarket(e) — ULTRA conservador. 0 heurísticas.
+// Passa por TODAS as odds do evento (não só [0]) e retorna o PRIMEIRO grupo que
+// é 1X2/Moneyline a 2/3 botões válidos. Se NÃO encontrar nenhum → retorna undefined,
+// os callers usam `?? e.odds?.[0]` para ficar exatamente como 01e8626. NUNCA destrói UX.
+function safeFindPrimaryMarket(e) {
+  if (!e || !Array.isArray(e.odds) || !e.odds.length) return undefined;
+  for (let gIdx = 0; gIdx < e.odds.length; gIdx++) {
+    const g = e.odds[gIdx];
+    if (!g || !g.selections || g.isActive === false) continue;
+    const sels = Object.entries(g.selections);
+    if (sels.length < 2 || sels.length > 3) continue;
+    let h = 0, d = 0, a = 0;
+    let grupoValido = true;
+    for (const [lbl, sel] of sels) {
+      if (!sel || sel.isActive === false) { grupoValido = false; break; }
+      // Fix E (odds altas): NÃO aceita handicap / O/U labels com dígitos ou +−
+      if (/[+\-−0-9]/.test(String(lbl ?? "").trim())) { grupoValido = false; break; }
+      const v = normalizeOddValue(sel.odd);
+      if (!Number.isFinite(v) || v < 1.01 || v > 1000) { grupoValido = false; break; }
+      const c = classifyHdaLabel(lbl);
+      if (c === "h") h++;
+      else if (c === "d") d++;
+      else if (c === "a") a++;
+    }
+    if (!grupoValido) continue;
+    const totalHda = h + d + a;
+    if (sels.length === 3 && totalHda >= 2) return g;
+    if (sels.length === 2 && h >= 1 && a >= 1) return g;
+  }
+  return undefined;
 }
 
 // Setas de subida/descida das odds: guarda o último valor visto por seleção (mesma chave
@@ -640,11 +738,10 @@ function oddsArrowHtml(key, value) {
 function showPage(page) {
   if (pageHistory[pageHistory.length - 1] !== page) pageHistory.push(page);
   closeDrawers();
-  // Sai da página de mercado: pára o motor 3D do mini campo (ver pauseTracker3D em app.js) — a
-  // cena e o <canvas> continuam vivos (nada é destruído), só o loop de animação para de correr
-  // sem estar visível a ninguém. Volta a arrancar sozinho quando renderMatchTracker é chamado de
-  // novo (mountTracker3D reativa-o).
-  if (page !== "market") pauseTracker3D();
+  // Sai da página de mercado: pára o motor 2D do mini campo (tracker2d.js) — o canvas e o seu
+  // estado interno continuam vivos (nada é destruído), apenas se deixa de fazer repaints até
+  // ser montado de novo quando voltarmos à página de mercado.
+  if (page !== "market") pauseTracker2D();
 
   ["destaques", "profile", "esportes", "cassino", "aovivo", "promocao", "market"].forEach((p) => {
     const el = document.getElementById("page-" + p);
@@ -2147,14 +2244,14 @@ function highlightPrematchCardHtml(e, icon) {
   return `
     <div class="live-card" onclick="openMarket('${e.id}', false)">
       <div class="lc-top"><span>${icon[e.sport] || ""} ${e.league}</span><span>${formatKickoff(e.startTime)}</span></div>
-      <div class="lc-teams"><span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span></div>
-      ${quickOddsHtml(e, e.odds?.[0], false)}
+      <div class="lc-teams">${teamLogoImg(e.homeLogo,"sm",e.home)}<span>${e.home}</span><span style="color:var(--muted);font-size:.8rem">vs</span><span>${e.away}</span>${teamLogoImg(e.awayLogo,"sm",e.away)}</div>
+      ${quickOddsHtml(e, safeFindPrimaryMarket(e) ?? e.odds?.[0], false)}
     </div>`;
 }
 
 function highlightLiveCardHtml(e, icon) {
   const clockClass = isClockMissing(e) ? "clock-missing" : "";
-  const oddsHtml = quickOddsHtml(e, e.odds?.[0], true);
+  const oddsHtml = quickOddsHtml(e, safeFindPrimaryMarket(e) ?? e.odds?.[0], true);
   return e.statistics?.sets ? renderSetsCard(e, clockClass, oddsHtml, icon[e.sport] || "") : renderGenericCard(e, clockClass, oddsHtml, icon[e.sport] || "");
 }
 
@@ -2405,8 +2502,8 @@ function renderGenericCard(e, clockClass, oddsHtml, icon) {
     <div class="live-card" data-eid="${e.id}" onclick='openMarket(${attrJson(e.id)}, true)'>
       <div class="lc-top"><span>${icon} ${e.league}</span><span class="${clockClass}">${e.minuteOrPeriod}</span></div>
       <div class="event-rows">
-        <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.homeScore}</span>` : ""}<span class="event-team">${e.home}${homeRed}</span></div>
-        <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.awayScore}</span>` : ""}<span class="event-team">${e.away}${awayRed}</span></div>
+        <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.homeScore}</span>` : ""}<span class="event-team">${teamLogoImg(e.homeLogo,"sm",e.home)}<span data-initial-fallback="${teamInitials(e.home)}">${e.home}</span>${homeRed}</span></div>
+        <div class="event-row score-left">${hasScore ? `<span class="event-row-score">${e.awayScore}</span>` : ""}<span class="event-team">${teamLogoImg(e.awayLogo,"sm",e.away)}<span data-initial-fallback="${teamInitials(e.away)}">${e.away}</span>${awayRed}</span></div>
       </div>
       ${oddsHtml}
     </div>`;
@@ -2433,7 +2530,7 @@ function renderLiveEvents() {
   const cardsHtml = events.map((e) => {
     const clockClass = isClockMissing(e) ? "clock-missing" : "";
     const icon = sportIcon[e.sport] || "";
-    const oddsHtml = quickOddsHtml(e, e.odds?.[0], true);
+    const oddsHtml = quickOddsHtml(e, safeFindPrimaryMarket(e) ?? e.odds?.[0], true);
 
     if (e.statistics?.sets) return renderSetsCard(e, clockClass, oddsHtml, icon);
     return renderGenericCard(e, clockClass, oddsHtml, icon);
@@ -2457,7 +2554,7 @@ function patchLiveEventCard(e) {
   const sportIcon = Object.fromEntries(SPORTS_META.map((s) => [s.id, s.icon]));
   const clockClass = isClockMissing(e) ? "clock-missing" : "";
   const icon = sportIcon[e.sport] || "";
-  const oddsHtml = quickOddsHtml(e, e.odds?.[0], true);
+  const oddsHtml = quickOddsHtml(e, safeFindPrimaryMarket(e) ?? e.odds?.[0], true);
   const html = e.statistics?.sets ? renderSetsCard(e, clockClass, oddsHtml, icon) : renderGenericCard(e, clockClass, oddsHtml, icon);
   const wrapper = document.createElement("div");
   wrapper.innerHTML = html.trim();
@@ -2574,8 +2671,8 @@ function renderMatchTracker(e) {
   el.innerHTML = `
     <div id="mt-basic-header">
       <div class="mt-teams-top">
-        <div class="mt-team-name">${e.home}</div>
-        <div class="mt-team-name away">${e.away}</div>
+        <div class="mt-team-name">${teamLogoImg(e.homeLogo, "", e.home)}<span data-initial-fallback="${teamInitials(e.home)}">${e.home}</span></div>
+        <div class="mt-team-name away"><span data-initial-fallback="${teamInitials(e.away)}">${e.away}</span>${teamLogoImg(e.awayLogo, "", e.away)}</div>
       </div>
       <div class="mt-scoreboard">
         <div class="mt-live"><span class="dot"></span> AO VIVO</div>
@@ -2628,8 +2725,11 @@ function renderMatchHeaderVisual(e) {
 // A escala é dinâmica (pulseMaxMinute) para nunca "apagar"/comprimir o jogo perto do minuto 90:
 // prolonga-se automaticamente para acompanhar o minuto atual real, incluindo prolongamento.
 let matchPulseState = { eventId: null, events: [], fetchedAt: 0 };
+// Expor para o motor 2D (tracker2d.js) — `let` em script clássico não é global por defeito;
+// a referência é constante (apenas as propriedades internas são mutadas nos polls).
+window.matchPulseState = matchPulseState;
 const MATCH_PULSE_REFRESH_MS = 20000;
-const PULSE_MARKER_ICON = { goal: "⚽", redcard: "🟥", yellowcard: "🟨", var: "📺" };
+const PULSE_MARKER_ICON = { goal: "⚽", redcard: "🟥", yellowcard: "🟨", var: "📺", penalty: "🎯", goal_disallowed: "⛔" };
 function currentMatchMinute(e) {
   const m = /^(\d+)/.exec(e.minuteOrPeriod || "");
   return m ? parseInt(m[1], 10) : null;
@@ -2661,7 +2761,7 @@ function renderMatchPulseTrack(e) {
           const tooltip = `${ev.minute} ${ev.label}${ev.playerName ? ": " + ev.playerName : ""} (${ev.team})`;
           return `<div class="mt-pulse-marker ${ev.isHome ? "home" : "away"}" style="left:${pulsePct(minute, maxMinute)}%" title="${tooltip}">
             <span class="mt-pulse-icon">${PULSE_MARKER_ICON[ev.kind]}</span>
-            ${ev.playerName ? `<span class="mt-pulse-name">${ev.playerName}</span>` : ""}
+            ${ev.playerName || ev.playerPhotoUrl ? `<span class="mt-pulse-name">${playerImg(ev.playerPhotoUrl, ev.playerName)}${ev.playerName || ""}</span>` : ""}
           </div>`;
         })
         .join("")}
@@ -2710,8 +2810,8 @@ function openTracker() {
 }
 function closeTracker() {
   document.getElementById("tracker-modal").classList.remove("open");
-  // O <canvas> 3D partilhado (ver mountTracker3D) ficava preso dentro do modal — reancora-o de
-  // volta ao mini campo compacto do cabeçalho, se ainda fizer sentido mostrá-lo ali.
+  // O <canvas> 2D partilhado (ver mountTracker2D em tracker2d.js) ficava preso dentro do modal —
+  // reancora-o de volta ao mini campo compacto do cabeçalho, se ainda fizer sentido mostrá-lo ali.
   if (currentMarketEvent) renderMatchHeaderVisual(currentMarketEvent);
 }
 // Alterna Campo/Estatísticas dentro do MESMO cartão do modal (pedido explícito do utilizador, a
@@ -2790,6 +2890,33 @@ function teamInitials(name) {
   if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
   return name.trim().slice(0, 2).toUpperCase();
 }
+// Imagem de equipa: <img> com logótipo se `url` for truthy (Sportmonks image_path já vem preenchido
+// em LiveEvent.homeLogo/awayLogo — ver backend), senão vazio. O onerror troca a img por um dataURI
+// 1x1 transparente para não aparecer o "broken image" e o fallback visual (sigla/cor) já existente
+// no container fica visível (não desaparece).
+function teamLogoImg(url, size, alt) {
+  if (!url) return "";
+  const cls = size === "sm" ? "tlogo sm" : size === "bt" ? "tlogo bt" : "tlogo";
+  const a = (alt || "").replace(/"/g, "");
+  return `<img class="${cls}" src="${url}" alt="${a}" referrerpolicy="no-referrer" onerror="this.removeAttribute('src');this.style.display='none';try{const p=this.parentElement;if(p&&p.dataset.initialFallback){p.textContent=p.dataset.initialFallback}}catch(_){}">`;
+}
+// Imagem de jogador para linha do tempo/topscorers. Mesmo fallback: onerror limpa a imagem sem ícone
+// partido. Tamanho por defeito 16px (sm), igual aos logos de equipa "sm". Retorna HTML vazio se não
+// houver foto para não quebrar layouts sem suporte a jogador.
+function playerImg(photoUrl, name) {
+  if (!photoUrl) return "";
+  const a = (name || "").replace(/"/g, "");
+  return `<img class="tlogo sm" src="${photoUrl}" alt="${a}" referrerpolicy="no-referrer" onerror="this.removeAttribute('src');this.style.display='none'">`;
+}
+// Troca o texto (iniciais) de um .bt-team-mark (ex: #tracker-home-mark) por <img> com o logo, se
+// existir. Mantém o dataset de fallback para o onerror o repôr caso o CDN devolva 404.
+function applyTeamLogoToMark(el, logoUrl, fallbackName) {
+  if (!el) return;
+  const fallback = teamInitials(fallbackName);
+  el.dataset.initialFallback = fallback;
+  if (!logoUrl) { el.textContent = fallback; return; }
+  el.innerHTML = `<img class="bt-team-img" src="${logoUrl}" alt="${(fallbackName||"").replace(/"/g,'')}" referrerpolicy="no-referrer" onerror="this.removeAttribute('src');this.remove();const p=this.parentElement;if(p&&p.dataset.initialFallback){p.textContent=p.dataset.initialFallback}">`;
+}
 // Cabeçalho do modal — placar integrado no visual pedido pelo utilizador (modelo
 // BET62trackerpreview.html): marca redonda com iniciais + nome + placar dividido + relógio +
 // competição. O painel do mini campo (pitchHeaderHtml) deixa de repetir esta linha dentro do
@@ -2799,8 +2926,8 @@ function renderTrackerHeader(e) {
   if (!homeEl) return;
   homeEl.textContent = e.home;
   document.getElementById("tracker-away").textContent = e.away;
-  document.getElementById("tracker-home-mark").textContent = teamInitials(e.home);
-  document.getElementById("tracker-away-mark").textContent = teamInitials(e.away);
+  applyTeamLogoToMark(document.getElementById("tracker-home-mark"), e.homeLogo, e.home);
+  applyTeamLogoToMark(document.getElementById("tracker-away-mark"), e.awayLogo, e.away);
   const hasScore = e.homeScore !== undefined && e.awayScore !== undefined;
   document.getElementById("tracker-home-score").textContent = hasScore ? e.homeScore : "–";
   document.getElementById("tracker-away-score").textContent = hasScore ? e.awayScore : "–";
@@ -2941,9 +3068,9 @@ function pitchHeaderHtml(e, latest, opts) {
     : `<div class="tp-header-bar">
       <div class="tp-clock-badge${clockClass}">${e.minuteOrPeriod || "-"}</div>
       <div class="tp-team-cluster">
-        <div class="tp-team-bar home${homePulse}"><span class="tp-team-dot"></span>${e.home}</div>
+        <div class="tp-team-bar home${homePulse}">${teamLogoImg(e.homeLogo,"sm",e.home)}<span class="tp-team-dot"></span>${e.home}</div>
         <div class="tp-score-block">${hasScore ? `${e.homeScore} - ${e.awayScore}` : "vs"}</div>
-        <div class="tp-team-bar away${awayPulse}">${e.away}<span class="tp-team-dot"></span></div>
+        <div class="tp-team-bar away${awayPulse}">${e.away}${teamLogoImg(e.awayLogo,"sm",e.away)}<span class="tp-team-dot"></span></div>
       </div>
       <div class="tp-live-badge"><span class="dot"></span>AO VIVO</div>
     </div>`;
@@ -2968,328 +3095,25 @@ function pitchStatBarHtml(e) {
   </div>`;
 }
 
-// ====================== MOTOR 3D DO MINI CAMPO (Three.js real) ======================
-// Pedido explícito do utilizador ("vamos inserir fazer nosso mini campo em 3D mesmo para obter
-// dados reais"): substitui o campo 2D em SVG por uma cena 3D a sério (WebGL, câmara orbital),
-// ligada aos MESMOS dados reais que já alimentavam o SVG — trackerBallState.points
-// (Sportmonks ballCoordinates), ballDangerZone/isInCornerZone/nearestCorner/detectNewGoal (as
-// mesmas funções puras de sempre, só a "pintura" mudou). A biblioteca (vendor/three.bundle.min.js
-// — Three.js + OrbitControls, só os módulos usados, gerado com esbuild, sem CDN nenhum) só é
-// pedida ao servidor quando um jogo de futebol ao vivo com cobertura de posição da bola precisa
-// dela — nunca no arranque da app.
-let threeLoadPromise = null;
-function loadThreeJs() {
-  if (window.THREE) return Promise.resolve(window.THREE);
-  if (threeLoadPromise) return threeLoadPromise;
-  threeLoadPromise = new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "vendor/three.bundle.min.js";
-    script.onload = () => (window.THREE ? resolve(window.THREE) : reject(new Error("Three.js não carregou")));
-    script.onerror = () => reject(new Error("Falha ao carregar Three.js"));
-    document.head.appendChild(script);
-  });
-  return threeLoadPromise;
-}
-
-// Dimensões do mundo 3D (unidades arbitrárias, sem relação com metros reais) — comprimento
-// (baliza-a-baliza) no eixo X, largura (linha lateral a linha lateral) no eixo Z, para a câmara
-// ficar ao lado do campo (não atrás de uma baliza) — MESMA convenção já usada em todo o resto da
-// app: casa à esquerda (x real 0 → X 3D negativo), fora à direita (x real 1 → X 3D positivo).
-const TP3_LEN = 32;
-const TP3_WID = 20;
-function tp3X(xReal) { return (xReal - 0.5) * TP3_LEN; }
-function tp3Z(yReal) { return (yReal - 0.5) * TP3_WID; }
-
-// Textura da bola gerada num <canvas> 2D (pentágono central + 5 à volta, mesmo padrão Telstar já
-// usado na versão SVG) — nunca uma imagem externa, só desenho vetorial nosso.
-function buildBallTexture(THREE) {
-  const size = 128;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#f4f4ef";
-  ctx.beginPath();
-  ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#111";
-  function pentagon(x, y, rad, rot) {
-    ctx.beginPath();
-    for (let i = 0; i < 5; i++) {
-      const a = rot + (i / 5) * Math.PI * 2 - Math.PI / 2;
-      const px = x + Math.cos(a) * rad, py = y + Math.sin(a) * rad;
-      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-    }
-    ctx.closePath();
-    ctx.fill();
-  }
-  const cx = size / 2, cy = size / 2, r = size * 0.42;
-  pentagon(cx, cy, size * 0.13, 0);
-  for (let i = 0; i < 5; i++) {
-    const a = (i / 5) * Math.PI * 2 - Math.PI / 2;
-    pentagon(cx + Math.cos(a) * r * 0.62, cy + Math.sin(a) * r * 0.62, size * 0.1, a);
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  if (THREE.SRGBColorSpace) texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
-function buildGoalMesh(THREE, xSide) {
-  const group = new THREE.Group();
-  const postMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35 });
-  const postGeo = new THREE.CylinderGeometry(0.09, 0.09, 3.2, 8);
-  const left = new THREE.Mesh(postGeo, postMat);
-  left.position.set(0, 1.6, -3.2);
-  const right = new THREE.Mesh(postGeo, postMat);
-  right.position.set(0, 1.6, 3.2);
-  const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 6.4, 8), postMat);
-  bar.rotation.z = Math.PI / 2;
-  bar.position.set(0, 3.2, 0);
-  group.add(left, right, bar);
-  const netMat = new THREE.MeshBasicMaterial({ color: 0xdddddd, transparent: true, opacity: 0.3, side: THREE.DoubleSide, wireframe: true });
-  const net = new THREE.Mesh(new THREE.BoxGeometry(1.4, 3.2, 6.4, 6, 6, 10), netMat);
-  net.position.set(xSide < 0 ? -0.7 : 0.7, 1.6, 0);
-  group.add(net);
-  group.position.x = xSide;
-  return group;
-}
-
-function buildCornerFlag(THREE, x, z) {
-  const group = new THREE.Group();
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.1, 6), new THREE.MeshStandardMaterial({ color: 0xffffff }));
-  pole.position.y = 0.55;
-  const flag = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.2, 0.01), new THREE.MeshStandardMaterial({ color: 0xf5c842, side: THREE.DoubleSide }));
-  flag.position.set(0.18, 1, 0);
-  group.add(pole, flag);
-  group.position.set(x, 0, z);
-  return group;
-}
-
-// Marcações do campo (contorno, meio-campo, círculo central, grande/pequena área) desenhadas como
-// linhas — mesmo traçado da versão 2D anterior, só na orientação nova (comprimento no eixo X).
-function addPitchLines(THREE, scene) {
-  const mat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 });
-  function poly(points) {
-    const geo = new THREE.BufferGeometry().setFromPoints(points.map((p) => new THREE.Vector3(p[0], 0.02, p[1])));
-    scene.add(new THREE.Line(geo, mat));
-  }
-  const hl = TP3_LEN / 2, hw = TP3_WID / 2;
-  poly([[-hl, -hw], [hl, -hw], [hl, hw], [-hl, hw], [-hl, -hw]]);
-  poly([[0, -hw], [0, hw]]);
-  const circle = [];
-  for (let i = 0; i <= 48; i++) {
-    const a = (i / 48) * Math.PI * 2;
-    circle.push([Math.cos(a) * 4.3, Math.sin(a) * 4.3]);
-  }
-  poly(circle);
-  function box(xSign, len, wid) {
-    const x0 = xSign * hl, x1 = xSign * (hl - len);
-    poly([[x0, -wid / 2], [x1, -wid / 2], [x1, wid / 2], [x0, wid / 2], [x0, -wid / 2]]);
-  }
-  box(-1, 6, 10);
-  box(-1, 2.5, 5);
-  box(1, 6, 10);
-  box(1, 2.5, 5);
-}
-
-// Constrói a cena partilhada UMA ÚNICA VEZ (chamadas seguintes são no-op) — nunca dois <canvas>
-// WebGL abertos ao mesmo tempo entre o cabeçalho compacto e o modal, só o MESMO canvas
-// reaproveitado/reancorado entre os dois (ver mountTracker3D).
-let tp3 = null;
-function ensureTracker3D() {
-  if (tp3) return tp3;
-  const THREE = window.THREE;
-  if (!THREE) return null;
-
-  const scene = new THREE.Scene();
-  // Sem cor de fundo opaca: o <canvas> fica transparente (renderer alpha:true abaixo) para deixar
-  // aparecer a foto real da bancada (img/tracker-stadium-bg.jpg, fundo CSS de .tp-canvas-frame em
-  // index.html) atrás do relvado/balizas/bandeiras 3D — pedido explícito do utilizador.
-  scene.background = null;
-
-  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
-  camera.position.set(0, 22, 26);
-  // Mira num ponto acima do relvado (não no centro do campo) — desce o relvado/balizas/bandeiras
-  // para a metade de baixo do enquadramento, deixando espaço livre em cima para a bancada real da
-  // foto de fundo (img/tracker-stadium-bg.jpg); sem isto o campo 3D ficava desenhado por cima da
-  // bancada em vez de assentar nela.
-  camera.lookAt(0, 7, 0);
-
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setClearColor(0x000000, 0);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  if (THREE.SRGBColorSpace) renderer.outputColorSpace = THREE.SRGBColorSpace;
-
-  const controls = new THREE.OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.enablePan = false;
-  controls.minDistance = 16;
-  controls.maxDistance = 46;
-  controls.maxPolarAngle = Math.PI / 2.1;
-  controls.enabled = false; // só ligado quando montado no modal cheio (ver mountTracker3D)
-  controls.update();
-
-  scene.add(new THREE.AmbientLight(0xffffff, 1.6));
-  const sun = new THREE.DirectionalLight(0xffffff, 2.2);
-  sun.position.set(-12, 26, 10);
-  sun.castShadow = true;
-  scene.add(sun);
-
-  const pitch = new THREE.Mesh(new THREE.BoxGeometry(TP3_LEN, 0.2, TP3_WID), new THREE.MeshStandardMaterial({ color: 0x1c7a34, roughness: 0.85 }));
-  pitch.position.y = -0.1;
-  pitch.receiveShadow = true;
-  scene.add(pitch);
-  addPitchLines(THREE, scene);
-
-  scene.add(buildGoalMesh(THREE, -TP3_LEN / 2));
-  scene.add(buildGoalMesh(THREE, TP3_LEN / 2));
-  const hl = TP3_LEN / 2, hw = TP3_WID / 2;
-  scene.add(buildCornerFlag(THREE, -hl, -hw));
-  scene.add(buildCornerFlag(THREE, -hl, hw));
-  scene.add(buildCornerFlag(THREE, hl, -hw));
-  scene.add(buildCornerFlag(THREE, hl, hw));
-
-  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.55, 24, 24), new THREE.MeshStandardMaterial({ map: buildBallTexture(THREE), roughness: 0.4 }));
-  ball.castShadow = true;
-  scene.add(ball);
-
-  // Rasto: pool fixa de esferas reaproveitadas a cada atualização (nunca cria/destrói objetos a
-  // cada posição nova) — mesma ideia dos pontos a desvanecer da versão 2D.
-  const TRAIL_LEN = 12;
-  const trailPool = [];
-  for (let i = 0; i < TRAIL_LEN; i++) {
-    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), new THREE.MeshBasicMaterial({ color: 0xf5c842, transparent: true }));
-    dot.visible = false;
-    scene.add(dot);
-    trailPool.push(dot);
-  }
-
-  // Zona de perigo real — disco colorido no relvado sob a bola, cor conforme a distância real (x)
-  // à baliza mais próxima (ver ballDangerZone). Nunca rotulado como posse de bola.
-  const dangerGlow = new THREE.Mesh(new THREE.CircleGeometry(2.4, 32), new THREE.MeshBasicMaterial({ color: 0xf5c842, transparent: true, opacity: 0.3, side: THREE.DoubleSide }));
-  dangerGlow.rotation.x = -Math.PI / 2;
-  dangerGlow.position.y = 0.03;
-  dangerGlow.visible = false;
-  scene.add(dangerGlow);
-
-  // Indicador de canto real — linha tracejada da bola até à bandeira mais próxima, só quando a
-  // bola real está mesmo na zona do canto (nunca finge que um canto foi marcado).
-  const cornerLineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
-  const cornerLine = new THREE.Line(cornerLineGeo, new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 0.6, gapSize: 0.4, transparent: true, opacity: 0.85 }));
-  cornerLine.visible = false;
-  scene.add(cornerLine);
-
-  tp3 = { THREE, scene, camera, renderer, controls, ball, trailPool, dangerGlow, cornerLine, running: false, rafId: null };
-  return tp3;
-}
-
-function tp3AnimateStep() {
-  if (!tp3 || !tp3.running) return;
-  tp3.controls.update();
-  tp3.renderer.render(tp3.scene, tp3.camera);
-  tp3.rafId = requestAnimationFrame(tp3AnimateStep);
-}
-// Liga (ou reancora) o <canvas> partilhado ao contentor indicado. interactive=true (só o modal
-// cheio) liga o OrbitControls a sério (arrastar/zoom); no cabeçalho compacto a câmara fica fixa —
-// mais leve, sem gestos a competir com o scroll da página.
-function mountTracker3D(container, interactive) {
-  const state = ensureTracker3D();
-  if (!state || !container) return null;
-  const canvas = state.renderer.domElement;
-  if (canvas.parentElement !== container) container.appendChild(canvas);
-  state.controls.enabled = interactive;
-  resizeTracker3D(container);
-  if (!state.running) {
-    state.running = true;
-    tp3AnimateStep();
-  }
-  return state;
-}
-function resizeTracker3D(container) {
-  if (!tp3 || !container) return;
-  const w = container.clientWidth || 1, h = container.clientHeight || 1;
-  tp3.renderer.setSize(w, h, false);
-  tp3.camera.aspect = w / h;
-  tp3.camera.updateProjectionMatrix();
-}
-window.addEventListener("resize", () => {
-  if (tp3 && tp3.renderer.domElement.parentElement) resizeTracker3D(tp3.renderer.domElement.parentElement);
-});
-// Pára o loop de animação (poupa CPU/bateria) sem destruir a cena — chamado ao sair da página de
-// mercado, para o motor não continuar a renderizar um campo que já não está visível.
-function pauseTracker3D() {
-  if (!tp3) return;
-  tp3.running = false;
-  if (tp3.rafId) cancelAnimationFrame(tp3.rafId);
-  tp3.rafId = null;
-}
-// Flash de golo — camada HTML normal por cima do <canvas> (dentro do .tp-canvas-frame onde a
-// bola está montada agora), acionada só por um golo novo e confirmado na linha do tempo real.
+// Flash de golo — camada HTML normal por cima do <canvas> 2D (dentro do .tp-canvas-frame onde a
+// bola está montada agora, ver tracker2d.js/ensureTracker2DCanvas), acionada só por um golo novo
+// e confirmado na linha do tempo real. Chamada pelo motor 2D via window.showGoalFlashOverlay
+// (lookup fraco, ver comentário no topo de tracker2d.js).
 function showGoalFlashOverlay(goalEvent) {
-  if (!tp3) return;
-  const frame = tp3.renderer.domElement.parentElement;
+  const st = typeof ensureTracker2DCanvas === "function" ? ensureTracker2DCanvas() : null;
+  const frame = st && st.mountedIn;
   if (!frame) return;
   const flash = document.createElement("div");
   flash.className = "tp-goal-flash";
-  flash.innerHTML = `<span class="tp-goal-net">⚽🥅</span><span>GOLO!</span>${goalEvent.playerName ? `<span class="tp-goal-player">${goalEvent.playerName} (${goalEvent.team})</span>` : ""}`;
+  flash.innerHTML = `<span class="tp-goal-net">⚽🥅</span><span>GOLO!</span>${goalEvent.playerName ? `<span class="tp-goal-player">${playerImg(goalEvent.playerPhotoUrl, goalEvent.playerName)}${goalEvent.playerName} (${goalEvent.team})</span>` : ""}`;
   frame.appendChild(flash);
   setTimeout(() => flash.remove(), 4000);
 }
-// Atualiza a posição real da bola/rasto/zona de perigo/canto/golo na cena já construída — nunca
-// recria a cena nem o <canvas>, só move objetos já existentes (ver ensureTracker3D).
-function updateTracker3DFromPoints(e, points, compact) {
-  if (!tp3 || !points.length) return;
-  const latest = points[0];
-  const bx = tp3X(latest.x), bz = tp3Z(latest.y);
-  tp3.ball.position.set(bx, 0.55, bz);
-
-  for (let i = 0; i < tp3.trailPool.length; i++) {
-    const dot = tp3.trailPool[i];
-    const p = points[i + 1];
-    if (!p) {
-      dot.visible = false;
-      continue;
-    }
-    dot.visible = true;
-    dot.position.set(tp3X(p.x), 0.28, tp3Z(p.y));
-    dot.material.opacity = Math.max(0.06, 0.5 - i * 0.045);
-    dot.scale.setScalar(Math.max(0.35, 1 - i * 0.06));
-  }
-
-  const zone = ballDangerZone(latest.x);
-  tp3.dangerGlow.visible = true;
-  tp3.dangerGlow.position.set(bx, 0.03, bz);
-  tp3.dangerGlow.material.color.setHex(zone === "danger" ? 0xe63027 : zone === "mid" ? 0xf5b428 : 0xf5c842);
-  tp3.dangerGlow.material.opacity = zone === "danger" ? 0.55 : zone === "mid" ? 0.4 : 0.28;
-
-  const inCorner = isInCornerZone(latest.x, latest.y);
-  if (inCorner) {
-    const { cx, cy } = nearestCorner(latest.x, latest.y);
-    const flagX = (cx === 0 ? -1 : 1) * (TP3_LEN / 2);
-    const flagZ = (cy === 0 ? -1 : 1) * (TP3_WID / 2);
-    const positions = tp3.cornerLine.geometry.attributes.position;
-    positions.setXYZ(0, bx, 0.05, bz);
-    positions.setXYZ(1, flagX, 0.05, flagZ);
-    positions.needsUpdate = true;
-    tp3.cornerLine.computeLineDistances();
-    tp3.cornerLine.visible = true;
-  } else {
-    tp3.cornerLine.visible = false;
-  }
-
-  if (!compact) {
-    const goalEvent = detectNewGoal(e);
-    if (goalEvent) showGoalFlashOverlay(goalEvent);
-  }
-}
 
 // Ponto de entrada partilhado entre o cabeçalho compacto (#mt-pulse) e o modal cheio
-// (#tracker-pitch-wrap) — pedido explícito do utilizador para o mini campo ser 3D a sério, ligado
-// aos mesmos dados reais que já alimentavam a versão 2D. Constrói o "chrome" HTML (cabeçalho +
-// barra de estatísticas, reaproveitados tal e qual) em torno de um .tp-canvas-frame vazio, carrega
-// o Three.js só quando é mesmo preciso, e move o MESMO <canvas> partilhado para dentro dele.
+// (#tracker-pitch-wrap). Constrói o "chrome" HTML (cabeçalho + barra de estatísticas) em
+// torno de um .tp-canvas-frame vazio, e usa o MESMO <canvas> partilhado do motor 2D
+// (tracker2d.js), reancorando-o de cabeçalho ↔ modal tal como o 3D fazia antes.
 function renderPitchInto(el, points, e, opts) {
   if (!el) return;
   const compact = !!(opts && opts.compact);
@@ -3304,15 +3128,10 @@ function renderPitchInto(el, points, e, opts) {
 
   el.innerHTML = `<div class="tp-panel">${header}<div class="tp-canvas-frame"></div>${pitchStatBarHtml(e)}</div>`;
   const frame = el.querySelector(".tp-canvas-frame");
-  loadThreeJs()
-    .then(() => {
-      if (!document.body.contains(frame)) return; // já saiu deste evento/página entretanto
-      mountTracker3D(frame, !compact);
-      updateTracker3DFromPoints(e, points, compact);
-    })
-    .catch(() => {
-      if (document.body.contains(frame)) frame.innerHTML = '<div class="empty-note">Não foi possível carregar o campo 3D</div>';
-    });
+  // Motor 2D é síncrono (não há bundle para carregar) — pinta imediatamente.
+  // (frame pode já ter sido montado por outro caller — o mount é idempotente.)
+  mountTracker2D(frame);
+  updateTracker2DFromPoints(e, points, compact);
 }
 
 // ====================== ESTATÍSTICAS (Margens de Vitória / H2H / Classificação) ======================
@@ -3607,7 +3426,7 @@ async function renderTopscorers(e) {
           .map(
             (r) => `
           <div class="standings-row">
-            <span class="st-rank">${r.rank}</span><span class="st-team">${r.playerName} <span style="color:var(--muted)">— ${r.team}</span></span><span class="st-pts">${r.goals}</span>
+            <span class="st-rank">${r.rank}</span><span class="st-team">${playerImg(r.playerPhoto, r.playerName)}${teamLogoImg(r.teamLogo, "sm", r.team)} ${r.playerName} <span style="color:var(--muted)">— ${r.team}</span></span><span class="st-pts">${r.goals}</span>
           </div>`
           )
           .join("")}
@@ -3694,7 +3513,7 @@ async function renderTeamForm(e) {
 // Sportmonks — ver GET /events/:id/timeline) — sem equivalente para jogos da Pulsescore, esses
 // devolvem lista vazia do backend e caem na mensagem "sem dados" abaixo, nunca um erro.
 let timelineLoadedForEventId = null;
-const TIMELINE_EVENT_ICON = { goal: "⚽", yellowcard: "🟨", redcard: "🟥", substitution: "🔄", var: "📺", other: "•" };
+const TIMELINE_EVENT_ICON = { goal: "⚽", yellowcard: "🟨", redcard: "🟥", substitution: "🔄", var: "📺", penalty: "🎯", goal_disallowed: "⛔", other: "•" };
 async function renderTimeline(e) {
   const el = document.getElementById("stats-body-timeline");
   if (e.sport !== "football") {
@@ -3718,7 +3537,15 @@ async function renderTimeline(e) {
           <div class="timeline-row">
             <span class="timeline-minute">${ev.minute}</span>
             <span class="timeline-icon">${TIMELINE_EVENT_ICON[ev.kind] || "•"}</span>
-            <span class="timeline-text">${ev.label}${ev.playerName ? `: ${ev.playerName}` : ""}${ev.relatedPlayerName ? ` <span style="color:var(--muted)">↔ ${ev.relatedPlayerName}</span>` : ""} <span style="color:var(--muted)">(${ev.team})</span></span>
+            <span class="timeline-text">${ev.label}${
+              ev.playerName || ev.playerPhotoUrl
+                ? `: ${playerImg(ev.playerPhotoUrl, ev.playerName)}<span>${ev.playerName || ""}</span>`
+                : ""
+            }${
+              ev.relatedPlayerName || ev.relatedPlayerPhotoUrl
+                ? ` <span style="color:var(--muted)">↔ ${playerImg(ev.relatedPlayerPhotoUrl, ev.relatedPlayerName)}<span>${ev.relatedPlayerName || ""}</span></span>`
+                : ""
+            } <span style="color:var(--muted)">(${ev.team})</span></span>
           </div>`
           )
           .join("")}
@@ -3742,16 +3569,47 @@ async function renderTimeline(e) {
 // apostas de referência).
 const MARKET_FILTER_CATEGORIES = {
   football: [
-    { label: "1º Tempo", test: (m) => /1st half|first half|half.?time|\bht\b/i.test(m) && !/2nd|second/i.test(m) },
-    { label: "2º Tempo", test: (m) => /2nd half|second half/i.test(m) },
-    { label: "Escanteios", test: (m) => /corner/i.test(m) },
-    { label: "Cartões", test: (m) => /\bcard|booking/i.test(m) },
-    { label: "Ambas Marcam", test: (m) => /both teams to score|\bbtts\b|both to score/i.test(m) },
-    { label: "Marcador", test: (m) => /goalscorer|\bscorer\b|first to score|last to score|to score first|to score last|player.*(to score|goals)/i.test(m) },
-    { label: "Placar Exato", test: (m) => /correct score|exact score/i.test(m) },
-    { label: "Handicap", test: (m) => /handicap|spread|asian/i.test(m) },
-    { label: "Mais/Menos", test: (m) => /over\/?under|total goals|\bo\/u\b/i.test(m) },
-    { label: "Resultado", test: (m) => /match odds|\b1x2\b|to win|winner|double chance|draw no bet|full time result|3.?way/i.test(m) },
+    // ==================== PRIORIDADE DE MATCH ====================
+    // Regra IMPORTANTE: .find() devolve o PRIMEIRO que bater. Por isso os mercados mais
+    // específicos (menos prováveis de falso positivo) vêm PRIMEIRO. Ordem final do user em
+    // "Todos": Resultado, Ambas Marcam, Mais/Menos, Handicap, 1ºT, 2ºT, Placar Exato,
+    // Escanteios, Cartões, Marcador, Especiais (catch-all).
+    //
+    // 🚨 REGRAS ANTI-FALSO POSITIVO 🚨
+    // Nomes como "Full Time Result HT/FT" ou "Match Odds (1st Half Available)" NÃO PODEM ser
+    // classificados como "1º Tempo" por terem a palavra "half" no texto — isso era o bug raiz
+    // que fazia Handicap/Cartões aparecer ANTES de Resultado no topo da lista.
+    // Para combater:
+    //   1. "Resultado" vem 1º na lista de categorias; regex inclui menções explícitas a
+    //      "Full Time"/"FT"/"Match Odds"/"1x2"/"3 Way"/"Winner"/"Double Chance"/"DNB" —
+    //      a maioria destes SÃO o mercado principal.
+    //   2. Regexes de "1º Tempo" / "2º Tempo" REJEITAM a string se ela mencionar
+    //      explicitamente "Full Time", "FT", "1x2", "Match Winner", "3 Way", "Result",
+    //      "Moneyline", "Draw No Bet", "Double Chance", "Both Teams", "Correct Score" em
+    //      conjunto com "half" (ou seja, o nome é um mercado "Full Time Result HT/FT" — o
+    //      "half" ali é só info adicional, não é um mercado de primeiro tempo).
+    //   3. "Ambas Marcam", "Mais/Menos", "Handicap", "Placar Exato" são testados antes dos
+    //      períodos também, por serem categorias principais.
+    { label: "Resultado", test: (m) => /match odds|\b1x2\b|to win\b|match winner|\bwinner\b|double chance|draw no bet|\bdnb\b|full time result|full.?time.?1x2|ft\s*result|3.?way|money.?line|three.?way|resultado\s*final|tempo\s*inteiro/i.test(m) },
+    { label: "Ambas Marcam", test: (m) => /both teams to score|\bbtts\b|both to score|ambas?\s+(marcam|equipas?\s+marcam)/i.test(m) },
+    { label: "Mais/Menos", test: (m) => /over\/?under|total (goals|points|games|runs|corners|cards)|\bo\/u\b|mais\s*\/?\s*menos/i.test(m) },
+    { label: "Handicap", test: (m) => /handicap|\bspread\b|asian handicap|\bah\b/i.test(m) },
+    { label: "1º Tempo", test: (m) => {
+      const s = String(m ?? "");
+      if (!/1st half|first half|half.?time|\bht\b|\b1t\b/i.test(s)) return false;
+      if (/(full time|\bft\b|\b1x2\b|match winner|3.?way|three.?way|\bresult\b|money.?line|draw no bet|double chance|both teams|correct score|btts)/i.test(s)) return false;
+      return true;
+    }},
+    { label: "2º Tempo", test: (m) => {
+      const s = String(m ?? "");
+      if (!/2nd half|second half|\b2ht\b|\b2t\b/i.test(s)) return false;
+      if (/(full time|\bft\b|\b1x2\b|match winner|3.?way|three.?way|\bresult\b|money.?line|draw no bet|double chance|both teams|correct score|btts)/i.test(s)) return false;
+      return true;
+    }},
+    { label: "Placar Exato", test: (m) => /correct score|exact score|placar\s*exato|resultado\s*exato/i.test(m) },
+    { label: "Escanteios", test: (m) => /\bcorner|\bcantos?\b/i.test(m) },
+    { label: "Cartões", test: (m) => /\bcard|booking|cart[õo]e?s/i.test(m) },
+    { label: "Marcador", test: (m) => /goalscorer|\bscorer\b|first to score|last to score|to score first|to score last|player.*(to score|goals)|marcad(or|ora)/i.test(m) },
   ],
   basketball: [
     { label: "1º Quarto", test: (m) => /1st quarter|first quarter|\bq1\b/i.test(m) },
@@ -3816,6 +3674,7 @@ const FOOTBALL_FILTER_DISPLAY_ORDER = [
   "Escanteios",
   "Cartões",
   "Marcador",
+  "Especiais",
 ];
 
 let selectedMarketFilter = null; // null = "Todos"
@@ -3943,6 +3802,56 @@ function translateMarketBaseName(m, sport) {
 // qualquer outro caso — nunca arrisca liquidar mal. Aqui o "custo" de falhar a validação é só
 // mostrar o nome em inglês em vez de um rótulo em português enganador, mas a disciplina é a
 // mesma: nunca confiar só na palavra-chave do nome do mercado.
+//
+// P3 — RELAXAMENTO 2026-08-26 (antes era EVERY 100% das labels, 1 label má → nome bruto).
+// Motivo: Sportmonks frequentemente manda 1 label de 10 num formato ligeiramente diferente
+// (ex: "1 / X" com espaços, "1:0" em vez de "1-0", nomes de equipa com hífen, etc.). A antiga
+// validação EVERY era demasiado conservadora e fazia TODO o mercado aparecer em inglês por 1
+// exceção. Novo comportamento: pelo menos 75% das labels + pelo menos 2 labels válidas.
+// Exceção: categorias de 2/3 seleções (BTTS, 1X2, Empate Anula Aposta) mantêm 100% — são tão
+// poucas que uma label errada muda totalmente o sentido.
+function countMatches(labels, predicate) {
+  let n = 0;
+  for (const l of labels) if (predicate(l)) n++;
+  return n;
+}
+const MAJORITY_RATIO = 0.75;
+function majorityMatches(labels, predicate) {
+  if (!labels.length) return true;
+  const hits = countMatches(labels, predicate);
+  return hits >= Math.max(2, Math.ceil(labels.length * MAJORITY_RATIO));
+}
+// P4 — Normaliza formatos de placar exato para o padrão "X-Y" antes de regex.
+// Formatos vistos na prática: "1-0" (padrão), "1:0" (Sportmonks), "1 0" (espaço), "1–0" (en-dash),
+// "1—0" (em-dash), "1x0" (letra x), "1.X" (mal formado) → todos viram "1-0".
+function normalizeCorrectScoreLabel(raw) {
+  return String(raw)
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/[:–—xX.]/g, "-")
+    .replace(/-+/g, "-");
+}
+function isCorrectScoreFormat(raw) {
+  return /^\d+-\d+$/.test(normalizeCorrectScoreLabel(raw));
+}
+// Helper para Home/Away com optional handicap (P1 já formatou no backend Sportmonks, mas
+// Pulsescore por vezes envia "Home -1.5" ou "Away +1"; manter compatível e também aceitar
+// nomes próprios de equipa (full match).
+function isHdaSide(l, homeL, awayL) {
+  const sideWords = /^(1|2|home|away|casa|fora)(\s|$|[+-])/i.test(l);
+  const isTeam = (homeL && l === homeL) || (awayL && l === awayL);
+  return sideWords || isTeam;
+}
+// Dupla Hipótese: formatos compactos ("1x", "X2"), "Equipa or/and Equipa", "Equipa + Empate"
+// (forma menos frequente mas comum em ligas menores).
+function isDoubleChanceFormat(l) {
+  const compact = l.replace(/\s+/g, "").toLowerCase();
+  if (["1x", "x1", "x2", "2x", "12"].includes(compact)) return true;
+  if (/^.+\s+(and|or|e|ou)\s+.+$/i.test(l)) return true;
+  if (/^(.+)\s*\+\s*(draw|empate)$/i.test(l)) return true;
+  return false;
+}
+
 function marketSelectionsLookPlausible(basePt, selectionLabels, home, away) {
   if (!selectionLabels || !selectionLabels.length) return true; // nada para validar
   const norm = (s) => String(s).trim().toLowerCase();
@@ -3950,43 +3859,34 @@ function marketSelectionsLookPlausible(basePt, selectionLabels, home, away) {
   const homeL = home ? norm(home) : null;
   const awayL = away ? norm(away) : null;
 
+  // — Categorias pequenas (2–3 seleções): mantemos 100% porque uma label errada destrói o sentido —
   if (basePt === "Ambas as Equipas Marcam" || basePt === "Haverá Tie-Break") {
     return labels.every((l) => /^(yes|sim|no|não|nao)$/.test(l));
   }
-  if (basePt === "Cantos Ímpar/Par" || basePt === "Cartões Ímpar/Par" || basePt === "Golos Ímpar/Par") {
-    return labels.every((l) => /^(odd|even|ímpar|impar|par)$/.test(l));
-  }
-  if (basePt === "Resultado Exato" || basePt === "Resultado Exato (Prolongamento)") {
-    return labels.every((l) => /^\d+\s*[-–—:]\s*\d+$/.test(l));
+  if (basePt === "Empate Anula Aposta") {
+    return labels.length === 2 && labels.every((l) => isHdaSide(l, homeL, awayL) && !/x|draw|tie|empate/i.test(l));
   }
   if (basePt === "Resultado Final" || basePt === "Resultado (Prolongamento)") {
-    // 1X2 é sempre a 3 vias (casa/empate/fora) — um mercado real de só 2 vias (ex: "Casa"/"Fora"
-    // sem Empate) não é "Resultado Final" mesmo que cada rótulo individual bata no vocabulário
-    // (esses mesmos rótulos também batem em "Empate Anula Aposta", 2 vias por definição). Sem
-    // isto, um mercado 2 vias diferente (nunca confirmado o que é de facto) caía aqui só por
-    // coincidência de vocabulário, e aparecia como um "Resultado Final" duplicado e sem sentido —
-    // reportado pelo utilizador como "vários Resultado Final, não sabemos de qual". Falhando esta
-    // validação, mostra-se o nome bruto original em vez de um título enganador.
-    const hasDraw = labels.some((l) => ["x", "draw", "empate"].includes(l));
-    return labels.length >= 3 && hasDraw && labels.every((l) => ["1", "x", "2", "home", "away", "draw", "empate", "casa", "fora"].includes(l) || l === homeL || l === awayL);
+    // 1X2 continua 100% e 3 vias c/ empate — é o mercado mais importante do boletim, não arriscamos.
+    const hdaWords = (l) => /^(1|x|2|home|away|draw|tie|empate|casa|fora)$/.test(l) || l === homeL || l === awayL;
+    const hasDraw = labels.some((l) => ["x", "draw", "tie", "empate"].includes(l));
+    return labels.length >= 3 && hasDraw && labels.every(hdaWords);
   }
-  if (basePt === "Empate Anula Aposta") {
-    // Draw No Bet é sempre a 2 vias (casa/fora), NUNCA inclui empate — o oposto do 1X2 acima.
-    return labels.length === 2 && labels.every((l) => ["1", "2", "home", "away", "casa", "fora"].includes(l) || l === homeL || l === awayL);
+
+  // — Categorias numerosas (≥4+ labels): maioria 75% min 2 matches —
+  if (basePt === "Cantos Ímpar/Par" || basePt === "Cartões Ímpar/Par" || basePt === "Golos Ímpar/Par") {
+    return majorityMatches(labels, (l) => /^(odd|even|ímpar|impar|par)$/.test(l));
+  }
+  if (basePt === "Resultado Exato" || basePt === "Resultado Exato (Prolongamento)") {
+    return majorityMatches(labels, isCorrectScoreFormat);
   }
   if (basePt === "Dupla Hipótese") {
-    // "and" (Pulsescore) e "or" (Sportmonks, confirmado numa amostra real: "Abha or Draw") são os
-    // dois formatos vistos — ver mesmo ajuste em translateSelectionLabel() e em
-    // resolveDoubleChance() no backend (settlementRules.ts).
-    return labels.every((l) => {
-      const compact = l.replace(/\s+/g, "");
-      return ["1x", "x1", "x2", "2x", "12"].includes(compact) || /^.+\s+(and|or)\s+.+$/i.test(l);
-    });
+    return majorityMatches(labels, isDoubleChanceFormat);
   }
   if (basePt === "Total da Equipa" || /^mais\/menos de/i.test(basePt)) {
-    return labels.every((l) => /over|under|mais|menos/.test(l));
+    return majorityMatches(labels, (l) => /\b(over|under|mais|menos)\b/.test(l));
   }
-  return true; // sem vocabulário fixo confirmado para esta categoria — sem validação adicional
+  return true; // sem vocabulário fixo confirmado — sem validação adicional
 }
 
 // `line` (linha numérica de Handicap/Total — ex: -1.5, 2.5) é opcional e só passado por quem já a
@@ -4113,19 +4013,32 @@ function selectMarketFilter(label) {
 // uma barra de chips onde cada mercado deve ter um único sítio. Sem categoria batida, cai no
 // balde "Especiais" do futebol; nos restantes desportos (sem balde definido) fica sem
 // categoria (null) — só visível em "Todos".
+// IMPORTANTE 2026-08-26 — ESTA FUNÇÃO NUNCA PODE LANÇAR.
+// Classificar mercados é uma operação de display; se uma regex rebentar por marketName ser
+// null/undefined/objeto mal formado, a página de futebol fica "carregando infinito" (loading
+// spinner nunca fecha). Coerção String() + try/catch garante fallback limpo para categoria.
 function classifyMarket(sport, marketName) {
   const categories = MARKET_FILTER_CATEGORIES[sport];
   if (!categories) return null;
-  const match = categories.find((c) => c.test(marketName));
-  if (match) return match.label;
+  const s = String(marketName ?? "");
+  try {
+    const match = categories.find((c) => c.test(s));
+    if (match) return match.label;
+  } catch {
+    // anomalia: regex rebentou ou categoria tem erro sintático. Fallback silencioso —
+    // melhor mostrar em "Especiais" (football) / sem categoria do que parar a página.
+  }
   return sport === "football" ? FOOTBALL_CATCHALL_LABEL : null;
 }
 // Devolve só os grupos de mercado que pertencem à categoria escolhida (ou todos, sem filtro
 // selecionado).
+// Garantia anti-crash: se e.odds for null/undefined (evento ainda sem odds em deploy), retorna []
+// em vez de throw "Cannot read properties of undefined (reading 'filter')".
 function filterMarketGroups(e) {
+  if (!e.odds || !Array.isArray(e.odds)) return [];
   if (!selectedMarketFilter) return e.odds;
   if (!MARKET_FILTER_CATEGORIES[e.sport]) return e.odds;
-  return e.odds.filter((g) => classifyMarket(e.sport, g.market) === selectedMarketFilter);
+  return e.odds.filter((g) => classifyMarket(e.sport, g && g.market) === selectedMarketFilter);
 }
 
 // Linha de seleções de UM mercado bruto (`group`) — extraído do antigo renderMarketGroups() para
@@ -4136,14 +4049,16 @@ function filterMarketGroups(e) {
 function normalSelectionRowHtml(e, group, isLive, withLine) {
   const rows = orderedSelectionEntries(group.selections)
     .map(([label, sel]) => {
-      const labelPt = withLine ? overUnderButtonLabel(label, group.line) : translateSelectionLabel(label);
+      const labelPt = withLine ? overUnderButtonLabel(group.market, group.line, label, translateSelectionLabel(label)) : translateSelectionLabel(label);
+      const selkey = `${group.market}||${label}`;
+      const oddVal = Number.isFinite(sel.odd) ? Number(sel.odd) : 0;
       // Seleção suspensa pelo bookmaker (isActive:false — ex: durante uma revisão VAR ou logo
       // após um penálti/cartão, ver LiveSelection em types.ts): mostra-se visível mas sem onclick,
       // em vez de desaparecer ou continuar clicável com uma odd desatualizada. Mesmo tratamento
       // para uma odd inválida (ex: NaN de uma transição de deploy com JS antigo em cache) — nunca
       // deixar clicar numa aposta sem preço válido.
       if (!sel.isActive || !Number.isFinite(sel.odd)) {
-        return `<div class="selection-btn suspended">
+        return `<div class="selection-btn suspended" data-selkey="${attrJson(selkey)}" data-odd="${oddVal}">
           <span class="sel-label">${labelPt}</span><span class="sel-odd">Suspenso</span>
         </div>`;
       }
@@ -4153,7 +4068,7 @@ function normalSelectionRowHtml(e, group, isLive, withLine) {
       // Setas de subida/descida só em Ao Vivo — no pré-jogo o valor não costuma mudar ao ponto de
       // justificar o indicador, e não foi pedido para essa página.
       const arrow = isLive ? oddsArrowHtml(key, sel.odd) : "";
-      return `<div class="selection-btn ${picked ? "picked" : ""}" onclick='toggleSelection(${attrJson(key)}, ${attrJson(selection)})'>
+      return `<div class="selection-btn ${picked ? "picked" : ""}" data-selkey="${attrJson(selkey)}" data-odd="${oddVal}" onclick='toggleSelection(${attrJson(key)}, ${attrJson(selection)})'>
         <span class="sel-label">${labelPt}</span><span class="sel-odd">${sel.odd.toFixed(2)}${arrow}</span>
       </div>`;
     })
@@ -4166,8 +4081,21 @@ function normalSelectionRowHtml(e, group, isLive, withLine) {
 // das odds aparece Mais de 0.5" em vez de só "MAIS DE" com a linha só no título de fora (que deixa
 // de existir quando há mais do que uma linha). Quando o rótulo da seleção já traz o número (ex:
 // "Over 2.5", ou "Home -1.5" de handicap — ambos via translateSelectionLabel), não duplica.
-function overUnderButtonLabel(label, line) {
-  const translated = translateSelectionLabel(label);
+//
+// Assinatura multi-modos (seguro, aceita 2 args antigos ou 4 args novos):
+//   overUnderButtonLabel(rawLabelOrMarket, lineOrUndefined, ?rawLabel, ?translatedLabel)
+// - MODO 1 (antigo, compatibilidade): 2 args, 1º arg é a raw label, 2º é line
+// - MODO 2 (novo, para patch incremental): 4 args, 1º arg = market name (se necessário),
+//   2º arg = line, 3º arg = raw label, 4º arg = label já traduzida (precalculada, performance)
+function overUnderButtonLabel(...args) {
+  let marketOrLabel, line, rawLabel, translated;
+  if (args.length === 2) {
+    marketOrLabel = args[0]; line = args[1];
+    rawLabel = marketOrLabel;
+    translated = translateSelectionLabel(rawLabel);
+  } else {
+    marketOrLabel = args[0]; line = args[1]; rawLabel = args[2]; translated = args[3];
+  }
   if (typeof line !== "number" || /\d/.test(translated)) return translated;
   return `${translated} ${line}`;
 }
@@ -4179,10 +4107,139 @@ let marketAccordionState = { eventId: null, expanded: new Set(), initialized: fa
 function ensureMarketAccordionState(eventId) {
   if (marketAccordionState.eventId !== eventId) marketAccordionState = { eventId, expanded: new Set(), initialized: false, autoOpenedFilter: undefined };
 }
+// ============ FLUIDEZ ACORDEÕES (OTIMIZAÇÃO 2026-08-26) ============
+// Antes: toggleMarketAccordion chamava renderMarketGroups() INTEIRO a cada clique.
+// Custo: um jogo com 30 mercados → 30 acordeões reconstruídos, 200+ botões refeitos → 100-300ms
+// de UI presa num mid-range Android.
+// Agora: TENTA primeiro update DOM local (classList.toggle('open') no nó), SEM rebuildar nada.
+// Só cai no rebuild completo se o nó não existir no DOM (filtro mudou, página reiniciou).
+function findAccordionElByKey(key) {
+  const container = document.getElementById("market-groups");
+  if (!container) return null;
+  return container.querySelector(`.ml-accordion[data-mkey="${cssEscapeAttr(key)}"]`);
+}
+function cssEscapeAttr(s) {
+  return String(s).replace(/"/g, "&quot;").replace(/\\/g, "\\\\");
+}
 function toggleMarketAccordion(key) {
-  if (marketAccordionState.expanded.has(key)) marketAccordionState.expanded.delete(key);
-  else marketAccordionState.expanded.add(key);
+  const isExpanding = !marketAccordionState.expanded.has(key);
+  if (isExpanding) marketAccordionState.expanded.add(key);
+  else marketAccordionState.expanded.delete(key);
+  const el = findAccordionElByKey(key);
+  if (el) {
+    el.classList.toggle("open", isExpanding);
+    return;
+  }
   if (currentMarketEvent) renderMarketGroups(currentMarketEvent);
+}
+// Patch incremental para odds AO VIVO (10-15s cycle e refreshEvent do openMarket).
+// Antes: um update de odds fazia renderMarketGroups() completo = rebuild de TUDO.
+// Agora: percorre .selection-btn já existentes no DOM; se o dataset da odd bate, só atualiza
+// o texto e a classe `suspended`; odds mudadas de valor fazem 1 micro-flash de classe para
+// feedback visual. Qualquer anomalia (botão não encontrado, número de botões diferente) cai
+// no rebuild completo para não divergir.
+function marketSelectionButtonsSignature(container) {
+  const btns = container.querySelectorAll(".selection-btn[data-selkey]");
+  return Array.from(btns).map((b) => b.dataset.selkey).join("||");
+}
+function patchLiveMarketGroups(e) {
+  const container = document.getElementById("market-groups");
+  if (!container || !container.children.length) return false; // primeira render ainda não feita → full
+  if (selectedMarketFilter === BET_BUILDER_LABEL) return false; // BetBuilder tem pipeline próprio
+  try {
+    const expected = buildMarketDisplayGroups(e);
+    const expectedKeys = expected.map((en) => en.key).sort().join("||");
+    const actualKeys = Array.from(container.querySelectorAll(".ml-accordion[data-mkey]"))
+      .map((el) => el.dataset.mkey)
+      .sort()
+      .join("||");
+    if (expectedKeys !== actualKeys) return false; // mercados mudaram (ex: livro abriu novas categorias) → full
+
+    let anyMutated = false;
+    for (const entry of expected) {
+      const accEl = findAccordionElByKey(entry.key);
+      if (!accEl) return false;
+      const titleEl = accEl.querySelector(".ml-accordion-head > span:first-child");
+      const first = entry.lines[0];
+      const title = translateMarketDisplayName(entry.market, e.sport, Object.keys(first.selections || {}), e.home, e.away, entry.lines.length === 1 ? first.line : undefined);
+      const allSuspended = entry.lines.every((g) => !g.isActive);
+      if (titleEl) {
+        const wanted = `${title}${allSuspended ? '<span class="market-suspended-badge">Suspenso</span>' : ""}`;
+        if (titleEl.innerHTML !== wanted) { titleEl.innerHTML = wanted; anyMutated = true; }
+      }
+      const bodyEl = accEl.querySelector(".ml-accordion-body");
+      if (!bodyEl) return false;
+      const selFragments = [];
+      for (let i = 0; i < entry.lines.length; i++) {
+        const g = entry.lines[i];
+        const withLabel = entry.lines.length > 1;
+        const isFirst = i === 0;
+        const keys = Object.keys(g.selections || {});
+        if (entry.isPrimary && allSuspended) {
+          expectedSigs.push(`__primary_suspended__`);
+          selFragments.push({ kind: "suspended", label: primarySuspendedLabel(e) });
+        } else {
+          for (const k of keys) expectedSigs.push(k);
+          selFragments.push({ kind: "selections", group: g, withLabel, isFirst, market: entry.market, line: g.line });
+        }
+      }
+      const bodyBtns = bodyEl.querySelectorAll(".selection-btn");
+      if (bodyBtns.length !== expectedSigs.length) return false; // número mudou → full rebuild
+
+      let fragIdx = 0;
+      let btnIdx = 0;
+      const isLive = e._isLive || e.status === "live";
+      for (const frag of selFragments) {
+        if (frag.kind === "suspended") {
+          const btn = bodyBtns[btnIdx++];
+          if (!btn) return false;
+          const span = btn.querySelector(".sel-odd");
+          if (span && span.textContent !== frag.label) { span.textContent = frag.label; anyMutated = true; }
+          if (!btn.classList.contains("suspended")) { btn.classList.add("suspended"); anyMutated = true; }
+          continue;
+        }
+        const g = frag.group;
+        const keys = Object.keys(g.selections || {});
+        // Uma linha com N seleções corresponde a N botões consecutivos no body (ordem do HTML gerado em normalSelectionRowHtml).
+        for (const k of keys) {
+          const sel = g.selections[k];
+          const btn = bodyBtns[btnIdx++];
+          if (!btn) return false;
+          const newOdd = Number(sel.odd).toFixed(2);
+          const selLabel = translateSelectionLabel(k);
+          const oddSpan = btn.querySelector(".sel-odd");
+          const labelSpan = btn.querySelector(".sel-label");
+          const oddChanged = oddSpan && Number(btn.dataset.odd) !== Number(sel.odd);
+          if (oddSpan && oddSpan.textContent !== newOdd) {
+            oddSpan.textContent = newOdd;
+            btn.dataset.odd = String(sel.odd);
+            anyMutated = true;
+          }
+          if (labelSpan) {
+            let wantedLabel = selLabel;
+            if (frag.withLabel) {
+              const lineLabel = overUnderButtonLabel(frag.market, frag.line, k, selLabel);
+              wantedLabel = lineLabel;
+            }
+            if (labelSpan.innerHTML !== wantedLabel) { labelSpan.innerHTML = wantedLabel; anyMutated = true; }
+          }
+          const shouldSuspend = isLive && (!sel.isActive || !g.isActive);
+          if (btn.classList.toggle("suspended", shouldSuspend)) anyMutated = true;
+          if (isLive && oddChanged) {
+            btn.classList.remove("odd-flash");
+            // force reflow p/ restart da animação CSS
+            // eslint-disable-next-line no-unused-expressions
+            void btn.offsetWidth;
+            btn.classList.add("odd-flash");
+          }
+        }
+        fragIdx++;
+      }
+    }
+    return true; // patch aplicado com sucesso
+  } catch {
+    return false; // anomalia → rebuild completo
+  }
 }
 
 // Reorganiza os mercados brutos (e.odds, já filtrados pela categoria escolhida) em entradas para
@@ -4201,7 +4258,8 @@ function toggleMarketAccordion(key) {
 // arriscar uma tabela com rótulos errados a fingir ser jogadores.
 function buildMarketDisplayGroups(e) {
   const groups = filterMarketGroups(e);
-  const primaryMarket = e.odds[0];
+  if (!groups || !groups.length) return []; // <-- anti-crash: sem odds = sem mercados, não continua
+  const primaryMarket = e.odds && e.odds[0];
   const sport = e.sport;
   const order = sport === "football" ? FOOTBALL_FILTER_DISPLAY_ORDER : (MARKET_FILTER_CATEGORIES[sport] || []).map((c) => c.label);
   const rank = (label) => {
@@ -4212,6 +4270,7 @@ function buildMarketDisplayGroups(e) {
   const byMergeKey = new Map();
   const result = [];
   for (const group of groups) {
+    if (!group) continue;
     const category = classifyMarket(sport, group.market);
     let entry = byMergeKey.get(group.market);
     if (!entry) {
@@ -4221,12 +4280,15 @@ function buildMarketDisplayGroups(e) {
     }
     entry.lines.push(group);
   }
-  for (const entry of result) entry.isPrimary = entry.lines.includes(primaryMarket);
+  // primaryMarket pode ser undefined se e.odds estiver vazio mas groups vier de
+  // filterMarketGroups (selectedMarketFilter filtrou odds). includes() com undefined safe.
+  for (const entry of result) entry.isPrimary = !!(primaryMarket && entry.lines.includes(primaryMarket));
 
-  // O mercado principal (1X2 real, sempre e.odds[0] — ver orderMarketsWithPrimaryFirst no
-  // backend) fica sempre em primeiro lugar, mesmo antes de qualquer critério de categoria —
-  // pedido explícito do utilizador ("Resultado Final tem de aparecer no topo de todos").
-  result.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || rank(a.category) - rank(b.category));
+  try {
+    result.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || rank(a.category) - rank(b.category));
+  } catch {
+    // sort anomalia (NaN rank, etc.) → mantemos ordem original em vez de crashar.
+  }
   return result;
 }
 
@@ -4251,7 +4313,7 @@ function marketAccordionHtml(e, entry, isLive) {
       .join("");
   }
   return `
-    <div class="ml-accordion${expanded ? " open" : ""}">
+    <div class="ml-accordion${expanded ? " open" : ""}" data-mkey="${attrJson(entry.key)}">
       <div class="ml-accordion-head" onclick='toggleMarketAccordion(${attrJson(entry.key)})'>
         <span>${title}${badgeHtml}</span>
         <span class="ml-chevron">⌄</span>
@@ -4260,13 +4322,28 @@ function marketAccordionHtml(e, entry, isLive) {
     </div>`;
 }
 
-function renderMarketGroups(e) {
+function renderMarketGroups(e, _skipPatch = false) {
   const el = document.getElementById("market-groups");
+  if (!el) return;
   if (!e.odds || !e.odds.length) {
     el.innerHTML = '<div class="empty-note">Sem mercados disponíveis para este evento</div>';
     return;
   }
   ensureMarketAccordionState(e.id);
+  const isLive = e._isLive || e.status === "live";
+
+  // OTIMIZAÇÃO FLUIDEZ: tentar patch incremental antes de rebuild completo.
+  // - Apenas em AO VIVO ou quando já temos DOM renderizado anteriormente.
+  // - 90% das atualizações (odds mexem 0.01 ~ 0.03, botão suspendido/não) custam ~5ms
+  //   em vez de 50-300ms do rebuild completo.
+  // - Se houver qualquer anomalia (chaves mudaram, #botões diferente), patchLiveMarketGroups()
+  //   devolve false e fazemos o rebuild completo de segurança.
+  const shouldTryPatch = !_skipPatch && (isLive || (el.children.length && marketAccordionState.eventId === e.id));
+  if (shouldTryPatch) {
+    const patched = patchLiveMarketGroups(e);
+    if (patched) return;
+  }
+
   const entries = buildMarketDisplayGroups(e);
   if (!entries.length) {
     el.innerHTML = '<div class="empty-note">Sem mercados nesta categoria</div>';
@@ -4287,7 +4364,6 @@ function renderMarketGroups(e) {
     entries.slice(0, 5).forEach((entry) => marketAccordionState.expanded.add(entry.key));
     marketAccordionState.initialized = true;
   }
-  const isLive = e._isLive || e.status === "live";
   el.innerHTML = entries.map((entry) => marketAccordionHtml(e, entry, isLive)).join("");
 }
 

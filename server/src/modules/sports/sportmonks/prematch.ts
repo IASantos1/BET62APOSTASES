@@ -1,5 +1,7 @@
 import type { LiveEvent } from "../types";
 import { fetchFixturesBetween, fetchLeaguesWithCurrentRound, getRoundEvents } from "./client";
+import { hybridSportsService } from "../hybridService";
+import { env } from "../../../config/env";
 
 /**
  * Junta o pré-jogo de futebol de TODAS as ligas da Sportmonks (pedido explícito do utilizador)
@@ -24,17 +26,35 @@ function dateRangeFromToday(days: number): { start: string; end: string } {
   return { start, end };
 }
 
+// ⚠️ CORREÇÃO (2026-08-26): publica os scheduled no mesmo Map do hybridSportsService (sport
+// "football"), para que hybridSportsService.snapshot("football") + getById() + /api/sports/events
+// funcionem também para jogos Sportmonks de pré-jogo. O poller Ao Vivo (15s, em live.ts) também
+// publica em "football" e não traz scheduled, marcando-os como "missingSince" a cada ciclo; mas
+// REMOVE_GRACE_MS = 90s > BACKGROUND_REFRESH_MS = 40s, portanto este tick renova sempre os
+// scheduled antes de a margem expirar — nenhum scheduled é removido prematuramente.
+function syncScheduledToHybrid(events: LiveEvent[]) {
+  if (!env.SPORTMONKS_API_KEY || env.FOOTBALL_PROVIDER !== "sportmonks") return;
+  const scheduled = events.filter((e) => e.status === "scheduled");
+  try {
+    hybridSportsService.applyExternalSnapshot("football", scheduled);
+  } catch {
+    /* falha de sync não bloqueia nem a cache nem a resposta ao utilizador */
+  }
+}
+
 async function fetchAndNormalize(): Promise<LiveEvent[]> {
   const { start, end } = dateRangeFromToday(PREMATCH_WINDOW_DAYS);
   const events = await fetchFixturesBetween(start, end);
   // Jogos sem odds do bookmaker filtrado (bet365) não são utilizáveis para apostar — mostrá-los na
   // lista era o "jogos sem odds" reportado pelo utilizador. Mantém-se aqui tanto "scheduled" como
-  // "finished" (fetchFixturesBetween/normalizeFixture chama "finished" a qualquer jogo já
-  // começado, mesmo a decorrer — ver aviso em client.ts): esta cache alimenta tanto o pré-jogo
-  // (só "scheduled", filtrado abaixo em getSportmonksFootballPrematch) como as odds do poller de
-  // Ao Vivo (sportmonks/live.ts), que procura aqui pelas odds de um jogo já começado através de
-  // getSportmonksEventById() — sem manter os já começados, o Ao Vivo nunca encontrava odds.
-  return events.filter((e) => e.odds.length > 0);
+  // "live" (normalizeFixture chama "live" a qualquer jogo já começado, mesmo a decorrer — ver
+  // correção status 2026-08-26 em client.ts): esta cache alimenta tanto o pré-jogo (só scheduled,
+  // filtrado abaixo) como as odds do poller Ao Vivo (sportmonks/live.ts), que procura aqui pelas
+  // odds de um jogo já começado via getSportmonksEventById() — sem manter os já começados, o Ao
+  // Vivo nunca encontrava odds para os jogos que passaram de scheduled no intervalo de refresh.
+  const withOdds = events.filter((e) => e.odds.length > 0);
+  syncScheduledToHybrid(withOdds);
+  return withOdds;
 }
 
 /** startTime é sempre ISO UTC explícito (ver normalizeFixture em client.ts) — os primeiros 10
@@ -100,6 +120,7 @@ export function startSportmonksPrematchBackgroundRefresh(): void {
     fetchAndNormalize()
       .then((events) => {
         cache = { events, fetchedAt: Date.now() };
+        syncScheduledToHybrid(events);
       })
       .catch(() => {
         /* mantém a cache anterior (ou nenhuma) — a próxima chamada real tenta de novo */
