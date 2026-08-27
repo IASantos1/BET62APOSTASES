@@ -752,13 +752,30 @@ function parseTennisGamePoints(
   return { homeScore: gp.home, awayScore: gp.away };
 }
 
+// ⚠️ CORREÇÃO (2026-08-27, migração para bookmaker "onexbet"): `score` genérico é AMBÍGUO para
+// ténis — nada na Pulsescore garante que este campo carregue os pontos do jogo atual (0/15/30/
+// 40/AD, o que o cartão mostra em .event-points, ver renderSetsCard em app.js) em vez do placar
+// de SETS ganhos (0/1/2), que é um conceito totalmente diferente e já vem à parte em
+// `statistics.sets`. Com a paddypower, `score` vinha quase sempre ausente/não numérico em ténis,
+// por isso caía quase sempre no fallback `parseTennisGamePoints` (que lê moreInfo.gamePoints, o
+// único campo cujo NOME já garante ser os pontos do jogo atual) — mascarando esta ambiguidade.
+// Bug real reportado com print depois da migração para "onexbet": o placar grande do cartão
+// passou a mostrar "1 - 0" / "0 - 1" (valores pequenos, típicos de sets ganhos) em vez de "15 -
+// 30"/"40 - AD", porque a onexbet aparentemente DEVOLVE um `score` numérico válido para ténis
+// (ao contrário da paddypower) — só que esse valor não são os pontos do jogo. Por isso, em ténis,
+// `moreInfo.gamePoints` passa a ter SEMPRE prioridade; `score` só serve de recurso se
+// gamePoints não vier.
 function parsePulsescoreScore(
   score: PulsescoreScore | undefined,
   sport: Sport,
   moreInfo?: PulsescoreEvent["moreInfo"]
 ): { homeScore?: number | string; awayScore?: number | string } {
+  if (sport === "tennis") {
+    const points = parseTennisGamePoints(sport, moreInfo);
+    if (points.homeScore !== undefined && points.awayScore !== undefined) return points;
+  }
   if (!score || score.home == null || score.away == null) {
-    if (sport === "tennis") logger.info({ score }, "Pulsescore: ténis sem score.home/away parseável (possível estado de vantagem)");
+    if (sport === "tennis") logger.info({ score }, "Pulsescore: ténis sem score.home/away nem gamePoints parseável (possível estado de vantagem)");
     return parseTennisGamePoints(sport, moreInfo);
   }
   const h = Number(score.home);
