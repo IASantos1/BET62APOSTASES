@@ -102,7 +102,13 @@ router.get(
   "/events",
   asyncHandler(async (req, res) => {
     const sport = typeof req.query.sport === "string" ? (req.query.sport as any) : undefined;
-    res.json({ events: hybridSportsService.snapshot(sport) });
+    // Só "live" — este é o endpoint "Ao Vivo" (getLiveEvents no frontend, api.js). O
+    // hybridSportsService também guarda jogos "scheduled" (Sportmonks: syncScheduledToHybrid em
+    // sportmonks/prematch.ts injeta-os no mesmo mapa "football" de propósito, para getById()
+    // conseguir encontrar jogos de pré-jogo pelo id; Pulsescore: wsClient.ts também pode marcar
+    // "scheduled" um evento dentro de um snapshot "live"). Sem este filtro, jogos por começar
+    // apareciam na lista "Ao Vivo" — bug real reportado pelo utilizador.
+    res.json({ events: hybridSportsService.snapshot(sport).filter((e) => e.status === "live") });
   })
 );
 

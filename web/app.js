@@ -643,6 +643,25 @@ function classifyHdaLabel(labelRaw) {
   if (["2", "away", "fora", "aways", "a", "visitante"].includes(s)) return "a";
   return null;
 }
+// Ténis (e outros desportos sem empate) não devolvem "Home"/"Away" como rótulo do moneyline —
+// vêm com o NOME PRÓPRIO do jogador/equipa (ver comentário grande de translateSelectionLabel:
+// "muitos são NOMES PRÓPRIOS... que nunca se traduzem"). classifyHdaLabel só reconhece vocabulário
+// fixo, por isso um moneyline de ténis nunca batia h>=1 && a>=1 e caía sempre em "Suspenso" no
+// cartão — mesmo com o mercado bem ativo (bug real reportado: clicar no jogo mostrava o mercado
+// disponível). Em vez de adivinhar mais vocabulário, confirma-se algo concreto: a label bate
+// (ignorando maiúsculas/espaços) com e.home ou e.away deste MESMO jogo — só um moneyline genuíno
+// tem isso, nunca BTTS/Ímpar-Par/etc.
+function isParticipantLabel(label, name) {
+  if (!label || !name) return false;
+  return String(label).trim().toLowerCase() === String(name).trim().toLowerCase();
+}
+function looksLikeTwoWayParticipants(labelA, labelB, e) {
+  if (!e) return false;
+  return (
+    (isParticipantLabel(labelA, e.home) && isParticipantLabel(labelB, e.away)) ||
+    (isParticipantLabel(labelA, e.away) && isParticipantLabel(labelB, e.home))
+  );
+}
 function quickOddsHtml(e, group, isLive) {
   if (!group?.selections || !group.isActive) return SUSPENDED_QUICK_ODDS_HTML(e);
 
@@ -671,7 +690,8 @@ function quickOddsHtml(e, group, isLive) {
   for (const l of labels) counts[l === null ? "null" : l]++;
   const looksOk =
     (entriesFiltered.length === 3 && (counts.h + counts.d + counts.a >= 2)) ||
-    (entriesFiltered.length === 2 && counts.h >= 1 && counts.a >= 1);
+    (entriesFiltered.length === 2 && counts.h >= 1 && counts.a >= 1) ||
+    (entriesFiltered.length === 2 && looksLikeTwoWayParticipants(entriesFiltered[0][0], entriesFiltered[1][0], e));
   if (!looksOk) {
     // Qualquer outro caso (1 botão só, 2 botões sem casa/fora, 3 botões de BTTS etc.)
     // mostra "Suspenso" em vez de odds descontextualizadas.
@@ -718,6 +738,8 @@ function safeFindPrimaryMarket(e) {
     const totalHda = h + d + a;
     if (sels.length === 3 && totalHda >= 2) return g;
     if (sels.length === 2 && h >= 1 && a >= 1) return g;
+    // Ténis/moneylines sem "Home"/"Away" — ver looksLikeTwoWayParticipants acima.
+    if (sels.length === 2 && looksLikeTwoWayParticipants(sels[0][0], sels[1][0], e)) return g;
   }
   return undefined;
 }
@@ -4030,15 +4052,43 @@ function classifyMarket(sport, marketName) {
   }
   return sport === "football" ? FOOTBALL_CATCHALL_LABEL : null;
 }
-// Devolve só os grupos de mercado que pertencem à categoria escolhida (ou todos, sem filtro
-// selecionado).
+// Posição de cada categoria na prioridade de exibição do desporto — reaproveita a MESMA lista já
+// usada para classificar os chips de filtro (MARKET_FILTER_CATEGORIES), a ordem nela já reflete a
+// prioridade pedida (ex. futebol: Resultado, Ambas Marcam, Mais/Menos, Handicap, ...). "Especiais"
+// (só futebol) fica sempre no fim, como o próprio catch-all pretende.
+function marketCategoryOrder(sport) {
+  const categories = MARKET_FILTER_CATEGORIES[sport];
+  if (!categories) return null;
+  const order = new Map(categories.map((c, i) => [c.label, i]));
+  if (sport === "football") order.set(FOOTBALL_CATCHALL_LABEL, categories.length);
+  return order;
+}
+// Devolve só os grupos de mercado que pertencem à categoria escolhida (ou todos, ordenados por
+// prioridade, sem filtro selecionado — "Todos").
 // Garantia anti-crash: se e.odds for null/undefined (evento ainda sem odds em deploy), retorna []
 // em vez de throw "Cannot read properties of undefined (reading 'filter')".
 function filterMarketGroups(e) {
   if (!e.odds || !Array.isArray(e.odds)) return [];
-  if (!selectedMarketFilter) return e.odds;
   if (!MARKET_FILTER_CATEGORIES[e.sport]) return e.odds;
-  return e.odds.filter((g) => classifyMarket(e.sport, g && g.market) === selectedMarketFilter);
+  if (selectedMarketFilter) {
+    return e.odds.filter((g) => classifyMarket(e.sport, g && g.market) === selectedMarketFilter);
+  }
+  // "Todos": o provedor (Sportmonks/Pulsescore) manda os mercados numa ordem arbitrária — sem
+  // reordenar aqui, Handicap podia aparecer antes de Dupla Chance/Ambas Marcam/Mais-Menos (bug
+  // real reportado). Ordena por categoria (mesma prioridade dos chips), sort ESTÁVEL para nunca
+  // trocar a ordem relativa de dois mercados da mesma categoria (ex.: várias linhas de Handicap
+  // entre si).
+  const order = marketCategoryOrder(e.sport);
+  if (!order) return e.odds;
+  try {
+    return [...e.odds].sort((a, b) => {
+      const ra = order.get(classifyMarket(e.sport, a && a.market)) ?? Infinity;
+      const rb = order.get(classifyMarket(e.sport, b && b.market)) ?? Infinity;
+      return ra - rb;
+    });
+  } catch {
+    return e.odds; // nunca deixar uma falha aqui rebentar a página de mercados
+  }
 }
 
 // Linha de seleções de UM mercado bruto (`group`) — extraído do antigo renderMarketGroups() para
@@ -4170,6 +4220,13 @@ function patchLiveMarketGroups(e) {
       const bodyEl = accEl.querySelector(".ml-accordion-body");
       if (!bodyEl) return false;
       const selFragments = [];
+      // Assinaturas esperadas dos botões desta entrada (uma por seleção, ou um marcador único
+      // quando o mercado principal está todo suspenso) — comparado contra o nº real de botões no
+      // DOM logo a seguir (bodyBtns.length !== expectedSigs.length). Tinha ficado por declarar:
+      // expectedSigs.push() abaixo rebentava (ReferenceError) e o catch no fim desta função
+      // engolia sempre o erro, devolvendo false — o patch incremental nunca conseguia aplicar-se
+      // (sempre rebuild completo, silenciosamente, sem quebrar a página mas sem a otimização).
+      const expectedSigs = [];
       for (let i = 0; i < entry.lines.length; i++) {
         const g = entry.lines[i];
         const withLabel = entry.lines.length > 1;
@@ -4259,7 +4316,16 @@ function patchLiveMarketGroups(e) {
 function buildMarketDisplayGroups(e) {
   const groups = filterMarketGroups(e);
   if (!groups || !groups.length) return []; // <-- anti-crash: sem odds = sem mercados, não continua
-  const primaryMarket = e.odds && e.odds[0];
+  // e.odds[0] confiava cegamente que o backend já tinha posto o 1X2/moneyline em primeiro lugar
+  // (ver orderSportmonksMarketsWithPrimaryFirst/orderMarketsWithPrimaryFirst) — quando um nome de
+  // mercado real não bate em nenhuma das suas regexes, essa garantia falha e index 0 passa a ser
+  // qualquer mercado que o provedor mandou primeiro (ex: Handicap), que esta função então empurra
+  // para o topo de "Todos" só por estar em isPrimary (bug real reportado: "tá aparecendo handicap
+  // e essas coisas"). safeFindPrimaryMarket já confirma pelo CONTEÚDO (2-3 seleções válidas de
+  // resultado) — usa-o primeiro, e só cai para e.odds[0] se genuinamente não encontrar nada
+  // (exatamente a mesma rede de segurança que safeFindPrimaryMarket já promete aos seus outros
+  // chamadores, "nunca destrói UX").
+  const primaryMarket = safeFindPrimaryMarket(e) ?? (e.odds && e.odds[0]);
   const sport = e.sport;
   const order = sport === "football" ? FOOTBALL_FILTER_DISPLAY_ORDER : (MARKET_FILTER_CATEGORIES[sport] || []).map((c) => c.label);
   const rank = (label) => {

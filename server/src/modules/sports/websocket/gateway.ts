@@ -90,7 +90,11 @@ export function attachSportsWebsocketGateway(httpServer: HttpServer) {
     socket.send(
       JSON.stringify({
         type: "snapshot",
-        events: hybridSportsService.snapshot().filter((e) => state.sports.has(e.sport)),
+        // Só "live" — este canal é a lista "Ao Vivo" no frontend (renderLiveEvents em app.js
+        // mostra tudo o que recebe daqui sem filtrar status). O hybridSportsService também guarda
+        // jogos "scheduled" (ver comentário em routes.ts GET /events, mesmo filtro) — sem isto,
+        // jogos de pré-jogo apareciam na lista "Ao Vivo" assim que a ligação abria.
+        events: hybridSportsService.snapshot().filter((e) => state.sports.has(e.sport) && e.status === "live"),
       })
     );
 
@@ -118,6 +122,10 @@ export function attachSportsWebsocketGateway(httpServer: HttpServer) {
   wss.on("close", () => clearInterval(heartbeat));
 
   hybridSportsService.on("event", (event) => {
+    // Mesmo filtro do snapshot inicial acima — sem isto, cada vez que sportmonks/prematch.ts
+    // renova um jogo "scheduled" no hybrid (syncScheduledToHybrid, a cada 40s) esse evento
+    // passava por aqui como uma atualização "Ao Vivo" normal.
+    if (event.status !== "live") return;
     const frame = JSON.stringify({ type: "update", event });
     if (subscribed && publisher) {
       publisher.publish(CHANNEL_EVENT, JSON.stringify(event)).catch((err) => {
