@@ -773,9 +773,28 @@ function quickOddsHtml(e, group, isLive) {
     (entriesFiltered.length === 2 && counts.h >= 1 && counts.a >= 1) ||
     (entriesFiltered.length === 2 && looksLikeTwoWayParticipants(entriesFiltered[0], entriesFiltered[1], e));
   if (!looksOk) {
-    // Qualquer outro caso (1 botão só, 2 botões sem casa/fora, 3 botões de BTTS etc.)
-    // mostra "Suspenso" em vez de odds descontextualizadas.
-    return SUSPENDED_QUICK_ODDS_HTML(e);
+    // ⚠️ CORREÇÃO (2026-08-27, migração para "onexbet"): último recurso, só para ténis e só
+    // quando restam exatamente 2 seleções ativas com odds reais E `group` é literalmente
+    // e.odds[0] — ou seja, o PRÓPRIO backend (orderMarketsForSport em client.ts, baseado no
+    // nome/canonicalMarket do mercado, nunca na etiqueta da seleção) já ordenou este mercado
+    // como o principal, não é uma escolha às cegas do frontend. Bug real reportado: no ténis
+    // (desporto sem "X"/empate, por isso classifyHdaLabel nunca pode bater aqui — só
+    // looksLikeTwoWayParticipants podia validar) a etiqueta do jogador vinda da onexbet deixou
+    // de bater com e.home/e.away (isParticipantLabel) o suficiente para looksOk validar,
+    // fazendo o mercado principal aparecer sempre "Suspenso" no cartão mesmo genuinamente ativo
+    // — confirmado pelo utilizador: a página de mercado completa (que não depende deste heurístico,
+    // mostra sempre o rótulo REAL de cada seleção) alternava normalmente entre odds reais e
+    // suspenso, mas o cartão ficava preso em "Suspenso" sempre. Mostra as seleções com o rótulo
+    // que já trazem (nunca inventa nem troca qual é casa/fora, só confia que são as 2 únicas
+    // opções de um moneyline real) em vez de esconder odds genuinamente ativas.
+    const NO_DRAW_SPORTS = new Set(["tennis"]);
+    const isBackendPrimaryFallback = e.odds?.[0] === group;
+    const lastResortOk = NO_DRAW_SPORTS.has(e.sport) && entriesFiltered.length === 2 && isBackendPrimaryFallback;
+    if (!lastResortOk) {
+      // Qualquer outro caso (1 botão só, 2 botões sem casa/fora, 3 botões de BTTS etc.)
+      // mostra "Suspenso" em vez de odds descontextualizadas.
+      return SUSPENDED_QUICK_ODDS_HTML(e);
+    }
   }
   if (entriesFiltered.some(([, sel]) => isExtremeFavoriteOdd(sel.odd))) return BET_NOW_QUICK_ODDS_HTML;
 
