@@ -4,7 +4,7 @@ import { fetchEventsFlat } from "../pulsescore/client";
 import { getSportmonksFootballPrematch } from "../sportmonks/prematch";
 import type { LiveEvent, Sport } from "../types";
 
-const CACHE_TTL_MS = 45_000;
+const CACHE_TTL_MS = 15_000;
 const cache = new Map<string, { events: LiveEvent[]; fetchedAt: number }>();
 
 export interface PrematchResult {

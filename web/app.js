@@ -627,11 +627,9 @@ function normalizeOddValue(raw) {
 // Devolve "h" "d" "a" ou null. Usa palavras mais comuns em pt/en 1x2 / moneyline.
 function classifyHdaLabel(labelRaw) {
   const rawOrig = String(labelRaw ?? "").trim();
-  // Fix E (odds altas de handicap): REJEITA QUALQUER label que contenha
-  // sinais de linha (+ / − / -) ou dígitos. Handicap e O/U com linha extrema
-  // (ex: "Casa +5.5") têm odds absurdas (151.00) que NUNCA pertencem ao
-  // mercado principal 1X2/Moneyline puro.
-  if (/[+\-−0-9]/.test(rawOrig)) return null;
+  // Rejeita só labels com cara de LINHA/handicap ("Casa +5.5", "Away -1", "Over 2.5"), mas
+  // preserva os códigos puros "1"/"X"/"2" usados pela Sportmonks no mercado principal ao vivo.
+  if (/[+\-−]\s*\d/.test(rawOrig) || /^(over|under)\s*\d/i.test(rawOrig)) return null;
   const s = rawOrig
     .toLowerCase()
     // Remove quaisquer anexos de linha (ex: "Casa -1.5" → "casa", "Home +0.5" → "home")
@@ -639,7 +637,7 @@ function classifyHdaLabel(labelRaw) {
     .trim();
   if (!s) return null;
   if (["1", "home", "casa", "casa.", "homes", "h"].includes(s)) return "h";
-  if (["x", "2", "draw", "tie", "empate", "empates", "draws", "ties", "d"].includes(s) || /^draw\b|^empate\b|^tie\b/.test(s)) return "d";
+  if (["x", "draw", "tie", "empate", "empates", "draws", "ties", "d"].includes(s) || /^draw\b|^empate\b|^tie\b/.test(s)) return "d";
   if (["2", "away", "fora", "aways", "a", "visitante"].includes(s)) return "a";
   return null;
 }

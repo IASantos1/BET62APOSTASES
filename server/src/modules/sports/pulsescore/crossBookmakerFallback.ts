@@ -38,7 +38,7 @@ import { MARKET_ROUTING, MARKET_ROUTING_BOOKMAKERS, VALID_SPORTS_BY_ROUTING_ID, 
  * por até 30x o normal, ver docs/SPORTS_DATA.md).
  */
 
-const CACHE_TTL_MS = 60_000;
+const CACHE_TTL_MS = 15_000;
 // Duas proteções de custo distintas: um mercado/estatística sem cobertura em lado nenhum não
 // pode gastar sozinho o orçamento todo (MAX_BOOKMAKERS_TRIED_PER_ITEM, aplicado individualmente
 // a cada mercado/campo em falta) — sem isto, um mercado muito específico (ex: "assists", com

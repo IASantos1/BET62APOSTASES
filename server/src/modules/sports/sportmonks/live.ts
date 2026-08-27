@@ -121,10 +121,11 @@ async function pollOddsOnce() {
     const events: LiveEvent[] = [];
     fixtures.forEach((fixture, i) => {
       const oddsResult = oddsResults[i]!;
+      const existing = hybridSportsService.getById(`sportmonks:${fixture.id}`);
       if (oddsResult.status === "rejected") {
-        logger.warn({ err: String(oddsResult.reason).slice(0, 200), fixtureId: fixture.id }, "Sportmonks: falha ao obter odds ao vivo (inplay) para um jogo — fica sem mercados neste ciclo");
+        logger.warn({ err: String(oddsResult.reason).slice(0, 200), fixtureId: fixture.id }, "Sportmonks: falha ao obter odds ao vivo (inplay) para um jogo — mantém odds anteriores neste ciclo");
       }
-      const odds = oddsResult.status === "fulfilled" ? oddsResult.value : [];
+      const odds = oddsResult.status === "fulfilled" ? oddsResult.value : existing?.odds ?? [];
       const evt = normalizeLiveFixture(fixture, odds);
       if (evt) events.push(evt);
     });

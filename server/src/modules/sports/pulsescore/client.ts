@@ -255,6 +255,10 @@ interface PulsescoreEvent {
   matchClock?: PulsescoreMatchClock;
   statistics?: PulsescoreStatistics;
   score?: PulsescoreScore;
+  moreInfo?: {
+    currentPeriod?: string;
+    gamePoints?: { home?: string | number; away?: string | number };
+  };
 }
 interface PulsescoreLeague {
   name: string;
@@ -689,10 +693,24 @@ export function sortNumericMarketFamilies<T extends { rawName?: string; canonica
 // a desaparecer mesmo depois deste "fallback string" ser adicionado, o que sugere que `e.score`
 // pode estar totalmente ausente nesse instante (não apenas não-numérico). O log abaixo, com o
 // `sport === "tennis"`, serve para capturar a forma real na próxima vez que acontecer.
-function parsePulsescoreScore(score: PulsescoreScore | undefined, sport: Sport): { homeScore?: number | string; awayScore?: number | string } {
+function parseTennisGamePoints(
+  sport: Sport,
+  moreInfo: PulsescoreEvent["moreInfo"] | undefined
+): { homeScore?: number | string; awayScore?: number | string } {
+  if (sport !== "tennis") return {};
+  const gp = moreInfo?.gamePoints;
+  if (gp?.home == null || gp?.away == null) return {};
+  return { homeScore: gp.home, awayScore: gp.away };
+}
+
+function parsePulsescoreScore(
+  score: PulsescoreScore | undefined,
+  sport: Sport,
+  moreInfo?: PulsescoreEvent["moreInfo"]
+): { homeScore?: number | string; awayScore?: number | string } {
   if (!score || score.home == null || score.away == null) {
     if (sport === "tennis") logger.info({ score }, "Pulsescore: ténis sem score.home/away parseável (possível estado de vantagem)");
-    return {};
+    return parseTennisGamePoints(sport, moreInfo);
   }
   const h = Number(score.home);
   const a = Number(score.away);
@@ -777,7 +795,7 @@ function normalizeEvent(e: PulsescoreEvent, sport: Sport, bookmakerSlug?: string
     // próprio REST /live-events) — indefinido se a bookmaker atual não os devolver (ex: a
     // anterior "10bet"), caso em que o frontend esconde a linha de placar em vez de inventar
     // um "0-0".
-    ...parsePulsescoreScore(e.score, sport),
+    ...parsePulsescoreScore(e.score, sport, e.moreInfo),
     minuteOrPeriod: formatMatchClock(e.matchClock, e.live ? "AO VIVO" : ""),
     status: e.live ? "live" : "scheduled",
     odds: orderedMarkets.map((m) => normalizeMarket(m, bm)),
