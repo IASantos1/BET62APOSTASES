@@ -241,6 +241,10 @@ function groupOddsIntoMarkets(odds: SportmonksOdd[] | undefined): LiveOdds[] {
     result.push({
       market: first.market?.name ?? first.market_description ?? `Mercado ${first.market_id}`,
       canonicalMarket: first.market?.developer_name,
+      period: inferSportmonksMarketPeriod({
+        market: first.market?.name ?? first.market_description ?? `Mercado ${first.market_id}`,
+        canonicalMarket: first.market?.developer_name,
+      }),
       isActive: group.some((o) => !o.stopped),
       line: first.total ? Number(first.total) : first.handicap ? Number(first.handicap) : undefined,
       selections,
@@ -268,6 +272,20 @@ const PRIMARY_DISPLAY_REGEXES: RegExp[] = [
   /tempo\s*inteiro\s*resultado/i,
   /ft\s*result/i,
 ];
+
+function inferSportmonksMarketPeriod(market: Pick<LiveOdds, "market" | "canonicalMarket">): string | undefined {
+  const raw = `${market.canonicalMarket ?? ""} ${market.market ?? ""}`.toLowerCase();
+  if (!raw.trim()) return undefined;
+  if (/2nd half|second half|\b2t\b|\b2ht\b|2.\s*tempo/.test(raw)) return "second_half";
+  if (/1st half|first half|\b1t\b|\b1ht\b|1.\s*tempo|half.?time/.test(raw)) return "first_half";
+  if (/full.?time|tempo\s*inteiro|\bft\b|90\s*min/.test(raw)) return "fulltime";
+  return undefined;
+}
+
+function isFulltimePrimaryMarket(market: LiveOdds): boolean {
+  return (market.period ?? inferSportmonksMarketPeriod(market)) === "fulltime";
+}
+
 function isPrimaryMarketName(market: LiveOdds): boolean {
   if (market.canonicalMarket && PRIMARY_CANONICAL_TOKENS.test(market.canonicalMarket)) return true;
   for (const re of PRIMARY_DISPLAY_REGEXES) if (re.test(market.market)) return true;
@@ -304,7 +322,7 @@ function hasDrawSelection(m: LiveOdds): boolean {
 // vez do 1X2 — reportado pelo utilizador com um screenshot real da página Destaques a mostrar
 // exatamente isso.
 function orderSportmonksMarketsWithPrimaryFirst(markets: LiveOdds[]): LiveOdds[] {
-  const primaryIdx = markets.findIndex((market) => isPrimaryMarketName(market) || looksLikePrimaryThreeWayMarket(market));
+  const primaryIdx = markets.findIndex((market) => (isPrimaryMarketName(market) || looksLikePrimaryThreeWayMarket(market)) && isFulltimePrimaryMarket(market));
   if (primaryIdx > 0) {
     const ordered = [...markets];
     const [primary] = ordered.splice(primaryIdx, 1);
@@ -312,6 +330,15 @@ function orderSportmonksMarketsWithPrimaryFirst(markets: LiveOdds[]): LiveOdds[]
     return ordered;
   }
   if (primaryIdx === 0) return markets;
+
+  const fallbackPrimaryIdx = markets.findIndex((market) => isPrimaryMarketName(market) || looksLikePrimaryThreeWayMarket(market));
+  if (fallbackPrimaryIdx > 0) {
+    const ordered = [...markets];
+    const [primary] = ordered.splice(fallbackPrimaryIdx, 1);
+    ordered.unshift(primary!);
+    return ordered;
+  }
+  if (fallbackPrimaryIdx === 0) return markets;
 
   // Fallback: nenhum principal reconhecido. Empurra para trás os mercados que têm Empate como
   // seleção mas número de seleções != 3. Um 1X2 verdadeiro deve ter CASA / EMPATE / FORA (3).

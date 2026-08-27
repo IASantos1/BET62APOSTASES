@@ -70,7 +70,7 @@
   // =============================================================================
   function buildStadium(THREE) {
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x020504);
+    scene.background = new THREE.Color(0x18382a);
 
     const camera = new THREE.PerspectiveCamera(43, 1, 0.1, 1000);
     camera.position.set(0, 46, 122);
@@ -82,7 +82,7 @@
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.72;
+    renderer.toneMappingExposure = 1.18;
 
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -551,7 +551,7 @@
     standBox(0.16, 0.16, 112, 112, 17.5, 0, railMaterial);
 
     function standLight(x, z) {
-      const l = new THREE.PointLight(0xcfe9ff, 0.1, 38);
+      const l = new THREE.PointLight(0xcfe9ff, 0.22, 48);
       l.position.set(x, 14, z);
       standsGroup.add(l);
     }
@@ -650,7 +650,7 @@
           const outer = new THREE.Mesh(new THREE.SphereGeometry(1.4, 16, 16), glowOuterMat);
           outer.position.set(cx, 24.75 + ry, 3.55);
           tGroup.add(outer);
-          const spot = new THREE.SpotLight(0xfff2dc, 0.35, 160, Math.PI / 5.5, 0.45, 1);
+          const spot = new THREE.SpotLight(0xfff2dc, 0.7, 190, Math.PI / 5.5, 0.42, 1);
           spot.position.set(cx, 24.7 + ry, 3.6);
           spot.target.position.set(-x * 0.1, 0, -z * 0.25);
           tGroup.add(spot);
@@ -664,7 +664,7 @@
     lightTower(52, -98);
 
     function flood(x, z) {
-      const l = new THREE.PointLight(0xffffff, 0.38, 85);
+      const l = new THREE.PointLight(0xffffff, 0.78, 110);
       l.position.set(x, 32, z);
       scene.add(l);
     }
@@ -674,8 +674,8 @@
     flood(55, 38);
 
     // ---- iluminação geral ----
-    scene.add(new THREE.HemisphereLight(0xe8f4ff, 0x031008, 0.46));
-    const main = new THREE.DirectionalLight(0xffffff, 1.05);
+    scene.add(new THREE.HemisphereLight(0xf3fbff, 0x0d2417, 0.9));
+    const main = new THREE.DirectionalLight(0xffffff, 1.65);
     main.position.set(20, 85, 30);
     main.castShadow = true;
     main.shadow.mapSize.width = 2048;
@@ -685,9 +685,12 @@
     main.shadow.camera.top = 80;
     main.shadow.camera.bottom = -80;
     scene.add(main);
-    const fill = new THREE.DirectionalLight(0x86a8c4, 0.06);
+    const fill = new THREE.DirectionalLight(0xb9d7ea, 0.42);
     fill.position.set(-60, 45, -50);
     scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xdff5e7, 0.24);
+    rim.position.set(0, 28, 90);
+    scene.add(rim);
 
     // =========================================================================
     //  BOLA + INDICADORES REAIS — nada aqui é decoração; tudo é movido pelos
