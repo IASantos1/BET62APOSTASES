@@ -3,7 +3,7 @@ import WebSocket from "ws";
 import { env } from "../../../config/env";
 import { logger } from "../../../lib/logger";
 import type { LiveEvent, LiveOdds, LiveSelection, Sport } from "../types";
-import { SPORT_SLUGS, bookmakerFor, orderMarketsWithPrimaryFirst, sortNumericMarketFamilies, fetchLiveSportsUnionAllBookmakers } from "./client";
+import { SPORT_SLUGS, bookmakerFor, orderMarketsForSport, sortNumericMarketFamilies, fetchLiveSportsUnionAllBookmakers } from "./client";
 import { acquireDistributedLock, refreshDistributedLock } from "../../../lib/redis";
 
 const LOCK_KEY = "bet62:locks:pulsescore-ws";
@@ -89,7 +89,7 @@ interface WsEvent {
   country?: string;
   matchClock?: WsMatchClock;
   statistics?: { football?: { home?: WsTeamStats; away?: WsTeamStats }; sets?: WsSetsStats };
-  moreInfo?: { currentPeriod?: string; gamePoints?: { home?: string | number; away?: string | number } };
+  moreInfo?: { currentPeriod?: string; gamePoints?: string | number | { home?: string | number; away?: string | number } };
 }
 interface WsFrame {
   type?: string; // "connected" handshake frame
@@ -115,7 +115,17 @@ function parseWsTennisGamePoints(
 ): { homeScore?: number | string; awayScore?: number | string } {
   if (sport !== "tennis") return {};
   const gp = moreInfo?.gamePoints;
-  if (gp?.home == null || gp?.away == null) return {};
+  if (gp == null) return {};
+  if (typeof gp === "string" || typeof gp === "number") {
+    const [homeRaw, awayRaw] = String(gp)
+      .split(":")
+      .map((part) => part.trim());
+    if (!homeRaw || !awayRaw) return {};
+    const homeScore = Number.isNaN(Number(homeRaw)) ? homeRaw : Number(homeRaw);
+    const awayScore = Number.isNaN(Number(awayRaw)) ? awayRaw : Number(awayRaw);
+    return { homeScore, awayScore };
+  }
+  if (gp.home == null || gp.away == null) return {};
   return { homeScore: gp.home, awayScore: gp.away };
 }
 
@@ -185,7 +195,7 @@ function normalizeWsMarket(m: WsMarket): LiveOdds {
 }
 
 function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
-  const markets = sortNumericMarketFamilies(orderMarketsWithPrimaryFirst(e.markets ?? []));
+  const markets = sortNumericMarketFamilies(orderMarketsForSport(sport, e.markets ?? []));
   const football = e.statistics?.football;
   const sets = e.statistics?.sets;
   const scoreData = parseScore(e.score, sport, e.moreInfo);

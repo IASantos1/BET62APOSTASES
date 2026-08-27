@@ -257,7 +257,7 @@ interface PulsescoreEvent {
   score?: PulsescoreScore;
   moreInfo?: {
     currentPeriod?: string;
-    gamePoints?: { home?: string | number; away?: string | number };
+    gamePoints?: string | number | { home?: string | number; away?: string | number };
   };
 }
 interface PulsescoreLeague {
@@ -642,6 +642,45 @@ export function orderMarketsWithPrimaryFirst<T extends { canonicalMarket?: strin
   return withoutTie.length ? [...withoutTie, ...withTie] : markets;
 }
 
+function normalizePeriod(period?: string): string {
+  return String(period ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+}
+
+function isFullTimePeriod(period?: string): boolean {
+  const normalized = normalizePeriod(period);
+  return normalized === "" || normalized === "full_time" || normalized === "fulltime" || normalized === "ft";
+}
+
+function tennisMarketPriority(market: { canonicalMarket?: string; period?: string }): number {
+  const canonical = String(market.canonicalMarket ?? "").trim().toLowerCase();
+  const fullTimeBonus = isFullTimePeriod(market.period) ? 100 : 0;
+  if (PRIMARY_MARKET_NAMES.has(canonical)) return fullTimeBonus + 30;
+  if (canonical === "total_games") return fullTimeBonus + 20;
+  if (canonical === "game_handicap") return fullTimeBonus + 10;
+  return fullTimeBonus;
+}
+
+export function orderMarketsForSport<
+  T extends {
+    canonicalMarket?: string;
+    selections?: { canonicalOutcome?: string; rawName?: string }[];
+    period?: string;
+  },
+>(sport: Sport, markets: T[]): T[] {
+  if (sport !== "tennis") return orderMarketsWithPrimaryFirst(markets);
+  return markets
+    .map((market, index) => ({ market, index }))
+    .sort((a, b) => {
+      const scoreDiff = tennisMarketPriority(b.market) - tennisMarketPriority(a.market);
+      if (scoreDiff !== 0) return scoreDiff;
+      return a.index - b.index;
+    })
+    .map(({ market }) => market);
+}
+
 // A ordem dos mercados dentro de uma "família" (a mesma linha de Mais/Menos repetida para
 // vários valores, ex: "Over/Under 0.5 Goals"/"Over/Under 1.5 Goals"/...) vinda da bookmaker é
 // arbitrária — CONFIRMADO numa captura real: chegou "0.5, 1.5, 4.5, 2.5, 3.5", fora de ordem.
@@ -699,7 +738,17 @@ function parseTennisGamePoints(
 ): { homeScore?: number | string; awayScore?: number | string } {
   if (sport !== "tennis") return {};
   const gp = moreInfo?.gamePoints;
-  if (gp?.home == null || gp?.away == null) return {};
+  if (gp == null) return {};
+  if (typeof gp === "string" || typeof gp === "number") {
+    const [homeRaw, awayRaw] = String(gp)
+      .split(":")
+      .map((part) => part.trim());
+    if (!homeRaw || !awayRaw) return {};
+    const homeScore = Number.isNaN(Number(homeRaw)) ? homeRaw : Number(homeRaw);
+    const awayScore = Number.isNaN(Number(awayRaw)) ? awayRaw : Number(awayRaw);
+    return { homeScore, awayScore };
+  }
+  if (gp.home == null || gp.away == null) return {};
   return { homeScore: gp.home, awayScore: gp.away };
 }
 
@@ -784,7 +833,7 @@ function normalizeEvent(e: PulsescoreEvent, sport: Sport, bookmakerSlug?: string
   const bm = bookmakerSlug ?? bookmakerFor(sport);
   // Já não filtra mercados inativos aqui — passam para o frontend com isActive:false para
   // aparecerem suspensos (não clicáveis) em vez de desaparecerem silenciosamente.
-  const orderedMarkets = sortNumericMarketFamilies(orderMarketsWithPrimaryFirst(withSyntheticMoneyline(e.markets)));
+  const orderedMarkets = sortNumericMarketFamilies(orderMarketsForSport(sport, withSyntheticMoneyline(e.markets)));
   const scoreData = parsePulsescoreScore(e.score, sport, e.moreInfo);
   if (sport === "tennis" && e.statistics?.sets && (scoreData.homeScore == null || scoreData.awayScore == null)) {
     logger.info(
