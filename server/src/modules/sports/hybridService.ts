@@ -24,7 +24,7 @@ const REMOVE_GRACE_MS = 90_000;
 function tennisPointRank(value: LiveEvent["homeScore"] | LiveEvent["awayScore"]): number | null {
   if (value == null) return null;
   const normalized = String(value).trim().toLowerCase();
-  return Object.prototype.hasOwnProperty.call(TENNIS_POINT_RANK, normalized) ? TENNIS_POINT_RANK[normalized] : null;
+  return Object.prototype.hasOwnProperty.call(TENNIS_POINT_RANK, normalized) ? (TENNIS_POINT_RANK[normalized] ?? null) : null;
 }
 
 function sameNumericArrays(a: number[] | undefined, b: number[] | undefined): boolean {
