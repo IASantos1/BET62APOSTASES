@@ -711,6 +711,23 @@ function looksLikeTwoWayParticipants(entryA, entryB, e) {
 function classifySelection(label, sel) {
   return classifyHdaLabel(label) ?? classifyHdaLabel(sel && sel.canonicalName);
 }
+
+function inferPrimaryMarketPeriod(group) {
+  const raw = String(group?.period ?? `${group?.canonicalMarket ?? ""} ${group?.market ?? ""}`).toLowerCase();
+  if (!raw.trim()) return "";
+  if (/2nd half|second half|\b2t\b|\b2ht\b|2.\s*tempo/.test(raw)) return "second_half";
+  if (/1st half|first half|\b1t\b|\b1ht\b|1.\s*tempo|half.?time/.test(raw)) return "first_half";
+  if (/full.?time|tempo\s*inteiro|\bft\b|90\s*min/.test(raw)) return "fulltime";
+  return "";
+}
+
+function scorePrimaryMarketCandidate(group) {
+  const period = inferPrimaryMarketPeriod(group);
+  if (period === "fulltime") return 3;
+  if (!period) return 2;
+  return 1;
+}
+
 function quickOddsHtml(e, group, isLive) {
   if (!group?.selections || !group.isActive) return SUSPENDED_QUICK_ODDS_HTML(e);
 
@@ -765,6 +782,8 @@ function quickOddsHtml(e, group, isLive) {
 // os callers usam `?? e.odds?.[0]` para ficar exatamente como 01e8626. NUNCA destrói UX.
 function safeFindPrimaryMarket(e) {
   if (!e || !Array.isArray(e.odds) || !e.odds.length) return undefined;
+  let best = undefined;
+  let bestScore = -1;
   for (let gIdx = 0; gIdx < e.odds.length; gIdx++) {
     const g = e.odds[gIdx];
     if (!g || !g.selections || g.isActive === false) continue;
@@ -785,12 +804,35 @@ function safeFindPrimaryMarket(e) {
     }
     if (!grupoValido) continue;
     const totalHda = h + d + a;
-    if (sels.length === 3 && totalHda >= 2) return g;
-    if (sels.length === 2 && h >= 1 && a >= 1) return g;
+    if (sels.length === 3 && totalHda >= 2) {
+      const score = scorePrimaryMarketCandidate(g);
+      if (score > bestScore) {
+        best = g;
+        bestScore = score;
+        if (score >= 3) break;
+      }
+      continue;
+    }
+    if (sels.length === 2 && h >= 1 && a >= 1) {
+      const score = scorePrimaryMarketCandidate(g);
+      if (score > bestScore) {
+        best = g;
+        bestScore = score;
+        if (score >= 3) break;
+      }
+      continue;
+    }
     // Ténis/moneylines sem "Home"/"Away" — ver looksLikeTwoWayParticipants acima.
-    if (sels.length === 2 && looksLikeTwoWayParticipants(sels[0], sels[1], e)) return g;
+    if (sels.length === 2 && looksLikeTwoWayParticipants(sels[0], sels[1], e)) {
+      const score = scorePrimaryMarketCandidate(g);
+      if (score > bestScore) {
+        best = g;
+        bestScore = score;
+        if (score >= 3) break;
+      }
+    }
   }
-  return undefined;
+  return best;
 }
 
 // Setas de subida/descida das odds: guarda o último valor visto por seleção (mesma chave
