@@ -30,8 +30,9 @@ const LOCK_REFRESH_MS = 30_000;
  * isso nada fica por sondar — o WS é um upgrade de latência para os desportos no topo, não um
  * substituto.
  */
-const REFRESH_INTERVAL_MS = 60_000;
+const REFRESH_INTERVAL_MS = 15_000;
 const RECONNECT_DELAY_MS = 5_000;
+const PRIORITY_WS_SPORTS: Sport[] = ["tennis"];
 
 // Bet365 alone uses a versioned path (/api/v3/bet365/ws/live); every other bookmaker, including
 // "paddypower" (the default here) and "unibetau" (used for Fórmula 1), is unversioned.
@@ -193,6 +194,12 @@ function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
   };
 }
 
+function prioritizeWsSports(candidates: Sport[], maxConnections: number): Sport[] {
+  const prioritized = PRIORITY_WS_SPORTS.filter((sport) => candidates.includes(sport));
+  const remaining = candidates.filter((sport) => !prioritized.includes(sport));
+  return [...prioritized, ...remaining].slice(0, maxConnections);
+}
+
 // WebSocket close codes the server won't recover from on its own — retrying is pointless.
 const CLOSE_CODES_NO_RETRY = new Set([4001, 4003, 4004, 4010, 4029]);
 
@@ -247,7 +254,7 @@ class PulsescoreWsManager extends EventEmitter {
       // o desporto com mais eventos) e ficava a competir com o poller da Sportmonks pelo mesmo
       // snapshot em hybridService.ts.
       const candidates = env.FOOTBALL_PROVIDER === "sportmonks" ? liveSports.filter((s) => s !== "football") : liveSports;
-      targets = candidates.slice(0, this.maxConnections);
+      targets = prioritizeWsSports(candidates, this.maxConnections);
     } catch (err) {
       logger.warn({ err }, "Pulsescore WS: falha ao decidir a que desportos ligar, a manter ligações atuais");
       return;

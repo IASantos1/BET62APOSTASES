@@ -75,16 +75,21 @@ class HybridSportsService extends EventEmitter {
       const liveSports = await fetchLiveSportsUnionAllBookmakers();
       for (const sport of liveSports) live.add(sport);
 
-      for (const sport of live) {
-        if (sportmonksOwnsFootball && sport === "football") continue;
-        if (wsCovered.has(sport)) continue; // já coberto pelo WebSocket, REST duplicaria
-        try {
-          const events = await fetchLiveEvents(sport, { maxPages: 2 });
-          this.applySportSnapshot(sport, events);
-        } catch (err) {
-          logger.warn({ err, sport }, "Pulsescore: falha ao obter eventos ao vivo para este desporto");
-        }
-      }
+      const uncoveredSports = [...live].filter((sport) => {
+        if (sportmonksOwnsFootball && sport === "football") return false;
+        if (wsCovered.has(sport)) return false; // já coberto pelo WebSocket, REST duplicaria
+        return true;
+      });
+      await Promise.all(
+        uncoveredSports.map(async (sport) => {
+          try {
+            const events = await fetchLiveEvents(sport, { maxPages: 2 });
+            this.applySportSnapshot(sport, events);
+          } catch (err) {
+            logger.warn({ err, sport }, "Pulsescore: falha ao obter eventos ao vivo para este desporto");
+          }
+        })
+      );
     } catch (err) {
       logger.warn({ err }, "Pulsescore: falha ao obter live-events/sports");
     }
