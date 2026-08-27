@@ -162,19 +162,13 @@ export const SLUG_TO_SPORT: Partial<Record<string, Sport>> = Object.fromEntries(
   (Object.entries(SPORT_SLUGS) as [Sport, string][]).map(([sport, slug]) => [slug, sport])
 );
 
-// CONFIRMED via a documentação oficial da Pulsescore ("Esportes válidos por casa de apostas"):
-// a 10Bet(CO.UK) não lista Fórmula 1 entre os desportos suportados, mas a Unibet AU lista — daí
-// a Fórmula 1 usar um bookmaker diferente de todos os outros desportos.
-// Beisebol mudou para "bet365": amostra real de /bet365/live-events?sport=baseball confirmou
-// score:{home,away} preenchido (ex: Diamondbacks 1-2 Red Sox) — a paddypower não devolve nada de
-// placar/relógio/estatísticas para beisebol (confirmado com dois pedidos reais, sempre vazio).
-// Sem matchClock nem statistics nesta amostra bet365 (nem sequer para innings) — só o placar.
+// Configuração atual pedida pelo utilizador:
+// - quase todos os desportos usam a bookmaker primária global (`onexbet`, ver env.ts)
+// - futebol desvia para Sportmonks via FOOTBALL_PROVIDER=sportmonks
+// - Fórmula 1 continua fora desta migração, em Unibet AU, por não haver evidência confirmada de
+//   cobertura equivalente no resto da stack atual.
 const SPORT_BOOKMAKER_OVERRIDE: Partial<Record<Sport, string>> = {
   formula1: "unibetau",
-  baseball: "bet365",
-  basketball: "bet365",
-  tennis: "paddypower",
-  volleyball: "betfair_sportsbook",
 };
 
 export function bookmakerFor(sport: Sport): string {

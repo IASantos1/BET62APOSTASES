@@ -42,10 +42,9 @@ const envSchema = z.object({
   PULSESCORE_API_KEY: z.string().default(""),
   PULSESCORE_REST_URL: z.string().default("https://api.pulsescore.net/api"),
   // Endpoint shape is /{bookmaker}/{sport}/leagues — Pulsescore aggregates odds per bookmaker
-  // source. Switched from "10bet" to "paddypower": confirmed via real /live-events samples that
-  // paddypower's REST live-events already includes matchClock, score and statistics (10bet's
-  // REST did not — see pulsescore/client.ts). Change if a different source is preferred.
-  PULSESCORE_BOOKMAKER: z.string().default("paddypower"),
+  // source. Default primária atual: onexbet para quase todos os desportos; Fórmula 1 fica fora
+  // via SPORT_BOOKMAKER_OVERRIDE em pulsescore/client.ts.
+  PULSESCORE_BOOKMAKER: z.string().default("onexbet"),
 
   // --- API-Football (statistics) ---
   API_FOOTBALL_KEY: z.string().default(""),
@@ -62,7 +61,7 @@ const envSchema = z.object({
   // foi o pedido, por isso continua tudo implementado e pronto a reativar só mudando esta
   // variável de volta, sem alterações de código. Os outros 7 desportos NUNCA passam pela
   // Sportmonks, ficam sempre na Pulsescore.
-  FOOTBALL_PROVIDER: z.enum(["pulsescore", "sportmonks"]).default("pulsescore"),
+  FOOTBALL_PROVIDER: z.enum(["pulsescore", "sportmonks"]).default("sportmonks"),
   SPORTMONKS_API_KEY: z.string().default(""),
   SPORTMONKS_BASE_URL: z.string().default("https://api.sportmonks.com/v3/football"),
   // bet365 (id 2) — confirmado na amostra real enviada pelo utilizador (rounds/{id}?...&filters=
