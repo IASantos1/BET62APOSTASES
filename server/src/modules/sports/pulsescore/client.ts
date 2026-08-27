@@ -174,6 +174,7 @@ const SPORT_BOOKMAKER_OVERRIDE: Partial<Record<Sport, string>> = {
   baseball: "bet365",
   basketball: "bet365",
   tennis: "paddypower",
+  volleyball: "10bet",
 };
 
 export function bookmakerFor(sport: Sport): string {
