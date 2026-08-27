@@ -162,16 +162,13 @@ export const SLUG_TO_SPORT: Partial<Record<string, Sport>> = Object.fromEntries(
   (Object.entries(SPORT_SLUGS) as [Sport, string][]).map(([sport, slug]) => [slug, sport])
 );
 
-// CONFIRMED via a documentação oficial da Pulsescore ("Esportes válidos por casa de apostas"):
-// a 10Bet(CO.UK) não lista Fórmula 1 entre os desportos suportados, mas a Unibet AU lista — daí
-// a Fórmula 1 usar um bookmaker diferente de todos os outros desportos.
-// Beisebol mudou para "bet365": amostra real de /bet365/live-events?sport=baseball confirmou
-// score:{home,away} preenchido (ex: Diamondbacks 1-2 Red Sox) — a paddypower não devolve nada de
-// placar/relógio/estatísticas para beisebol (confirmado com dois pedidos reais, sempre vazio).
-// Sem matchClock nem statistics nesta amostra bet365 (nem sequer para innings) — só o placar.
+// Configuração atual pedida pelo utilizador:
+// - quase todos os desportos usam a bookmaker primária global (`onexbet`, ver env.ts)
+// - futebol desvia para Sportmonks via FOOTBALL_PROVIDER=sportmonks
+// - Fórmula 1 continua fora desta migração, em Unibet AU, por não haver evidência confirmada de
+//   cobertura equivalente no resto da stack atual.
 const SPORT_BOOKMAKER_OVERRIDE: Partial<Record<Sport, string>> = {
   formula1: "unibetau",
-  baseball: "bet365",
 };
 
 export function bookmakerFor(sport: Sport): string {
@@ -258,6 +255,10 @@ interface PulsescoreEvent {
   matchClock?: PulsescoreMatchClock;
   statistics?: PulsescoreStatistics;
   score?: PulsescoreScore;
+  moreInfo?: {
+    currentPeriod?: string;
+    gamePoints?: string | number | { home?: string | number; away?: string | number };
+  };
 }
 interface PulsescoreLeague {
   name: string;
@@ -641,6 +642,45 @@ export function orderMarketsWithPrimaryFirst<T extends { canonicalMarket?: strin
   return withoutTie.length ? [...withoutTie, ...withTie] : markets;
 }
 
+function normalizePeriod(period?: string): string {
+  return String(period ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+}
+
+function isFullTimePeriod(period?: string): boolean {
+  const normalized = normalizePeriod(period);
+  return normalized === "" || normalized === "full_time" || normalized === "fulltime" || normalized === "ft";
+}
+
+function tennisMarketPriority(market: { canonicalMarket?: string; period?: string }): number {
+  const canonical = String(market.canonicalMarket ?? "").trim().toLowerCase();
+  const fullTimeBonus = isFullTimePeriod(market.period) ? 100 : 0;
+  if (PRIMARY_MARKET_NAMES.has(canonical)) return fullTimeBonus + 30;
+  if (canonical === "total_games") return fullTimeBonus + 20;
+  if (canonical === "game_handicap") return fullTimeBonus + 10;
+  return fullTimeBonus;
+}
+
+export function orderMarketsForSport<
+  T extends {
+    canonicalMarket?: string;
+    selections?: { canonicalOutcome?: string; rawName?: string }[];
+    period?: string;
+  },
+>(sport: Sport, markets: T[]): T[] {
+  if (sport !== "tennis") return orderMarketsWithPrimaryFirst(markets);
+  return markets
+    .map((market, index) => ({ market, index }))
+    .sort((a, b) => {
+      const scoreDiff = tennisMarketPriority(b.market) - tennisMarketPriority(a.market);
+      if (scoreDiff !== 0) return scoreDiff;
+      return a.index - b.index;
+    })
+    .map(({ market }) => market);
+}
+
 // A ordem dos mercados dentro de uma "família" (a mesma linha de Mais/Menos repetida para
 // vários valores, ex: "Over/Under 0.5 Goals"/"Over/Under 1.5 Goals"/...) vinda da bookmaker é
 // arbitrária — CONFIRMADO numa captura real: chegou "0.5, 1.5, 4.5, 2.5, 3.5", fora de ordem.
@@ -692,10 +732,34 @@ export function sortNumericMarketFamilies<T extends { rawName?: string; canonica
 // a desaparecer mesmo depois deste "fallback string" ser adicionado, o que sugere que `e.score`
 // pode estar totalmente ausente nesse instante (não apenas não-numérico). O log abaixo, com o
 // `sport === "tennis"`, serve para capturar a forma real na próxima vez que acontecer.
-function parsePulsescoreScore(score: PulsescoreScore | undefined, sport: Sport): { homeScore?: number | string; awayScore?: number | string } {
+function parseTennisGamePoints(
+  sport: Sport,
+  moreInfo: PulsescoreEvent["moreInfo"] | undefined
+): { homeScore?: number | string; awayScore?: number | string } {
+  if (sport !== "tennis") return {};
+  const gp = moreInfo?.gamePoints;
+  if (gp == null) return {};
+  if (typeof gp === "string" || typeof gp === "number") {
+    const [homeRaw, awayRaw] = String(gp)
+      .split(":")
+      .map((part) => part.trim());
+    if (!homeRaw || !awayRaw) return {};
+    const homeScore = Number.isNaN(Number(homeRaw)) ? homeRaw : Number(homeRaw);
+    const awayScore = Number.isNaN(Number(awayRaw)) ? awayRaw : Number(awayRaw);
+    return { homeScore, awayScore };
+  }
+  if (gp.home == null || gp.away == null) return {};
+  return { homeScore: gp.home, awayScore: gp.away };
+}
+
+function parsePulsescoreScore(
+  score: PulsescoreScore | undefined,
+  sport: Sport,
+  moreInfo?: PulsescoreEvent["moreInfo"]
+): { homeScore?: number | string; awayScore?: number | string } {
   if (!score || score.home == null || score.away == null) {
     if (sport === "tennis") logger.info({ score }, "Pulsescore: ténis sem score.home/away parseável (possível estado de vantagem)");
-    return {};
+    return parseTennisGamePoints(sport, moreInfo);
   }
   const h = Number(score.home);
   const a = Number(score.away);
@@ -769,7 +833,24 @@ function normalizeEvent(e: PulsescoreEvent, sport: Sport, bookmakerSlug?: string
   const bm = bookmakerSlug ?? bookmakerFor(sport);
   // Já não filtra mercados inativos aqui — passam para o frontend com isActive:false para
   // aparecerem suspensos (não clicáveis) em vez de desaparecerem silenciosamente.
-  const orderedMarkets = sortNumericMarketFamilies(orderMarketsWithPrimaryFirst(withSyntheticMoneyline(e.markets)));
+  const orderedMarkets = sortNumericMarketFamilies(orderMarketsForSport(sport, withSyntheticMoneyline(e.markets)));
+  const scoreData = parsePulsescoreScore(e.score, sport, e.moreInfo);
+  if (sport === "tennis" && e.statistics?.sets && (scoreData.homeScore == null || scoreData.awayScore == null)) {
+    logger.info(
+      {
+        eventId: e.eventId,
+        league: e.league,
+        home: e.home,
+        away: e.away,
+        score: e.score,
+        gamePoints: e.moreInfo?.gamePoints,
+        currentPeriod: e.moreInfo?.currentPeriod,
+        matchClock: e.matchClock,
+        sets: e.statistics.sets,
+      },
+      "Pulsescore REST: ténis sem pontos do game atual; cartão ficará só com sets"
+    );
+  }
   return {
     id: `pulsescore:${e.eventId}`,
     sport,
@@ -780,7 +861,7 @@ function normalizeEvent(e: PulsescoreEvent, sport: Sport, bookmakerSlug?: string
     // próprio REST /live-events) — indefinido se a bookmaker atual não os devolver (ex: a
     // anterior "10bet"), caso em que o frontend esconde a linha de placar em vez de inventar
     // um "0-0".
-    ...parsePulsescoreScore(e.score, sport),
+    ...scoreData,
     minuteOrPeriod: formatMatchClock(e.matchClock, e.live ? "AO VIVO" : ""),
     status: e.live ? "live" : "scheduled",
     odds: orderedMarkets.map((m) => normalizeMarket(m, bm)),

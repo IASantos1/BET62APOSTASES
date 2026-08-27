@@ -3,7 +3,7 @@ import WebSocket from "ws";
 import { env } from "../../../config/env";
 import { logger } from "../../../lib/logger";
 import type { LiveEvent, LiveOdds, LiveSelection, Sport } from "../types";
-import { SPORT_SLUGS, bookmakerFor, orderMarketsWithPrimaryFirst, sortNumericMarketFamilies, fetchLiveSportsUnionAllBookmakers } from "./client";
+import { SPORT_SLUGS, bookmakerFor, orderMarketsForSport, sortNumericMarketFamilies, fetchLiveSportsUnionAllBookmakers } from "./client";
 import { acquireDistributedLock, refreshDistributedLock } from "../../../lib/redis";
 
 const LOCK_KEY = "bet62:locks:pulsescore-ws";
@@ -30,8 +30,9 @@ const LOCK_REFRESH_MS = 30_000;
  * isso nada fica por sondar — o WS é um upgrade de latência para os desportos no topo, não um
  * substituto.
  */
-const REFRESH_INTERVAL_MS = 60_000;
+const REFRESH_INTERVAL_MS = 15_000;
 const RECONNECT_DELAY_MS = 5_000;
+const PRIORITY_WS_SPORTS: Sport[] = ["tennis"];
 
 // Bet365 alone uses a versioned path (/api/v3/bet365/ws/live); every other bookmaker, including
 // "paddypower" (the default here) and "unibetau" (used for Fórmula 1), is unversioned.
@@ -88,6 +89,7 @@ interface WsEvent {
   country?: string;
   matchClock?: WsMatchClock;
   statistics?: { football?: { home?: WsTeamStats; away?: WsTeamStats }; sets?: WsSetsStats };
+  moreInfo?: { currentPeriod?: string; gamePoints?: string | number | { home?: string | number; away?: string | number } };
 }
 interface WsFrame {
   type?: string; // "connected" handshake frame
@@ -107,23 +109,47 @@ interface WsFrame {
 // Pulsescore envia em vantagem ainda não foi confirmado — o placar continuava a desaparecer
 // mesmo depois deste fallback, o que sugere que `score` pode ficar totalmente ausente nesse
 // instante. O log com `sport === "tennis"` serve para capturar a forma real da próxima vez.
-function parseScore(score: WsEvent["score"], sport: Sport): { homeScore?: number | string; awayScore?: number | string } {
+function parseWsTennisGamePoints(
+  sport: Sport,
+  moreInfo: WsEvent["moreInfo"] | undefined
+): { homeScore?: number | string; awayScore?: number | string } {
+  if (sport !== "tennis") return {};
+  const gp = moreInfo?.gamePoints;
+  if (gp == null) return {};
+  if (typeof gp === "string" || typeof gp === "number") {
+    const [homeRaw, awayRaw] = String(gp)
+      .split(":")
+      .map((part) => part.trim());
+    if (!homeRaw || !awayRaw) return {};
+    const homeScore = Number.isNaN(Number(homeRaw)) ? homeRaw : Number(homeRaw);
+    const awayScore = Number.isNaN(Number(awayRaw)) ? awayRaw : Number(awayRaw);
+    return { homeScore, awayScore };
+  }
+  if (gp.home == null || gp.away == null) return {};
+  return { homeScore: gp.home, awayScore: gp.away };
+}
+
+function parseScore(
+  score: WsEvent["score"],
+  sport: Sport,
+  moreInfo?: WsEvent["moreInfo"]
+): { homeScore?: number | string; awayScore?: number | string } {
   if (!score) {
     if (sport === "tennis") logger.info("Pulsescore WS: ténis sem campo score (possível estado de vantagem)");
-    return {};
+    return parseWsTennisGamePoints(sport, moreInfo);
   }
   if (typeof score === "string") {
     const [h, a] = score.split("-").map((p) => Number(p.trim()));
     if (h === undefined || a === undefined || Number.isNaN(h) || Number.isNaN(a)) {
       if (sport === "tennis") logger.info({ score }, "Pulsescore WS: ténis com score em string não parseável");
-      return {};
+      return parseWsTennisGamePoints(sport, moreInfo);
     }
     return { homeScore: h, awayScore: a };
   }
   if (typeof score === "object") {
     if (score.home == null || score.away == null) {
       if (sport === "tennis") logger.info({ score }, "Pulsescore WS: ténis sem score.home/away parseável (possível estado de vantagem)");
-      return {};
+      return parseWsTennisGamePoints(sport, moreInfo);
     }
     const h = Number(score.home);
     const a = Number(score.away);
@@ -169,16 +195,33 @@ function normalizeWsMarket(m: WsMarket): LiveOdds {
 }
 
 function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
-  const markets = sortNumericMarketFamilies(orderMarketsWithPrimaryFirst(e.markets ?? []));
+  const markets = sortNumericMarketFamilies(orderMarketsForSport(sport, e.markets ?? []));
   const football = e.statistics?.football;
   const sets = e.statistics?.sets;
+  const scoreData = parseScore(e.score, sport, e.moreInfo);
+  if (sport === "tennis" && sets && (scoreData.homeScore == null || scoreData.awayScore == null)) {
+    logger.info(
+      {
+        eventId: e.eventId,
+        league: e.league,
+        home: e.home,
+        away: e.away,
+        score: e.score,
+        gamePoints: e.moreInfo?.gamePoints,
+        currentPeriod: e.moreInfo?.currentPeriod,
+        matchClock: e.matchClock,
+        sets,
+      },
+      "Pulsescore WS: ténis sem pontos do game atual; cartão ficará só com sets"
+    );
+  }
   return {
     id: `pulsescore:${e.eventId}`,
     sport,
     league: e.league,
     home: e.home,
     away: e.away,
-    ...parseScore(e.score, sport),
+    ...scoreData,
     minuteOrPeriod: formatWsMatchClock(e.matchClock, e.live === false ? "" : "AO VIVO"),
     status: e.live === false ? "scheduled" : "live",
     odds: markets.map(normalizeWsMarket),
@@ -191,6 +234,12 @@ function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
         ? { home: football?.home ?? {}, away: football?.away ?? {}, sets: sets ? { home: sets.home, away: sets.away, homeServe: sets.homeServe } : undefined }
         : undefined,
   };
+}
+
+function prioritizeWsSports(candidates: Sport[], maxConnections: number): Sport[] {
+  const prioritized = PRIORITY_WS_SPORTS.filter((sport) => candidates.includes(sport));
+  const remaining = candidates.filter((sport) => !prioritized.includes(sport));
+  return [...prioritized, ...remaining].slice(0, maxConnections);
 }
 
 // WebSocket close codes the server won't recover from on its own — retrying is pointless.
@@ -247,7 +296,7 @@ class PulsescoreWsManager extends EventEmitter {
       // o desporto com mais eventos) e ficava a competir com o poller da Sportmonks pelo mesmo
       // snapshot em hybridService.ts.
       const candidates = env.FOOTBALL_PROVIDER === "sportmonks" ? liveSports.filter((s) => s !== "football") : liveSports;
-      targets = candidates.slice(0, this.maxConnections);
+      targets = prioritizeWsSports(candidates, this.maxConnections);
     } catch (err) {
       logger.warn({ err }, "Pulsescore WS: falha ao decidir a que desportos ligar, a manter ligações atuais");
       return;

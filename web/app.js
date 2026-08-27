@@ -627,11 +627,9 @@ function normalizeOddValue(raw) {
 // Devolve "h" "d" "a" ou null. Usa palavras mais comuns em pt/en 1x2 / moneyline.
 function classifyHdaLabel(labelRaw) {
   const rawOrig = String(labelRaw ?? "").trim();
-  // Fix E (odds altas de handicap): REJEITA QUALQUER label que contenha
-  // sinais de linha (+ / − / -) ou dígitos. Handicap e O/U com linha extrema
-  // (ex: "Casa +5.5") têm odds absurdas (151.00) que NUNCA pertencem ao
-  // mercado principal 1X2/Moneyline puro.
-  if (/[+\-−0-9]/.test(rawOrig)) return null;
+  // Rejeita só labels com cara de LINHA/handicap ("Casa +5.5", "Away -1", "Over 2.5"), mas
+  // preserva os códigos puros "1"/"X"/"2" usados pela Sportmonks no mercado principal ao vivo.
+  if (/[+\-−]\s*\d/.test(rawOrig) || /^(over|under)\s*\d/i.test(rawOrig)) return null;
   const s = rawOrig
     .toLowerCase()
     // Remove quaisquer anexos de linha (ex: "Casa -1.5" → "casa", "Home +0.5" → "home")
@@ -639,7 +637,7 @@ function classifyHdaLabel(labelRaw) {
     .trim();
   if (!s) return null;
   if (["1", "home", "casa", "casa.", "homes", "h"].includes(s)) return "h";
-  if (["x", "2", "draw", "tie", "empate", "empates", "draws", "ties", "d"].includes(s) || /^draw\b|^empate\b|^tie\b/.test(s)) return "d";
+  if (["x", "draw", "tie", "empate", "empates", "draws", "ties", "d"].includes(s) || /^draw\b|^empate\b|^tie\b/.test(s)) return "d";
   if (["2", "away", "fora", "aways", "a", "visitante"].includes(s)) return "a";
   return null;
 }
@@ -651,9 +649,38 @@ function classifyHdaLabel(labelRaw) {
 // disponível). Em vez de adivinhar mais vocabulário, confirma-se algo concreto: a label (ou o
 // canonicalName da seleção, ver abaixo) bate (ignorando maiúsculas/espaços) com e.home ou e.away
 // deste MESMO jogo — só um moneyline genuíno tem isso, nunca BTTS/Ímpar-Par/etc.
+function normalizeParticipantName(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.'’]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
 function isParticipantLabel(label, name) {
   if (!label || !name) return false;
-  return String(label).trim().toLowerCase() === String(name).trim().toLowerCase();
+  const a = normalizeParticipantName(label);
+  const b = normalizeParticipantName(name);
+  if (!a || !b) return false;
+  if (a === b) return true;
+
+  const aParts = a.split(" ");
+  const bParts = b.split(" ");
+  const aLast = aParts[aParts.length - 1];
+  const bLast = bParts[bParts.length - 1];
+
+  // Ténis costuma vir misturado entre apelido só ("Kopp"), inicial+apelido ("S Kopp") e nome
+  // completo ("Sandro Kopp"). Para o cartão compacto basta reconhecer que é o MESMO
+  // participante, sem exigir igualdade literal caractere-a-caractere.
+  if (aLast && bLast && aLast === bLast) {
+    if (aParts.length === 1 || bParts.length === 1) return true;
+    const aFirst = aParts[0];
+    const bFirst = bParts[0];
+    if (aFirst && bFirst && aFirst[0] === bFirst[0]) return true;
+  }
+
+  return false;
 }
 // A CHAVE da seleção (rawName da Pulsescore) pode vir truncada/abreviada de forma diferente do
 // nome do participante no evento (ex.: seleção "Vi Sachko" vs e.home "Vitaliy Sachko") — bug real
@@ -684,6 +711,23 @@ function looksLikeTwoWayParticipants(entryA, entryB, e) {
 function classifySelection(label, sel) {
   return classifyHdaLabel(label) ?? classifyHdaLabel(sel && sel.canonicalName);
 }
+
+function inferPrimaryMarketPeriod(group) {
+  const raw = String(group?.period ?? `${group?.canonicalMarket ?? ""} ${group?.market ?? ""}`).toLowerCase();
+  if (!raw.trim()) return "";
+  if (/2nd half|second half|\b2t\b|\b2ht\b|2.\s*tempo/.test(raw)) return "second_half";
+  if (/1st half|first half|\b1t\b|\b1ht\b|1.\s*tempo|half.?time/.test(raw)) return "first_half";
+  if (/full.?time|tempo\s*inteiro|\bft\b|90\s*min/.test(raw)) return "fulltime";
+  return "";
+}
+
+function scorePrimaryMarketCandidate(group) {
+  const period = inferPrimaryMarketPeriod(group);
+  if (period === "fulltime") return 3;
+  if (!period) return 2;
+  return 1;
+}
+
 function quickOddsHtml(e, group, isLive) {
   if (!group?.selections || !group.isActive) return SUSPENDED_QUICK_ODDS_HTML(e);
 
@@ -738,6 +782,8 @@ function quickOddsHtml(e, group, isLive) {
 // os callers usam `?? e.odds?.[0]` para ficar exatamente como 01e8626. NUNCA destrói UX.
 function safeFindPrimaryMarket(e) {
   if (!e || !Array.isArray(e.odds) || !e.odds.length) return undefined;
+  let best = undefined;
+  let bestScore = -1;
   for (let gIdx = 0; gIdx < e.odds.length; gIdx++) {
     const g = e.odds[gIdx];
     if (!g || !g.selections || g.isActive === false) continue;
@@ -758,12 +804,35 @@ function safeFindPrimaryMarket(e) {
     }
     if (!grupoValido) continue;
     const totalHda = h + d + a;
-    if (sels.length === 3 && totalHda >= 2) return g;
-    if (sels.length === 2 && h >= 1 && a >= 1) return g;
+    if (sels.length === 3 && totalHda >= 2) {
+      const score = scorePrimaryMarketCandidate(g);
+      if (score > bestScore) {
+        best = g;
+        bestScore = score;
+        if (score >= 3) break;
+      }
+      continue;
+    }
+    if (sels.length === 2 && h >= 1 && a >= 1) {
+      const score = scorePrimaryMarketCandidate(g);
+      if (score > bestScore) {
+        best = g;
+        bestScore = score;
+        if (score >= 3) break;
+      }
+      continue;
+    }
     // Ténis/moneylines sem "Home"/"Away" — ver looksLikeTwoWayParticipants acima.
-    if (sels.length === 2 && looksLikeTwoWayParticipants(sels[0], sels[1], e)) return g;
+    if (sels.length === 2 && looksLikeTwoWayParticipants(sels[0], sels[1], e)) {
+      const score = scorePrimaryMarketCandidate(g);
+      if (score > bestScore) {
+        best = g;
+        bestScore = score;
+        if (score >= 3) break;
+      }
+    }
   }
-  return undefined;
+  return best;
 }
 
 // Setas de subida/descida das odds: guarda o último valor visto por seleção (mesma chave

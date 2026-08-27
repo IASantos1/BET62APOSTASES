@@ -4,8 +4,27 @@ import { fetchEventsFlat } from "../pulsescore/client";
 import { getSportmonksFootballPrematch } from "../sportmonks/prematch";
 import type { LiveEvent, Sport } from "../types";
 
-const CACHE_TTL_MS = 45_000;
+const CACHE_TTL_MS = 15_000;
 const cache = new Map<string, { events: LiveEvent[]; fetchedAt: number }>();
+const PREMATCH_FUTURE_GRACE_MS = 5 * 60 * 1000;
+
+function isUpcomingPrematchEvent(event: LiveEvent, nowMs = Date.now()): boolean {
+  if (event.status !== "scheduled") return false;
+  if (!event.startTime) return true;
+  const startMs = Date.parse(event.startTime);
+  if (Number.isNaN(startMs)) return true;
+  return startMs >= nowMs - PREMATCH_FUTURE_GRACE_MS;
+}
+
+function sortPrematchByKickoff(events: LiveEvent[]): LiveEvent[] {
+  return [...events].sort((a, b) => {
+    const aMs = a.startTime ? Date.parse(a.startTime) : Number.POSITIVE_INFINITY;
+    const bMs = b.startTime ? Date.parse(b.startTime) : Number.POSITIVE_INFINITY;
+    const safeAMs = Number.isNaN(aMs) ? Number.POSITIVE_INFINITY : aMs;
+    const safeBMs = Number.isNaN(bMs) ? Number.POSITIVE_INFINITY : bMs;
+    return safeAMs - safeBMs;
+  });
+}
 
 export interface PrematchResult {
   events: LiveEvent[];
@@ -71,11 +90,28 @@ export async function getPrematchEvents(sport: Sport, date?: string): Promise<Pr
     // muito menor — os poucos jogos "scheduled" de futebol podem simplesmente não caber nas
     // primeiras 50 entradas devolvidas, mostrando "sem jogos" mesmo havendo muitos agendados.
     // Prioridade explícita do utilizador é o futebol carregar bem — mais páginas só para ele.
-    const maxPages = sport === "football" ? 8 : 2;
+    // Onexbet devolve catálogos grandes para vários desportos (ex: ténis/basquete/MMA com
+    // dezenas de páginas) e a ordenação não é fiável por proximidade do início. Com só 2 páginas,
+    // era fácil apanhar muitos jogos ainda marcados como "scheduled" mas já passados da hora,
+    // que depois o frontend escondia de propósito. Abrimos mais páginas e priorizamos os futuros.
+    const maxPages = sport === "football" ? 8 : 6;
     const all = await fetchEventsFlat(sport, { maxPages });
     const scheduled = all.filter((e) => e.status === "scheduled");
-    cache.set(cacheKey, { events: scheduled, fetchedAt: Date.now() });
-    return { events: scheduled, source: "pulsescore" };
+    const upcoming = sortPrematchByKickoff(scheduled.filter((e) => isUpcomingPrematchEvent(e)));
+    if (scheduled.length > 0 && upcoming.length === 0) {
+      logger.info(
+        {
+          sport,
+          fetched: all.length,
+          scheduled: scheduled.length,
+          firstStartTime: scheduled[0]?.startTime,
+          lastStartTime: scheduled[scheduled.length - 1]?.startTime,
+        },
+        "Pulsescore prematch: vieram jogos agendados, mas todos já passaram da hora de arranque"
+      );
+    }
+    cache.set(cacheKey, { events: upcoming, fetchedAt: Date.now() });
+    return { events: upcoming, source: "pulsescore" };
   } catch (err) {
     logger.warn({ err, sport }, "Pulsescore: falha ao obter pré-jogo, a cair para dados de demonstração");
     return { events: [], source: "unconfigured" };

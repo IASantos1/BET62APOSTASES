@@ -8,6 +8,7 @@ import { resolveFixtureForEvent } from "./mapping/service";
 import { ALL_SPORTS, type LiveEvent, type Sport } from "./types";
 
 const POLL_INTERVAL_MS = 25_000;
+const TENNIS_POINT_RANK: Record<string, number> = { "0": 0, "15": 1, "30": 2, "40": 3, ad: 4, adv: 4, advantage: 4, a: 4 };
 
 // Margem antes de tratar um evento "desaparecido de um snapshot" como mesmo terminado — a
 // Pulsescore não confirma nenhum estado "interrompido"/"atrasado"/"cancelado" (ver
@@ -19,6 +20,58 @@ const POLL_INTERVAL_MS = 25_000;
 // quando ele voltar ao normal"). Bem acima do intervalo de sondagem REST (25s) e de várias
 // frames do WebSocket, para não reagir a uma única falha pontual do feed.
 const REMOVE_GRACE_MS = 90_000;
+
+function tennisPointRank(value: LiveEvent["homeScore"] | LiveEvent["awayScore"]): number | null {
+  if (value == null) return null;
+  const normalized = String(value).trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(TENNIS_POINT_RANK, normalized) ? (TENNIS_POINT_RANK[normalized] ?? null) : null;
+}
+
+function sameNumericArrays(a: number[] | undefined, b: number[] | undefined): boolean {
+  if (!a && !b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((value, idx) => value === b[idx]);
+}
+
+function isSameTennisGameContext(previous: LiveEvent, incoming: LiveEvent): boolean {
+  const prevSets = previous.statistics?.sets;
+  const nextSets = incoming.statistics?.sets;
+  return (
+    previous.minuteOrPeriod === incoming.minuteOrPeriod &&
+    sameNumericArrays(prevSets?.home, nextSets?.home) &&
+    sameNumericArrays(prevSets?.away, nextSets?.away)
+  );
+}
+
+function shouldKeepPreviousTennisPoints(previous: LiveEvent, incoming: LiveEvent): boolean {
+  if (previous.sport !== "tennis" || incoming.sport !== "tennis") return false;
+  if (previous.status !== "live" || incoming.status !== "live") return false;
+  if (!isSameTennisGameContext(previous, incoming)) return false;
+  if (previous.homeScore == null || previous.awayScore == null) return false;
+  if (incoming.homeScore == null || incoming.awayScore == null) return true;
+
+  const prevHome = tennisPointRank(previous.homeScore);
+  const prevAway = tennisPointRank(previous.awayScore);
+  const nextHome = tennisPointRank(incoming.homeScore);
+  const nextAway = tennisPointRank(incoming.awayScore);
+  if (prevHome == null || prevAway == null || nextHome == null || nextAway == null) return false;
+
+  return nextHome + nextAway < prevHome + prevAway;
+}
+
+function mergeTransientTennisScore(previous: LiveEvent | undefined, incoming: LiveEvent): LiveEvent {
+  if (!previous || !shouldKeepPreviousTennisPoints(previous, incoming)) return incoming;
+  logger.info(
+    {
+      eventId: incoming.id,
+      previousScore: `${previous.homeScore}-${previous.awayScore}`,
+      incomingScore: `${incoming.homeScore ?? "?"}-${incoming.awayScore ?? "?"}`,
+      set: incoming.minuteOrPeriod,
+    },
+    "Pulsescore: a manter último ponto válido do ténis no mesmo set"
+  );
+  return { ...incoming, homeScore: previous.homeScore, awayScore: previous.awayScore };
+}
 
 /**
  * Sistema híbrido: Pulsescore fornece odds/resultados ao vivo para futebol, ténis, basquete,
@@ -75,16 +128,21 @@ class HybridSportsService extends EventEmitter {
       const liveSports = await fetchLiveSportsUnionAllBookmakers();
       for (const sport of liveSports) live.add(sport);
 
-      for (const sport of live) {
-        if (sportmonksOwnsFootball && sport === "football") continue;
-        if (wsCovered.has(sport)) continue; // já coberto pelo WebSocket, REST duplicaria
-        try {
-          const events = await fetchLiveEvents(sport, { maxPages: 2 });
-          this.applySportSnapshot(sport, events);
-        } catch (err) {
-          logger.warn({ err, sport }, "Pulsescore: falha ao obter eventos ao vivo para este desporto");
-        }
-      }
+      const uncoveredSports = [...live].filter((sport) => {
+        if (sportmonksOwnsFootball && sport === "football") return false;
+        if (wsCovered.has(sport)) return false; // já coberto pelo WebSocket, REST duplicaria
+        return true;
+      });
+      await Promise.all(
+        uncoveredSports.map(async (sport) => {
+          try {
+            const events = await fetchLiveEvents(sport, { maxPages: 2 });
+            this.applySportSnapshot(sport, events);
+          } catch (err) {
+            logger.warn({ err, sport }, "Pulsescore: falha ao obter eventos ao vivo para este desporto");
+          }
+        })
+      );
     } catch (err) {
       logger.warn({ err }, "Pulsescore: falha ao obter live-events/sports");
     }
@@ -134,8 +192,9 @@ class HybridSportsService extends EventEmitter {
   }
 
   private ingest(evt: LiveEvent) {
-    this.events.set(evt.id, evt);
-    this.emit("event", evt);
+    const merged = mergeTransientTennisScore(this.events.get(evt.id), evt);
+    this.events.set(merged.id, merged);
+    this.emit("event", merged);
   }
 
   /** Ponto de entrada para fontes ao vivo externas ao par WS/REST da Pulsescore — usado pelo
