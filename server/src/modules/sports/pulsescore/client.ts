@@ -172,6 +172,7 @@ export const SLUG_TO_SPORT: Partial<Record<string, Sport>> = Object.fromEntries(
 const SPORT_BOOKMAKER_OVERRIDE: Partial<Record<Sport, string>> = {
   formula1: "unibetau",
   baseball: "bet365",
+  basketball: "bet365",
   tennis: "paddypower",
 };
 
