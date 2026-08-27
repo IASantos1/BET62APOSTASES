@@ -335,10 +335,10 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
 .mt-pulse-marker.away .mt-pulse-icon{background:#fff;border-color:var(--muted)}
 .mt-pulse-name{font-size:.56rem;font-weight:700;color:var(--muted);white-space:nowrap;max-width:64px;overflow:hidden;text-overflow:ellipsis}
 .mt-pulse-labels{display:flex;justify-content:space-between;font-size:.62rem;color:var(--muted);margin-top:2px;padding:0 2px}
-/* Match Tracker: mini campo 3D real (Three.js, ver ensureTracker3D em app.js) com a posição real
-   da bola (Sportmonks ballCoordinates). O <canvas> WebGL vive dentro de .tp-canvas-frame, um
-   contentor com aspect-ratio fixo — mesma técnica já comprovada noutros sítios da app para o
-   conteúdo nunca sair esticado independentemente do motor de renderização. */
+/* Match Tracker: mini campo 2D real (canvas nativo, ver tracker2d.js) com a posição real da bola
+   (Sportmonks ballCoordinates). O <canvas> vive dentro de .tp-canvas-frame, um contentor com
+   aspect-ratio fixo — mesma técnica já comprovada noutros sítios da app para o conteúdo nunca
+   sair esticado independentemente do motor de renderização. */
 /* Modal do Match Tracker redesenhado a partir do modelo HTML que o utilizador enviou
    (BET62trackerpreview.html) — pedido explícito "usar o mesmo que mandei". Mundo visual próprio
    (verde-escuro estádio + amarelo, tipografia Plus Jakarta Sans/Space Mono), deliberadamente à
@@ -438,11 +438,11 @@ footer{text-align:center;padding:30px 16px;color:var(--muted);font-size:.75rem}
    mesma disciplina/keyframe de .tp-team-bar.zone-pulse: zona real da bola, nunca "posse". */
 .bt-score-team strong.zone-pulse{color:var(--bt-red);animation:zone-pulse-text 1.3s ease-in-out infinite}
 @media (prefers-reduced-motion: reduce){.bt-score-team strong.zone-pulse{animation:none}}
-/* Match Tracker 3D real (Three.js, ver ensureTracker3D em app.js) — pedido explícito do
-   utilizador para substituir o campo 2D por um mini campo 3D a sério, ligado aos mesmos dados
-   reais (posição da bola, zona de perigo, canto, golo) já usados no 2D. O <canvas> do WebGL vive
-   dentro deste contentor com aspect-ratio fixo — mesma técnica já comprovada (não confiar só em
-   width:100%;height:auto) que corrigiu o bug real de distorção do campo 2D anterior. */
+/* Match Tracker: mini campo 2D real (canvas nativo, ver tracker2d.js) — mostra os mesmos dados
+   reais (posição da bola, zona de perigo, canto, golo) num <canvas> leve, sem a dependência de
+   ~486kb do Three.js que a versão 3D exigia. O <canvas> vive dentro deste contentor com
+   aspect-ratio fixo — mesma técnica já comprovada (não confiar só em width:100%;height:auto) que
+   corrigiu o bug real de distorção do campo 2D (SVG) anterior. */
 .tp-canvas-frame{position:relative;width:100%;aspect-ratio:100/64;border-radius:10px;overflow:hidden;background:#04100a}
 .tp-canvas-frame canvas{position:absolute;top:0;right:0;bottom:0;left:0;inset:0;width:100%!important;height:100%!important;display:block;touch-action:none}
 /* Flash de golo — sobrepõe o campo por alguns segundos quando um golo novo e confirmado aparece

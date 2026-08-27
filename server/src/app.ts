@@ -44,9 +44,8 @@ export function createApp() {
   // /config.js) que a política por defeito do helmet bloquearia. As outras proteções do
   // helmet (X-Frame-Options, HSTS, noSniff, etc.) continuam ativas.
   app.use(helmet({ contentSecurityPolicy: false }));
-  // Comprime as respostas (gzip) — passou a interessar de verdade com o mini campo 3D novo, que
-  // manda o vendor/three.bundle.min.js (~486kb, biblioteca Three.js só com o necessário) para
-  // qualquer jogo de futebol ao vivo; sem isto ia sempre sem compressão nenhuma.
+  // Comprime as respostas (gzip) — sem isto ia sempre sem compressão nenhuma (app.js, tracker2d.js
+  // e o resto do frontend estático saíam sempre no tamanho não-comprimido).
   app.use(compression());
   app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
   app.use(cookieParser());
