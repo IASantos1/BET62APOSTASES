@@ -8,6 +8,7 @@ import { enrichEventFromOtherBookmakers } from "./pulsescore/crossBookmakerFallb
 import { getHeadToHead, getPredictions, getStandings, getFixtureStatistics, type HeadToHeadMatch } from "./apifootball/client";
 import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent, getFullFixtureMapping } from "./mapping/service";
 import { getUnifiedMatchData } from "./unified/service";
+import { sanitizePublicEvent, sanitizePublicEvents } from "./publicEvent";
 import { getSportmonksEventById, getSportmonksFootballPrematchDiagnosis } from "./sportmonks/prematch";
 import {
   diagnoseLiveOddsMovement,
@@ -108,7 +109,7 @@ router.get(
     // conseguir encontrar jogos de pré-jogo pelo id; Pulsescore: wsClient.ts também pode marcar
     // "scheduled" um evento dentro de um snapshot "live"). Sem este filtro, jogos por começar
     // apareciam na lista "Ao Vivo" — bug real reportado pelo utilizador.
-    res.json({ events: hybridSportsService.snapshot(sport).filter((e) => e.status === "live") });
+    res.json({ events: sanitizePublicEvents(hybridSportsService.snapshot(sport).filter((e) => e.status === "live")) });
   })
 );
 
@@ -121,7 +122,7 @@ router.get(
     }
     const date = typeof req.query.date === "string" ? req.query.date : undefined;
     const result = await getPrematchEvents(sport as Sport, date);
-    res.json(result);
+    res.json({ ...result, events: sanitizePublicEvents(result.events) });
   })
 );
 
@@ -160,7 +161,7 @@ router.get(
           logger.warn({ err: String(err).slice(0, 200), fixtureId }, "Sportmonks: falha ao obter odds ao vivo (inplay) no refresh on-demand");
         }
       }
-      res.json({ event });
+      res.json({ event: sanitizePublicEvent(event) });
       return;
     }
 
@@ -214,7 +215,7 @@ router.get(
       });
     }
 
-    res.json({ event: completed });
+    res.json({ event: sanitizePublicEvent(completed) });
   })
 );
 
