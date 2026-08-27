@@ -648,19 +648,41 @@ function classifyHdaLabel(labelRaw) {
 // "muitos são NOMES PRÓPRIOS... que nunca se traduzem"). classifyHdaLabel só reconhece vocabulário
 // fixo, por isso um moneyline de ténis nunca batia h>=1 && a>=1 e caía sempre em "Suspenso" no
 // cartão — mesmo com o mercado bem ativo (bug real reportado: clicar no jogo mostrava o mercado
-// disponível). Em vez de adivinhar mais vocabulário, confirma-se algo concreto: a label bate
-// (ignorando maiúsculas/espaços) com e.home ou e.away deste MESMO jogo — só um moneyline genuíno
-// tem isso, nunca BTTS/Ímpar-Par/etc.
+// disponível). Em vez de adivinhar mais vocabulário, confirma-se algo concreto: a label (ou o
+// canonicalName da seleção, ver abaixo) bate (ignorando maiúsculas/espaços) com e.home ou e.away
+// deste MESMO jogo — só um moneyline genuíno tem isso, nunca BTTS/Ímpar-Par/etc.
 function isParticipantLabel(label, name) {
   if (!label || !name) return false;
   return String(label).trim().toLowerCase() === String(name).trim().toLowerCase();
 }
-function looksLikeTwoWayParticipants(labelA, labelB, e) {
+// A CHAVE da seleção (rawName da Pulsescore) pode vir truncada/abreviada de forma diferente do
+// nome do participante no evento (ex.: seleção "Vi Sachko" vs e.home "Vitaliy Sachko") — bug real
+// reportado com print: muitos jogos de ténis ao vivo a mostrar "Suspenso" apesar do mercado
+// aberto, mesmo já com a comparação acima. A Pulsescore manda também um `name` normalizado por
+// seleção (LiveSelection.canonicalName no backend, "para UI exibir rótulo amigável mesmo se
+// rawName for estranho" — literalmente para este caso) que a app nunca chegou a usar; para
+// futebol/beisebol/etc. esse mesmo campo cai para canonicalOutcome quando `name` falta, podendo
+// vir "HOME"/"AWAY"/"DRAW" em maiúsculas — também reconhecido por isParticipantLabel/
+// classifyHdaLabel por serem só comparações case-insensitive/vocabulário already tolerante a
+// maiúsculas. Testa a label bruta primeiro (mais comum), só recorre ao canonicalName se a bruta
+// não bater com nenhum dos dois lados.
+function selectionMatchesParticipant(label, sel, name) {
+  return isParticipantLabel(label, name) || isParticipantLabel(sel && sel.canonicalName, name);
+}
+function looksLikeTwoWayParticipants(entryA, entryB, e) {
   if (!e) return false;
+  const [labelA, selA] = entryA;
+  const [labelB, selB] = entryB;
   return (
-    (isParticipantLabel(labelA, e.home) && isParticipantLabel(labelB, e.away)) ||
-    (isParticipantLabel(labelA, e.away) && isParticipantLabel(labelB, e.home))
+    (selectionMatchesParticipant(labelA, selA, e.home) && selectionMatchesParticipant(labelB, selB, e.away)) ||
+    (selectionMatchesParticipant(labelA, selA, e.away) && selectionMatchesParticipant(labelB, selB, e.home))
   );
+}
+// Mesma ideia de classifyHdaLabel, mas também tenta o canonicalName da seleção quando a label
+// bruta não bate em nada — cobre o caso confirmado de canonicalOutcome "HOME"/"AWAY"/"DRAW" vir
+// só no canonicalName (ver comentário grande acima).
+function classifySelection(label, sel) {
+  return classifyHdaLabel(label) ?? classifyHdaLabel(sel && sel.canonicalName);
 }
 function quickOddsHtml(e, group, isLive) {
   if (!group?.selections || !group.isActive) return SUSPENDED_QUICK_ODDS_HTML(e);
@@ -685,13 +707,13 @@ function quickOddsHtml(e, group, isLive) {
   //   3 botões → {h, d, a} (1X2 completo) OU no mínimo 2 de {h,d,a} + 1 outro não suspeito.
   //   2 botões → {h, a} (moneyline casa/fora).
   //   1 botão → SEMPRE suspenso (1 botão sem contexto é erro 99%).
-  const labels = entriesFiltered.map(([l]) => classifyHdaLabel(l));
+  const labels = entriesFiltered.map(([l, sel]) => classifySelection(l, sel));
   const counts = { h: 0, d: 0, a: 0, null: 0 };
   for (const l of labels) counts[l === null ? "null" : l]++;
   const looksOk =
     (entriesFiltered.length === 3 && (counts.h + counts.d + counts.a >= 2)) ||
     (entriesFiltered.length === 2 && counts.h >= 1 && counts.a >= 1) ||
-    (entriesFiltered.length === 2 && looksLikeTwoWayParticipants(entriesFiltered[0][0], entriesFiltered[1][0], e));
+    (entriesFiltered.length === 2 && looksLikeTwoWayParticipants(entriesFiltered[0], entriesFiltered[1], e));
   if (!looksOk) {
     // Qualquer outro caso (1 botão só, 2 botões sem casa/fora, 3 botões de BTTS etc.)
     // mostra "Suspenso" em vez de odds descontextualizadas.
@@ -729,7 +751,7 @@ function safeFindPrimaryMarket(e) {
       if (/[+\-−0-9]/.test(String(lbl ?? "").trim())) { grupoValido = false; break; }
       const v = normalizeOddValue(sel.odd);
       if (!Number.isFinite(v) || v < 1.01 || v > 1000) { grupoValido = false; break; }
-      const c = classifyHdaLabel(lbl);
+      const c = classifySelection(lbl, sel);
       if (c === "h") h++;
       else if (c === "d") d++;
       else if (c === "a") a++;
@@ -739,7 +761,7 @@ function safeFindPrimaryMarket(e) {
     if (sels.length === 3 && totalHda >= 2) return g;
     if (sels.length === 2 && h >= 1 && a >= 1) return g;
     // Ténis/moneylines sem "Home"/"Away" — ver looksLikeTwoWayParticipants acima.
-    if (sels.length === 2 && looksLikeTwoWayParticipants(sels[0][0], sels[1][0], e)) return g;
+    if (sels.length === 2 && looksLikeTwoWayParticipants(sels[0], sels[1], e)) return g;
   }
   return undefined;
 }
