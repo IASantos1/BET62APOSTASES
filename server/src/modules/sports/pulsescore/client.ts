@@ -162,14 +162,16 @@ export const SLUG_TO_SPORT: Partial<Record<string, Sport>> = Object.fromEntries(
   (Object.entries(SPORT_SLUGS) as [Sport, string][]).map(([sport, slug]) => [slug, sport])
 );
 
-// Configuração atual pedida pelo utilizador:
-// - quase todos os desportos usam a bookmaker primária global (`onexbet`, ver env.ts)
-// - futebol desvia para Sportmonks via FOOTBALL_PROVIDER=sportmonks
-// - Fórmula 1 continua fora desta migração, em Unibet AU, por não haver evidência confirmada de
-//   cobertura equivalente no resto da stack atual.
-const SPORT_BOOKMAKER_OVERRIDE: Partial<Record<Sport, string>> = {
-  formula1: "unibetau",
-};
+// ⚠️ CORREÇÃO (2026-08-27): removido o desvio de Fórmula 1 para "unibetau". Confirmado nos logs
+// reais do Railway que este bookmaker devolve 401 "User is not authorized" para a chave da conta
+// Pulsescore atual (`{"status":401,"bookmaker":"unibetau","body":{"message":"User is not
+// authorized"...}}` em GET .../unibetau/live-events/sports) — não é um problema de dados nem de
+// cobertura, é a própria conta sem acesso a esta bookmaker, por isso Fórmula 1 nunca conseguia
+// carregar nenhum jogo real por aqui. Como "onexbet" (a bookmaker primária, ver env.ts) já está
+// confirmada a funcionar para os outros desportos, passa a servir também Fórmula 1 — na pior das
+// hipóteses fica sem jogos ao vivo (eventCount 0, silencioso, igual a qualquer outro desporto sem
+// jogos agora), o que é estritamente melhor do que o 401 garantido de antes.
+const SPORT_BOOKMAKER_OVERRIDE: Partial<Record<Sport, string>> = {};
 
 export function bookmakerFor(sport: Sport): string {
   return SPORT_BOOKMAKER_OVERRIDE[sport] ?? env.PULSESCORE_BOOKMAKER;

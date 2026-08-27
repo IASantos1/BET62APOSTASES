@@ -735,7 +735,16 @@ function inferPrimaryMarketPeriod(group) {
   return "";
 }
 
+// "To Qualify" (Vencedor da Eliminatória — ver translateMarketBaseName acima) nunca tem período
+// "fulltime" (não é sobre ESTE jogo/90 min, é sobre quem passa a fase seguinte, decidido depois
+// do tempo regulamentar terminar empatado) — sem este caso especial, ficava sempre atrás do
+// "Resultado Final" na pontuação (score 2 vs 3), mesmo já em prolongamento com o Resultado Final
+// congelado/inativo (safeFindPrimaryMarket já ignora candidatos inativos, então normalmente não
+// competem ao mesmo tempo, mas manter os dois no mesmo nível evita depender só disso). Reportado
+// pelo utilizador: mercado principal preso no nome/estado do tempo regulamentar ao entrar em
+// prolongamento.
 function scorePrimaryMarketCandidate(group) {
+  if (/to\s*qualify/i.test(String(group?.market ?? ""))) return 3;
   const period = inferPrimaryMarketPeriod(group);
   if (period === "fulltime") return 3;
   if (!period) return 2;
@@ -773,8 +782,9 @@ function quickOddsHtml(e, group, isLive) {
     (entriesFiltered.length === 2 && counts.h >= 1 && counts.a >= 1) ||
     (entriesFiltered.length === 2 && looksLikeTwoWayParticipants(entriesFiltered[0], entriesFiltered[1], e));
   if (!looksOk) {
-    // ⚠️ CORREÇÃO (2026-08-27, migração para "onexbet"): último recurso, só para ténis e só
-    // quando restam exatamente 2 seleções ativas com odds reais E `group` é literalmente
+    // ⚠️ CORREÇÃO (2026-08-27, migração para "onexbet"): último recurso, só para desportos sem
+    // empate possível (ver NO_DRAW_SPORTS abaixo) e só quando restam exatamente 2 seleções
+    // ativas com odds reais E `group` é literalmente
     // e.odds[0] — ou seja, o PRÓPRIO backend (orderMarketsForSport em client.ts, baseado no
     // nome/canonicalMarket do mercado, nunca na etiqueta da seleção) já ordenou este mercado
     // como o principal, não é uma escolha às cegas do frontend. Bug real reportado: no ténis
@@ -787,7 +797,14 @@ function quickOddsHtml(e, group, isLive) {
     // suspenso, mas o cartão ficava preso em "Suspenso" sempre. Mostra as seleções com o rótulo
     // que já trazem (nunca inventa nem troca qual é casa/fora, só confia que são as 2 únicas
     // opções de um moneyline real) em vez de esconder odds genuinamente ativas.
-    const NO_DRAW_SPORTS = new Set(["tennis"]);
+    // Ampliado de só ténis para todos os desportos sem "X"/empate possível (reportado a seguir:
+    // o mesmo bug reapareceu em basquetebol assim que a onexbet passou a servi-lo) — todos
+    // partilham a mesma característica que tornava isto seguro em ténis: classifyHdaLabel nunca
+    // pode bater (não há vocabulário "casa"/"fora"/"1"/"2" nestes desportos, só nomes de
+    // jogadores/equipas), por isso só looksLikeTwoWayParticipants podia validar, e a mesma
+    // condição desta correção (2 seleções, `group` é literalmente e.odds[0] já ordenado pelo
+    // backend) continua a nunca inventar nem trocar qual é casa/fora.
+    const NO_DRAW_SPORTS = new Set(["tennis", "basketball", "ice_hockey", "baseball", "volleyball", "mma"]);
     const isBackendPrimaryFallback = e.odds?.[0] === group;
     const lastResortOk = NO_DRAW_SPORTS.has(e.sport) && entriesFiltered.length === 2 && isBackendPrimaryFallback;
     if (!lastResortOk) {
