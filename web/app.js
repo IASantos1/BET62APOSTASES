@@ -651,9 +651,38 @@ function classifyHdaLabel(labelRaw) {
 // disponível). Em vez de adivinhar mais vocabulário, confirma-se algo concreto: a label (ou o
 // canonicalName da seleção, ver abaixo) bate (ignorando maiúsculas/espaços) com e.home ou e.away
 // deste MESMO jogo — só um moneyline genuíno tem isso, nunca BTTS/Ímpar-Par/etc.
+function normalizeParticipantName(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.'’]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
 function isParticipantLabel(label, name) {
   if (!label || !name) return false;
-  return String(label).trim().toLowerCase() === String(name).trim().toLowerCase();
+  const a = normalizeParticipantName(label);
+  const b = normalizeParticipantName(name);
+  if (!a || !b) return false;
+  if (a === b) return true;
+
+  const aParts = a.split(" ");
+  const bParts = b.split(" ");
+  const aLast = aParts[aParts.length - 1];
+  const bLast = bParts[bParts.length - 1];
+
+  // Ténis costuma vir misturado entre apelido só ("Kopp"), inicial+apelido ("S Kopp") e nome
+  // completo ("Sandro Kopp"). Para o cartão compacto basta reconhecer que é o MESMO
+  // participante, sem exigir igualdade literal caractere-a-caractere.
+  if (aLast && bLast && aLast === bLast) {
+    if (aParts.length === 1 || bParts.length === 1) return true;
+    const aFirst = aParts[0];
+    const bFirst = bParts[0];
+    if (aFirst && bFirst && aFirst[0] === bFirst[0]) return true;
+  }
+
+  return false;
 }
 // A CHAVE da seleção (rawName da Pulsescore) pode vir truncada/abreviada de forma diferente do
 // nome do participante no evento (ex.: seleção "Vi Sachko" vs e.home "Vitaliy Sachko") — bug real
