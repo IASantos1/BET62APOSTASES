@@ -129,13 +129,25 @@ function parseWsTennisGamePoints(
   return { homeScore: gp.home, awayScore: gp.away };
 }
 
+// ⚠️ CORREÇÃO (2026-08-27, migração para bookmaker "onexbet"): ver comentário gémeo em
+// parsePulsescoreScore (client.ts REST) — `score` genérico é ambíguo para ténis (pode ser sets
+// ganhos, não os pontos do jogo atual) e a onexbet, ao contrário da paddypower, aparentemente
+// devolve sempre um `score` numérico válido em ténis, o que mascarava a ambiguidade antes (quase
+// sempre caía no fallback gamePoints). Bug real reportado com print: cartão passou a mostrar "1 -
+// 0"/"0 - 1" (valores de sets) em vez dos pontos do jogo atual ("15"/"30"/"40"/"AD"). Em ténis,
+// moreInfo.gamePoints (o único campo cujo nome já garante ser os pontos do jogo atual) passa a
+// ter sempre prioridade sobre `score`.
 function parseScore(
   score: WsEvent["score"],
   sport: Sport,
   moreInfo?: WsEvent["moreInfo"]
 ): { homeScore?: number | string; awayScore?: number | string } {
+  if (sport === "tennis") {
+    const points = parseWsTennisGamePoints(sport, moreInfo);
+    if (points.homeScore !== undefined && points.awayScore !== undefined) return points;
+  }
   if (!score) {
-    if (sport === "tennis") logger.info("Pulsescore WS: ténis sem campo score (possível estado de vantagem)");
+    if (sport === "tennis") logger.info("Pulsescore WS: ténis sem campo score nem gamePoints (possível estado de vantagem)");
     return parseWsTennisGamePoints(sport, moreInfo);
   }
   if (typeof score === "string") {
@@ -194,11 +206,40 @@ function normalizeWsMarket(m: WsMarket): LiveOdds {
   return { market: m.rawName ?? m.canonicalMarket ?? "Mercado", isActive, selections: Object.fromEntries(selections) };
 }
 
+// Diagnóstico (2026-08-27, migração para "onexbet"): reportado que "quase todos" os jogos de
+// ténis ao vivo aparecem "Suspenso" no cartão. O cartão só marca "Suspenso" quando o mercado
+// principal está genuinamente inativo (isActive:false, sinal real da bookmaker) OU quando não
+// consegue confirmar que as 2 seleções são mesmo casa/fora deste jogo (looksLikeTwoWayParticipants
+// em app.js, que compara rawName/canonicalName da seleção com e.home/e.away) — ver comentário
+// grande em isParticipantLabel (app.js) sobre porque isto já foi corrigido 2x antes para a
+// paddypower. Sem acesso a uma amostra real da onexbet para ténis, não dá para saber qual dos
+// dois está a acontecer agora — e adivinhar arriscaria o mesmo erro já evitado deliberadamente em
+// withSyntheticMoneyline() (client.ts): atribuir uma odd real ao jogador ERRADO seria pior do que
+// mostrar "Suspenso" a mais. Este log (uma vez por jogo, nunca por frame) só regista os dados
+// crus de mercados com 2-3 seleções para inspeção nos logs do Railway — não muda nenhum
+// comportamento visível.
+const tennisDiagnosticLogged = new Set<string>();
+function logTennisPrimaryMarketDiagnosticOnce(e: WsEvent, markets: WsMarket[]) {
+  if (tennisDiagnosticLogged.has(e.eventId)) return;
+  if (tennisDiagnosticLogged.size > 500) tennisDiagnosticLogged.clear(); // nunca crescer sem limite
+  tennisDiagnosticLogged.add(e.eventId);
+  const candidates = markets
+    .filter((m) => (m.selections?.length ?? 0) >= 2 && (m.selections?.length ?? 0) <= 3)
+    .slice(0, 3)
+    .map((m) => ({
+      rawName: m.rawName,
+      canonicalMarket: m.canonicalMarket,
+      selections: (m.selections ?? []).map((s) => ({ rawName: s.rawName, name: s.name, isActive: s.isActive, odds: s.odds ?? s.decimal })),
+    }));
+  logger.info({ eventId: e.eventId, league: e.league, home: e.home, away: e.away, candidates }, "Pulsescore WS: diagnóstico mercado principal ténis (onexbet)");
+}
+
 function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
   const markets = sortNumericMarketFamilies(orderMarketsForSport(sport, e.markets ?? []));
   const football = e.statistics?.football;
   const sets = e.statistics?.sets;
   const scoreData = parseScore(e.score, sport, e.moreInfo);
+  if (sport === "tennis") logTennisPrimaryMarketDiagnosticOnce(e, markets);
   if (sport === "tennis" && sets && (scoreData.homeScore == null || scoreData.awayScore == null)) {
     logger.info(
       {
