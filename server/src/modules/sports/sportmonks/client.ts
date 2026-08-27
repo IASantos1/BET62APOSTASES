@@ -286,7 +286,20 @@ function isFulltimePrimaryMarket(market: LiveOdds): boolean {
   return (market.period ?? inferSportmonksMarketPeriod(market)) === "fulltime";
 }
 
+// "To Qualify" — CONFIRMADO numa amostra real da Sportmonks (Bodø/Glimt vs NEC, eliminatória
+// europeia; ver a mesma constatação em translateMarketBaseName, web/app.js): quem passa à ronda
+// seguinte/à fase seguinte, sem empate possível (só casa/fora) — é o mercado que decide o "vencedor
+// da eliminatória" depois de terminado o tempo regulamentar sem vencedor (prolongamento/pênaltis),
+// distinto de "Resultado Final" (que só cobre ESTE jogo/90 min e fica inativo assim que o tempo
+// regulamentar termina empatado, já sem forma de resolver). Reportado pelo utilizador: ao entrar
+// em prolongamento, o mercado principal ficava preso no "Resultado Final" já congelado/inativo em
+// vez de passar para este.
+function isKnockoutQualifyMarket(market: LiveOdds): boolean {
+  return /to\s*qualify/i.test(market.market ?? "");
+}
+
 function isPrimaryMarketName(market: LiveOdds): boolean {
+  if (isKnockoutQualifyMarket(market)) return true;
   if (market.canonicalMarket && PRIMARY_CANONICAL_TOKENS.test(market.canonicalMarket)) return true;
   for (const re of PRIMARY_DISPLAY_REGEXES) if (re.test(market.market)) return true;
   return false;
@@ -322,6 +335,33 @@ function hasDrawSelection(m: LiveOdds): boolean {
 // vez do 1X2 — reportado pelo utilizador com um screenshot real da página Destaques a mostrar
 // exatamente isso.
 function orderSportmonksMarketsWithPrimaryFirst(markets: LiveOdds[]): LiveOdds[] {
+  // ⚠️ CORREÇÃO: procura primeiro um candidato a principal que esteja ATIVO — sem isto, assim
+  // que "Resultado Final" (tempo regulamentar) fica inativo por terminar empatado (jogo foi para
+  // prolongamento), este continuava a "ganhar" por ser o 1º nome reconhecido no array, mesmo já
+  // congelado/sem poder resolver, em vez de "To Qualify" (Vencedor da Eliminatória, ver
+  // isKnockoutQualifyMarket acima) — que É o mercado real ainda aberto nesse momento — tomar o
+  // lugar. Cai para a versão sem exigir isActive só se NENHUM candidato ativo existir (mantém o
+  // comportamento antigo de mostrar "Suspenso" com o nome certo em vez de desaparecer).
+  const primaryActiveIdx = markets.findIndex(
+    (market) => (isPrimaryMarketName(market) || looksLikePrimaryThreeWayMarket(market)) && isFulltimePrimaryMarket(market) && market.isActive
+  );
+  if (primaryActiveIdx > 0) {
+    const ordered = [...markets];
+    const [primary] = ordered.splice(primaryActiveIdx, 1);
+    ordered.unshift(primary!);
+    return ordered;
+  }
+  if (primaryActiveIdx === 0) return markets;
+
+  const qualifyActiveIdx = markets.findIndex((market) => isKnockoutQualifyMarket(market) && market.isActive);
+  if (qualifyActiveIdx > 0) {
+    const ordered = [...markets];
+    const [primary] = ordered.splice(qualifyActiveIdx, 1);
+    ordered.unshift(primary!);
+    return ordered;
+  }
+  if (qualifyActiveIdx === 0) return markets;
+
   const primaryIdx = markets.findIndex((market) => (isPrimaryMarketName(market) || looksLikePrimaryThreeWayMarket(market)) && isFulltimePrimaryMarket(market));
   if (primaryIdx > 0) {
     const ordered = [...markets];

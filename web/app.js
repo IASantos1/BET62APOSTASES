@@ -735,7 +735,16 @@ function inferPrimaryMarketPeriod(group) {
   return "";
 }
 
+// "To Qualify" (Vencedor da Eliminatória — ver translateMarketBaseName acima) nunca tem período
+// "fulltime" (não é sobre ESTE jogo/90 min, é sobre quem passa a fase seguinte, decidido depois
+// do tempo regulamentar terminar empatado) — sem este caso especial, ficava sempre atrás do
+// "Resultado Final" na pontuação (score 2 vs 3), mesmo já em prolongamento com o Resultado Final
+// congelado/inativo (safeFindPrimaryMarket já ignora candidatos inativos, então normalmente não
+// competem ao mesmo tempo, mas manter os dois no mesmo nível evita depender só disso). Reportado
+// pelo utilizador: mercado principal preso no nome/estado do tempo regulamentar ao entrar em
+// prolongamento.
 function scorePrimaryMarketCandidate(group) {
+  if (/to\s*qualify/i.test(String(group?.market ?? ""))) return 3;
   const period = inferPrimaryMarketPeriod(group);
   if (period === "fulltime") return 3;
   if (!period) return 2;
