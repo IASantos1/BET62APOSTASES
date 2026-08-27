@@ -609,15 +609,17 @@ const SUSPENDED_QUICK_ODDS_HTML = (e) => `<div class="lc-odds"><div class="suspe
 // Mercado principal (1X2/moneyline) com um lado tão favorito que a odd já não representa uma
 // escolha real entre dois resultados (ex.: 1.01 vs 15.00, prorrogação de um jogo já decidido) —
 // pedido explícito do utilizador: em vez de dois botões (um quase sem valor, outro sem chance
-// real), mostra-se um único bloco "Aposta Já" — MESMO tratamento visual do Suspenso (bloco
-// cinzento, sem onclick próprio — um clique cai para o onclick do cartão/openMarket por
-// propagação, tal como já acontece com Suspenso) — no cartão E na página de mercado completa
-// (ver marketAccordionHtml), nunca só numa das duas telas.
+// real), mostra-se um único bloco "Aposta Já" — sem onclick próprio (um clique cai para o
+// onclick do cartão/openMarket por propagação, tal como já acontece com Suspenso) — no cartão E
+// na página de mercado completa (ver marketAccordionHtml), nunca só numa das duas telas.
+// Cor propositadamente AMARELA/dourada (bet-now, ver CSS), não cinzenta como o Suspenso: ao
+// contrário do Suspenso (mercado indisponível, não clicável), "Aposta Já" continua clicável e é
+// uma chamada à ação — pedido explícito do utilizador para não parecer um bloco desativado.
 const EXTREME_FAVORITE_ODD_MAX = 1.05;
 function isExtremeFavoriteOdd(v) {
   return Number.isFinite(v) && v <= EXTREME_FAVORITE_ODD_MAX;
 }
-const BET_NOW_QUICK_ODDS_HTML = `<div class="lc-odds"><div class="suspended" style="flex:3">Aposta Já</div></div>`;
+const BET_NOW_QUICK_ODDS_HTML = `<div class="lc-odds"><div class="bet-now" style="flex:3">Aposta Já</div></div>`;
 // =========== VALIDADORES MÍNIMOS (apenas para CARTÕES da lista) =================
 // Estes helpers são propositadamente ULTRA-SIMPLES e conservadores:
 //   - Nunca mudam o comportamento se não houver dados suspeitos
@@ -4345,7 +4347,8 @@ function patchLiveMarketGroups(e) {
           selFragments.push({ kind: "suspended", label: primarySuspendedLabel(e) });
         } else if (extremeFavorite) {
           expectedSigs.push(`__extreme_favorite__`);
-          selFragments.push({ kind: "suspended", label: "Aposta Já" });
+          // kind "bet-now" (não "suspended"): classe/cor própria (amarela), ver BET_NOW_QUICK_ODDS_HTML.
+          selFragments.push({ kind: "bet-now", label: "Aposta Já" });
           break; // um único botão cobre a entrada toda — ignora as restantes linhas
         } else {
           for (const k of keys) expectedSigs.push(k);
@@ -4359,12 +4362,17 @@ function patchLiveMarketGroups(e) {
       let btnIdx = 0;
       const isLive = e._isLive || e.status === "live";
       for (const frag of selFragments) {
-        if (frag.kind === "suspended") {
+        if (frag.kind === "suspended" || frag.kind === "bet-now") {
           const btn = bodyBtns[btnIdx++];
           if (!btn) return false;
           const span = btn.querySelector(".sel-odd");
           if (span && span.textContent !== frag.label) { span.textContent = frag.label; anyMutated = true; }
-          if (!btn.classList.contains("suspended")) { btn.classList.add("suspended"); anyMutated = true; }
+          // As duas classes são mutuamente exclusivas (Suspenso cinzento vs Aposta Já amarelo) —
+          // ao transitar de um estado para o outro no mesmo botão, remove a que já não se aplica.
+          const wantClass = frag.kind;
+          const dropClass = wantClass === "suspended" ? "bet-now" : "suspended";
+          if (!btn.classList.contains(wantClass)) { btn.classList.add(wantClass); anyMutated = true; }
+          if (btn.classList.contains(dropClass)) { btn.classList.remove(dropClass); anyMutated = true; }
           continue;
         }
         const g = frag.group;
@@ -4500,7 +4508,9 @@ function marketAccordionHtml(e, entry, isLive) {
     // Mesma lógica do cartão (quickOddsHtml/EXTREME_FAVORITE_ODD_MAX): um lado tão favorito que
     // a odd já não representa uma escolha real — mostra "Aposta Já" em vez dos botões normais,
     // pedido explícito do utilizador para nunca aparecerem odds deste tipo na página do mercado.
-    bodyHtml = `<div class="selection-row"><div class="selection-btn suspended"><span class="sel-odd">Aposta Já</span></div></div>`;
+    // Classe "bet-now" (amarela/dourada), não "suspended" (cinzenta) — ver comentário em
+    // BET_NOW_QUICK_ODDS_HTML sobre o porquê da cor diferente.
+    bodyHtml = `<div class="selection-row"><div class="selection-btn bet-now"><span class="sel-odd">Aposta Já</span></div></div>`;
   } else if (entry.lines.length === 1) {
     bodyHtml = normalSelectionRowHtml(e, entry.lines[0], isLive, false);
   } else {
