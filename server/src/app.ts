@@ -44,8 +44,9 @@ export function createApp() {
   // /config.js) que a política por defeito do helmet bloquearia. As outras proteções do
   // helmet (X-Frame-Options, HSTS, noSniff, etc.) continuam ativas.
   app.use(helmet({ contentSecurityPolicy: false }));
-  // Comprime as respostas (gzip) — sem isto ia sempre sem compressão nenhuma (app.js, tracker2d.js
-  // e o resto do frontend estático saíam sempre no tamanho não-comprimido).
+  // Comprime as respostas (gzip) — interessa a sério com o mini campo 3D (tracker3d.js +
+  // vendor/three.bundle.min.js, ~480kb), mas também comprime app.js e o resto do frontend
+  // estático; sem isto ia tudo sem compressão nenhuma.
   app.use(compression());
   app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
   app.use(cookieParser());

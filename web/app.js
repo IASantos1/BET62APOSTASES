@@ -782,10 +782,11 @@ function oddsArrowHtml(key, value) {
 function showPage(page) {
   if (pageHistory[pageHistory.length - 1] !== page) pageHistory.push(page);
   closeDrawers();
-  // Sai da página de mercado: pára o motor 2D do mini campo (tracker2d.js) — o canvas e o seu
-  // estado interno continuam vivos (nada é destruído), apenas se deixa de fazer repaints até
-  // ser montado de novo quando voltarmos à página de mercado.
-  if (page !== "market") pauseTracker2D();
+  // Sai da página de mercado: pára o motor 3D do mini campo (tracker3d.js) — a cena e o
+  // <canvas> continuam vivos (nada é destruído), só o loop de animação para de correr sem
+  // estar visível a ninguém. Volta a arrancar sozinho quando renderMatchTracker é chamado de
+  // novo (mountTracker3D reativa-o).
+  if (page !== "market") pauseTracker3D();
 
   ["destaques", "profile", "esportes", "cassino", "aovivo", "promocao", "market"].forEach((p) => {
     const el = document.getElementById("page-" + p);
@@ -2769,9 +2770,6 @@ function renderMatchHeaderVisual(e) {
 // A escala é dinâmica (pulseMaxMinute) para nunca "apagar"/comprimir o jogo perto do minuto 90:
 // prolonga-se automaticamente para acompanhar o minuto atual real, incluindo prolongamento.
 let matchPulseState = { eventId: null, events: [], fetchedAt: 0 };
-// Expor para o motor 2D (tracker2d.js) — `let` em script clássico não é global por defeito;
-// a referência é constante (apenas as propriedades internas são mutadas nos polls).
-window.matchPulseState = matchPulseState;
 const MATCH_PULSE_REFRESH_MS = 20000;
 const PULSE_MARKER_ICON = { goal: "⚽", redcard: "🟥", yellowcard: "🟨", var: "📺", penalty: "🎯", goal_disallowed: "⛔" };
 function currentMatchMinute(e) {
@@ -2854,7 +2852,7 @@ function openTracker() {
 }
 function closeTracker() {
   document.getElementById("tracker-modal").classList.remove("open");
-  // O <canvas> 2D partilhado (ver mountTracker2D em tracker2d.js) ficava preso dentro do modal —
+  // O <canvas> 3D partilhado (ver mountTracker3D em tracker3d.js) ficava preso dentro do modal —
   // reancora-o de volta ao mini campo compacto do cabeçalho, se ainda fizer sentido mostrá-lo ali.
   if (currentMarketEvent) renderMatchHeaderVisual(currentMarketEvent);
 }
@@ -3139,12 +3137,12 @@ function pitchStatBarHtml(e) {
   </div>`;
 }
 
-// Flash de golo — camada HTML normal por cima do <canvas> 2D (dentro do .tp-canvas-frame onde a
-// bola está montada agora, ver tracker2d.js/ensureTracker2DCanvas), acionada só por um golo novo
-// e confirmado na linha do tempo real. Chamada pelo motor 2D via window.showGoalFlashOverlay
-// (lookup fraco, ver comentário no topo de tracker2d.js).
+// Flash de golo — camada HTML normal por cima do <canvas> 3D (dentro do .tp-canvas-frame onde a
+// bola está montada agora, ver tracker3d.js/ensureTracker3DCanvas), acionada só por um golo novo
+// e confirmado na linha do tempo real. Chamada pelo motor 3D via window.showGoalFlashOverlay
+// (lookup fraco, ver comentário no topo de tracker3d.js).
 function showGoalFlashOverlay(goalEvent) {
-  const st = typeof ensureTracker2DCanvas === "function" ? ensureTracker2DCanvas() : null;
+  const st = typeof ensureTracker3DCanvas === "function" ? ensureTracker3DCanvas() : null;
   const frame = st && st.mountedIn;
   if (!frame) return;
   const flash = document.createElement("div");
@@ -3156,8 +3154,8 @@ function showGoalFlashOverlay(goalEvent) {
 
 // Ponto de entrada partilhado entre o cabeçalho compacto (#mt-pulse) e o modal cheio
 // (#tracker-pitch-wrap). Constrói o "chrome" HTML (cabeçalho + barra de estatísticas) em
-// torno de um .tp-canvas-frame vazio, e usa o MESMO <canvas> partilhado do motor 2D
-// (tracker2d.js), reancorando-o de cabeçalho ↔ modal tal como o 3D fazia antes.
+// torno de um .tp-canvas-frame vazio, carrega o motor 3D (tracker3d.js — estádio completo,
+// Three.js) só quando é mesmo preciso, e move o MESMO <canvas> partilhado para dentro dele.
 function renderPitchInto(el, points, e, opts) {
   if (!el) return;
   const compact = !!(opts && opts.compact);
@@ -3172,10 +3170,15 @@ function renderPitchInto(el, points, e, opts) {
 
   el.innerHTML = `<div class="tp-panel">${header}<div class="tp-canvas-frame"></div>${pitchStatBarHtml(e)}</div>`;
   const frame = el.querySelector(".tp-canvas-frame");
-  // Motor 2D é síncrono (não há bundle para carregar) — pinta imediatamente.
-  // (frame pode já ter sido montado por outro caller — o mount é idempotente.)
-  mountTracker2D(frame);
-  updateTracker2DFromPoints(e, points, compact);
+  ensureTracker3DReady()
+    .then(() => {
+      if (!document.body.contains(frame)) return; // já saiu deste evento/página entretanto
+      mountTracker3D(frame, !compact);
+      updateTracker3DFromPoints(e, points, compact);
+    })
+    .catch(() => {
+      if (document.body.contains(frame)) frame.innerHTML = '<div class="empty-note">Não foi possível carregar o campo 3D</div>';
+    });
 }
 
 // ====================== ESTATÍSTICAS (Margens de Vitória / H2H / Classificação) ======================
