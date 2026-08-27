@@ -606,6 +606,18 @@ function primarySuspendedLabel(e) {
 // existisse — o utilizador pediu explicitamente para nunca ficar "assim sem odds", entrar sempre
 // pelo menos como "Suspenso" até o bookmaker abrir o mercado.
 const SUSPENDED_QUICK_ODDS_HTML = (e) => `<div class="lc-odds"><div class="suspended" style="flex:3">${primarySuspendedLabel(e)}</div></div>`;
+// Mercado principal (1X2/moneyline) com um lado tão favorito que a odd já não representa uma
+// escolha real entre dois resultados (ex.: 1.01 vs 15.00, prorrogação de um jogo já decidido) —
+// pedido explícito do utilizador: em vez de dois botões (um quase sem valor, outro sem chance
+// real), mostra-se um único bloco "Aposta Já" — MESMO tratamento visual do Suspenso (bloco
+// cinzento, sem onclick próprio — um clique cai para o onclick do cartão/openMarket por
+// propagação, tal como já acontece com Suspenso) — no cartão E na página de mercado completa
+// (ver marketAccordionHtml), nunca só numa das duas telas.
+const EXTREME_FAVORITE_ODD_MAX = 1.05;
+function isExtremeFavoriteOdd(v) {
+  return Number.isFinite(v) && v <= EXTREME_FAVORITE_ODD_MAX;
+}
+const BET_NOW_QUICK_ODDS_HTML = `<div class="lc-odds"><div class="suspended" style="flex:3">Aposta Já</div></div>`;
 // =========== VALIDADORES MÍNIMOS (apenas para CARTÕES da lista) =================
 // Estes helpers são propositadamente ULTRA-SIMPLES e conservadores:
 //   - Nunca mudam o comportamento se não houver dados suspeitos
@@ -763,6 +775,7 @@ function quickOddsHtml(e, group, isLive) {
     // mostra "Suspenso" em vez de odds descontextualizadas.
     return SUSPENDED_QUICK_ODDS_HTML(e);
   }
+  if (entriesFiltered.some(([, sel]) => isExtremeFavoriteOdd(sel.odd))) return BET_NOW_QUICK_ODDS_HTML;
 
   const entries = entriesFiltered;
   return `<div class="lc-odds">${entries
@@ -4307,6 +4320,7 @@ function patchLiveMarketGroups(e) {
       const first = entry.lines[0];
       const title = translateMarketDisplayName(entry.market, e.sport, Object.keys(first.selections || {}), e.home, e.away, entry.lines.length === 1 ? first.line : undefined);
       const allSuspended = entry.lines.every((g) => !g.isActive);
+      const extremeFavorite = entry.isPrimary && !allSuspended && isExtremeFavoriteOdd(minActiveOdd(entry.lines));
       if (titleEl) {
         const wanted = `${title}${allSuspended ? '<span class="market-suspended-badge">Suspenso</span>' : ""}`;
         if (titleEl.innerHTML !== wanted) { titleEl.innerHTML = wanted; anyMutated = true; }
@@ -4329,6 +4343,10 @@ function patchLiveMarketGroups(e) {
         if (entry.isPrimary && allSuspended) {
           expectedSigs.push(`__primary_suspended__`);
           selFragments.push({ kind: "suspended", label: primarySuspendedLabel(e) });
+        } else if (extremeFavorite) {
+          expectedSigs.push(`__extreme_favorite__`);
+          selFragments.push({ kind: "suspended", label: "Aposta Já" });
+          break; // um único botão cobre a entrada toda — ignora as restantes linhas
         } else {
           for (const k of keys) expectedSigs.push(k);
           selFragments.push({ kind: "selections", group: g, withLabel, isFirst, market: entry.market, line: g.line });
@@ -4452,17 +4470,37 @@ function buildMarketDisplayGroups(e) {
   return result;
 }
 
+// Menor odd ativa entre todas as linhas de uma entrada — usado só para o mercado principal
+// (ver EXTREME_FAVORITE_ODD_MAX acima) decidir se já não vale a pena mostrar os botões normais.
+function minActiveOdd(lines) {
+  let min = Infinity;
+  for (const g of lines) {
+    if (!g || !g.isActive || !g.selections) continue;
+    for (const sel of Object.values(g.selections)) {
+      if (!sel || sel.isActive === false) continue;
+      const v = normalizeOddValue(sel.odd);
+      if (Number.isFinite(v) && v < min) min = v;
+    }
+  }
+  return min;
+}
 function marketAccordionHtml(e, entry, isLive) {
   const expanded = marketAccordionState.expanded.has(entry.key);
   const first = entry.lines[0];
   const title = translateMarketDisplayName(entry.market, e.sport, Object.keys(first.selections || {}), e.home, e.away, entry.lines.length === 1 ? first.line : undefined);
   const allSuspended = entry.lines.every((g) => !g.isActive);
   const badgeHtml = allSuspended ? '<span class="market-suspended-badge">Suspenso</span>' : "";
+  const extremeFavorite = entry.isPrimary && !allSuspended && isExtremeFavoriteOdd(minActiveOdd(entry.lines));
   let bodyHtml;
   if (entry.isPrimary && allSuspended) {
     // Mercado principal (1X2/moneyline) totalmente suspenso: um único botão a cobrir a linha
     // toda em vez de 3 caixas "Suspenso" repetidas — ver primarySuspendedLabel().
     bodyHtml = `<div class="selection-row"><div class="selection-btn suspended"><span class="sel-odd">${primarySuspendedLabel(e)}</span></div></div>`;
+  } else if (extremeFavorite) {
+    // Mesma lógica do cartão (quickOddsHtml/EXTREME_FAVORITE_ODD_MAX): um lado tão favorito que
+    // a odd já não representa uma escolha real — mostra "Aposta Já" em vez dos botões normais,
+    // pedido explícito do utilizador para nunca aparecerem odds deste tipo na página do mercado.
+    bodyHtml = `<div class="selection-row"><div class="selection-btn suspended"><span class="sel-odd">Aposta Já</span></div></div>`;
   } else if (entry.lines.length === 1) {
     bodyHtml = normalSelectionRowHtml(e, entry.lines[0], isLive, false);
   } else {
