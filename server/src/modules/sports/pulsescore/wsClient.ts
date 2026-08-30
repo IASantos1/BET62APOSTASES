@@ -3,39 +3,31 @@ import WebSocket from "ws";
 import { env } from "../../../config/env";
 import { logger } from "../../../lib/logger";
 import type { LiveEvent, LiveOdds, LiveSelection, Sport } from "../types";
-import { SPORT_SLUGS, bookmakerFor, orderMarketsForSport, sortNumericMarketFamilies, fetchLiveSportsUnionAllBookmakers } from "./client";
+import { SPORT_SLUGS, bookmakerFor, orderMarketsForSport, sortNumericMarketFamilies, fetchLiveSportsWithEvents } from "./client";
 import { acquireDistributedLock, refreshDistributedLock } from "../../../lib/redis";
 
-const LOCK_KEY = "bet62:locks:pulsescore-ws";
-const LOCK_TTL_MS = 45_000;
-const LOCK_REFRESH_MS = 30_000;
-
 /**
- * Real-time WebSocket feed — confirmed via the official Pulsescore documentation (not
- * guesswork, unlike most of client.ts's earlier iterations). Pattern: one connection per
- * {bookmaker, sport} pair, `wss://api.pulsescore.net/api/{bookmaker}/ws/live?key=&sport=`
- * (query-param auth, unlike REST's x-secret header), one frame/second with every live event of
- * that sport. Requires PRO/MAX/ULTRA — the plan mentioned at the start of this integration
- * (149€/mo, 3 simultaneous connections) is MAX, so this should work, but the exact plan on the
- * account actually configured isn't something this code can know in advance: if the plan is
- * too low, the server closes with code 4003 and this manager stops retrying and just leaves
- * REST polling (hybridService.ts) as the only source — no functional loss, just no live score.
+ * Pulsescore WebSocket client — reescrito do zero (2026-08-27). Um WS por {bookmaker, sport},
+ * `wss://api.pulsescore.net/api/{bookmaker}/ws/live?key=&sport=` (auth por query param, ao
+ * contrário do header x-secret do REST), um frame/segundo com todos os eventos ao vivo desse
+ * desporto. Só disponível nos planos PRO/MAX/ULTRA — se o plano não incluir WS, o servidor fecha
+ * com o código 4003 e este gestor para de tentar, deixando o polling REST (hybridService.ts)
+ * como única fonte, sem perda funcional, só sem a latência extra do tempo real.
  *
- * With only `maxConnections` slots (3 on MAX) and 8 sports, connections are opened for the
- * busiest sports right now (by live event count, actually sorted by eventCount in
- * fetchLiveSportsUnionAllBookmakers — ver correção de 2026-08-24 em client.ts, antes a ordem
- * vinda da Pulsescore era usada tal e qual, o que podia deixar de fora desportos populares como
- * ténis/futebol/basquetebol de forma consistente) e re-avaliado periodicamente; REST polling em
- * hybridService.ts cobre os desportos que não estão ligados por WebSocket neste momento, por
- * isso nada fica por sondar — o WS é um upgrade de latência para os desportos no topo, não um
- * substituto.
+ * Com apenas `maxConnections` vagas (3 no plano MAX) para 8 desportos, liga-se aos desportos
+ * mais movimentados AGORA (por nº de eventos ao vivo, ver fetchLiveSportsWithEvents em
+ * client.ts) — reavaliado a cada REFRESH_INTERVAL_MS. Ténis tem sempre prioridade garantida
+ * (PRIORITY_WS_SPORTS), independentemente da contagem, a pedido explícito do utilizador.
  */
 const REFRESH_INTERVAL_MS = 15_000;
 const RECONNECT_DELAY_MS = 5_000;
 const PRIORITY_WS_SPORTS: Sport[] = ["tennis"];
+const LOCK_KEY = "bet62:locks:pulsescore-ws";
+const LOCK_TTL_MS = 45_000;
+const LOCK_REFRESH_MS = 30_000;
 
-// Bet365 alone uses a versioned path (/api/v3/bet365/ws/live); every other bookmaker, including
-// "paddypower" (the default here) and "unibetau" (used for Fórmula 1), is unversioned.
+// bet365 é a única bookmaker com caminho versionado (/api/v3/bet365/ws/live); as outras,
+// incluindo a atual ("onexbet"), são /api/{bookmaker}/ws/live.
 function wsUrlFor(sport: Sport): string {
   const bookmaker = bookmakerFor(sport);
   const slug = SPORT_SLUGS[sport];
@@ -43,6 +35,8 @@ function wsUrlFor(sport: Sport): string {
   const path = bookmaker === "bet365" ? "/api/v3/bet365/ws/live" : `/api/${bookmaker}/ws/live`;
   return `${base}${path}?key=${env.PULSESCORE_API_KEY}&sport=${slug}`;
 }
+
+// ============================== Forma crua do frame WebSocket ==============================
 
 interface WsSelection {
   name?: string;
@@ -58,7 +52,6 @@ interface WsMarket {
 }
 interface WsMatchClock {
   minute?: number;
-  second?: number;
   period?: string;
 }
 interface WsTeamStats {
@@ -76,12 +69,9 @@ interface WsEvent {
   league: string;
   home: string;
   away: string;
-  // CRASHED PRODUCTION (2026-08-19): the official docs describe this as a single "H-A" string,
-  // but paddypower's real WS frames send the SAME {home, away} string-pair object shape as its
-  // REST /live-events (PulsescoreScore in client.ts) — `score.split is not a function` crashed
-  // the whole Node process because this field was typed/parsed as always a string. Doc vs. real
-  // sample disagreeing is a repeat of the pattern already seen elsewhere in this integration, so
-  // parseScore() below now accepts both shapes defensively instead of trusting either one.
+  // A Pulsescore manda o MESMO par de strings {home,away} do REST (PulsescoreScore, ver
+  // client.ts) — não a string única "H-A" que a documentação oficial descreve. Já causou um
+  // crash de produção quando tratado só como string; aceite defensivamente nas duas formas.
   score?: string | { home?: string | number; away?: string | number };
   live?: boolean;
   startTime?: string;
@@ -89,92 +79,53 @@ interface WsEvent {
   country?: string;
   matchClock?: WsMatchClock;
   statistics?: { football?: { home?: WsTeamStats; away?: WsTeamStats }; sets?: WsSetsStats };
-  moreInfo?: { currentPeriod?: string; gamePoints?: string | number | { home?: string | number; away?: string | number } };
+  moreInfo?: { gamePoints?: string | number | { home?: string | number; away?: string | number } };
 }
 interface WsFrame {
-  type?: string; // "connected" handshake frame
+  type?: string; // "connected" = handshake
   bookmaker?: string;
-  sport?: string;
   plan?: string;
-  validSports?: string[];
-  count?: number;
   data?: WsEvent[];
 }
 
-// Accepts both the docs' "H-A" string AND the {home,away} object shape actually seen from
-// paddypower — never throws, whatever unexpected shape a frame carries (see WsEvent.score above).
-// No ténis, os pontos do jogo atual nem sempre são numéricos (esperava-se "AD" em vantagem) —
-// nesse caso (só possível na forma {home,away}, a única confirmada com dados reais de ténis)
-// passa-se a string tal como veio, em vez de descartar o placar inteiro. O valor real que a
-// Pulsescore envia em vantagem ainda não foi confirmado — o placar continuava a desaparecer
-// mesmo depois deste fallback, o que sugere que `score` pode ficar totalmente ausente nesse
-// instante. O log com `sport === "tennis"` serve para capturar a forma real da próxima vez.
-function parseWsTennisGamePoints(
-  sport: Sport,
-  moreInfo: WsEvent["moreInfo"] | undefined
-): { homeScore?: number | string; awayScore?: number | string } {
-  if (sport !== "tennis") return {};
+// ============================== Normalização (mesmos factos confirmados do REST, ver client.ts) ==============================
+
+// Ténis: moreInfo.gamePoints (pontos do jogo atual, 0/15/30/40/AD) tem sempre prioridade sobre o
+// campo `score` genérico, que é ambíguo (a onexbet manda aí um valor que parece ser sets ganhos,
+// não os pontos do jogo) — mesmo fix aplicado no REST (client.ts::parseScoreForSport).
+function parseWsTennisGamePoints(moreInfo: WsEvent["moreInfo"]): { homeScore?: number | string; awayScore?: number | string } {
   const gp = moreInfo?.gamePoints;
   if (gp == null) return {};
   if (typeof gp === "string" || typeof gp === "number") {
-    const [homeRaw, awayRaw] = String(gp)
-      .split(":")
-      .map((part) => part.trim());
+    const [homeRaw, awayRaw] = String(gp).split(":").map((p) => p.trim());
     if (!homeRaw || !awayRaw) return {};
-    const homeScore = Number.isNaN(Number(homeRaw)) ? homeRaw : Number(homeRaw);
-    const awayScore = Number.isNaN(Number(awayRaw)) ? awayRaw : Number(awayRaw);
-    return { homeScore, awayScore };
+    return {
+      homeScore: Number.isNaN(Number(homeRaw)) ? homeRaw : Number(homeRaw),
+      awayScore: Number.isNaN(Number(awayRaw)) ? awayRaw : Number(awayRaw),
+    };
   }
   if (gp.home == null || gp.away == null) return {};
   return { homeScore: gp.home, awayScore: gp.away };
 }
 
-// ⚠️ CORREÇÃO (2026-08-27, migração para bookmaker "onexbet"): ver comentário gémeo em
-// parsePulsescoreScore (client.ts REST) — `score` genérico é ambíguo para ténis (pode ser sets
-// ganhos, não os pontos do jogo atual) e a onexbet, ao contrário da paddypower, aparentemente
-// devolve sempre um `score` numérico válido em ténis, o que mascarava a ambiguidade antes (quase
-// sempre caía no fallback gamePoints). Bug real reportado com print: cartão passou a mostrar "1 -
-// 0"/"0 - 1" (valores de sets) em vez dos pontos do jogo atual ("15"/"30"/"40"/"AD"). Em ténis,
-// moreInfo.gamePoints (o único campo cujo nome já garante ser os pontos do jogo atual) passa a
-// ter sempre prioridade sobre `score`.
-function parseScore(
-  score: WsEvent["score"],
-  sport: Sport,
-  moreInfo?: WsEvent["moreInfo"]
-): { homeScore?: number | string; awayScore?: number | string } {
+function parseWsScore(score: WsEvent["score"], sport: Sport, moreInfo: WsEvent["moreInfo"]): { homeScore?: number | string; awayScore?: number | string } {
   if (sport === "tennis") {
-    const points = parseWsTennisGamePoints(sport, moreInfo);
+    const points = parseWsTennisGamePoints(moreInfo);
     if (points.homeScore !== undefined && points.awayScore !== undefined) return points;
   }
-  if (!score) {
-    if (sport === "tennis") logger.info("Pulsescore WS: ténis sem campo score nem gamePoints (possível estado de vantagem)");
-    return parseWsTennisGamePoints(sport, moreInfo);
-  }
+  if (!score) return sport === "tennis" ? parseWsTennisGamePoints(moreInfo) : {};
   if (typeof score === "string") {
     const [h, a] = score.split("-").map((p) => Number(p.trim()));
-    if (h === undefined || a === undefined || Number.isNaN(h) || Number.isNaN(a)) {
-      if (sport === "tennis") logger.info({ score }, "Pulsescore WS: ténis com score em string não parseável");
-      return parseWsTennisGamePoints(sport, moreInfo);
-    }
+    if (Number.isNaN(h) || Number.isNaN(a)) return sport === "tennis" ? parseWsTennisGamePoints(moreInfo) : {};
     return { homeScore: h, awayScore: a };
   }
-  if (typeof score === "object") {
-    if (score.home == null || score.away == null) {
-      if (sport === "tennis") logger.info({ score }, "Pulsescore WS: ténis sem score.home/away parseável (possível estado de vantagem)");
-      return parseWsTennisGamePoints(sport, moreInfo);
-    }
-    const h = Number(score.home);
-    const a = Number(score.away);
-    if (Number.isNaN(h) || Number.isNaN(a)) {
-      if (sport === "tennis") logger.info({ score }, "Pulsescore WS: ténis com score.home/away não-numérico (possível estado de vantagem)");
-      return { homeScore: score.home, awayScore: score.away };
-    }
-    return { homeScore: h, awayScore: a };
-  }
-  return {};
+  if (score.home == null || score.away == null) return sport === "tennis" ? parseWsTennisGamePoints(moreInfo) : {};
+  const h = Number(score.home);
+  const a = Number(score.away);
+  if (Number.isNaN(h) || Number.isNaN(a)) return { homeScore: score.home, awayScore: score.away }; // ex: ténis em vantagem ("AD")
+  return { homeScore: h, awayScore: a };
 }
 
-// Mesma lógica de client.ts: futebol tem minute/second, ténis só tem period (ex: "Set 2").
 function formatWsMatchClock(clock: WsMatchClock | undefined, fallback: string): string {
   if (!clock) return fallback;
   if (typeof clock.minute === "number") return `${clock.minute}'`;
@@ -182,18 +133,10 @@ function formatWsMatchClock(clock: WsMatchClock | undefined, fallback: string): 
   return fallback;
 }
 
-// Mantém as seleções inativas em vez de as descartar (ver LiveSelection em types.ts) — mesma
-// lógica do REST em client.ts, para o frontend as mostrar suspensas em vez de desaparecerem.
-// ⚠️ CORREÇÃO (2026-08-27): esta função descartava `s.name` sempre que `s.rawName` existisse — a
-// KEY da seleção (usada como rótulo no frontend) ficava só com rawName, que no ténis costuma vir
-// truncado/abreviado (ex: "Vi Sachko") de forma diferente do nome do participante no evento
-// (e.home "Vitaliy Sachko"), e `s.name` (o nome mais completo/normalizado, o mesmo campo que
-// normalizeMarket() no client.ts REST já guarda em canonicalName) nunca chegava ao frontend — só
-// existia no client.ts REST, não neste caminho WebSocket, que é o que serve os desportos mais
-// movimentados (ver comentário grande no topo do módulo) e portanto o ténis na prática. Bug real
-// reportado com prints: dezenas de jogos de ténis ao vivo "Suspenso" no cartão apesar do mercado
-// aberto — a correção no frontend (looksLikeTwoWayParticipants/classifySelection, ver app.js)
-// dependia deste campo e nunca tinha dados para comparar.
+// A KEY de cada seleção (rótulo mostrado no frontend) é `rawName` (pode vir truncado/abreviado,
+// ex: ténis "Vi Sachko"), mas `canonicalName` (de `name`) é o nome mais completo/normalizado que
+// web/app.js usa para confirmar que a seleção é mesmo o jogador/equipa deste jogo — NUNCA
+// descartar `name` mesmo quando `rawName` também existe.
 function normalizeWsMarket(m: WsMarket): LiveOdds {
   const selections = (m.selections ?? [])
     .map((s): [string, LiveSelection] | null => {
@@ -206,63 +149,17 @@ function normalizeWsMarket(m: WsMarket): LiveOdds {
   return { market: m.rawName ?? m.canonicalMarket ?? "Mercado", isActive, selections: Object.fromEntries(selections) };
 }
 
-// Diagnóstico (2026-08-27, migração para "onexbet"): reportado que "quase todos" os jogos de
-// ténis ao vivo aparecem "Suspenso" no cartão. O cartão só marca "Suspenso" quando o mercado
-// principal está genuinamente inativo (isActive:false, sinal real da bookmaker) OU quando não
-// consegue confirmar que as 2 seleções são mesmo casa/fora deste jogo (looksLikeTwoWayParticipants
-// em app.js, que compara rawName/canonicalName da seleção com e.home/e.away) — ver comentário
-// grande em isParticipantLabel (app.js) sobre porque isto já foi corrigido 2x antes para a
-// paddypower. Sem acesso a uma amostra real da onexbet para ténis, não dá para saber qual dos
-// dois está a acontecer agora — e adivinhar arriscaria o mesmo erro já evitado deliberadamente em
-// withSyntheticMoneyline() (client.ts): atribuir uma odd real ao jogador ERRADO seria pior do que
-// mostrar "Suspenso" a mais. Este log (uma vez por jogo, nunca por frame) só regista os dados
-// crus de mercados com 2-3 seleções para inspeção nos logs do Railway — não muda nenhum
-// comportamento visível.
-const tennisDiagnosticLogged = new Set<string>();
-function logTennisPrimaryMarketDiagnosticOnce(e: WsEvent, markets: WsMarket[]) {
-  if (tennisDiagnosticLogged.has(e.eventId)) return;
-  if (tennisDiagnosticLogged.size > 500) tennisDiagnosticLogged.clear(); // nunca crescer sem limite
-  tennisDiagnosticLogged.add(e.eventId);
-  const candidates = markets
-    .filter((m) => (m.selections?.length ?? 0) >= 2 && (m.selections?.length ?? 0) <= 3)
-    .slice(0, 3)
-    .map((m) => ({
-      rawName: m.rawName,
-      canonicalMarket: m.canonicalMarket,
-      selections: (m.selections ?? []).map((s) => ({ rawName: s.rawName, name: s.name, isActive: s.isActive, odds: s.odds ?? s.decimal })),
-    }));
-  logger.info({ eventId: e.eventId, league: e.league, home: e.home, away: e.away, candidates }, "Pulsescore WS: diagnóstico mercado principal ténis (onexbet)");
-}
-
 function normalizeWsEvent(e: WsEvent, sport: Sport): LiveEvent {
   const markets = sortNumericMarketFamilies(orderMarketsForSport(sport, e.markets ?? []));
   const football = e.statistics?.football;
   const sets = e.statistics?.sets;
-  const scoreData = parseScore(e.score, sport, e.moreInfo);
-  if (sport === "tennis") logTennisPrimaryMarketDiagnosticOnce(e, markets);
-  if (sport === "tennis" && sets && (scoreData.homeScore == null || scoreData.awayScore == null)) {
-    logger.info(
-      {
-        eventId: e.eventId,
-        league: e.league,
-        home: e.home,
-        away: e.away,
-        score: e.score,
-        gamePoints: e.moreInfo?.gamePoints,
-        currentPeriod: e.moreInfo?.currentPeriod,
-        matchClock: e.matchClock,
-        sets,
-      },
-      "Pulsescore WS: ténis sem pontos do game atual; cartão ficará só com sets"
-    );
-  }
   return {
     id: `pulsescore:${e.eventId}`,
     sport,
     league: e.league,
     home: e.home,
     away: e.away,
-    ...scoreData,
+    ...parseWsScore(e.score, sport, e.moreInfo),
     minuteOrPeriod: formatWsMatchClock(e.matchClock, e.live === false ? "" : "AO VIVO"),
     status: e.live === false ? "scheduled" : "live",
     odds: markets.map(normalizeWsMarket),
@@ -283,14 +180,14 @@ function prioritizeWsSports(candidates: Sport[], maxConnections: number): Sport[
   return [...prioritized, ...remaining].slice(0, maxConnections);
 }
 
-// WebSocket close codes the server won't recover from on its own — retrying is pointless.
+// Códigos de fecho que o servidor não recupera sozinho — repetir só desperdiça pedidos.
 const CLOSE_CODES_NO_RETRY = new Set([4001, 4003, 4004, 4010, 4029]);
 
 class PulsescoreWsManager extends EventEmitter {
   private sockets = new Map<Sport, WebSocket>();
   private reconnectTimers = new Map<Sport, NodeJS.Timeout>();
   private planTooLow = false;
-  private maxConnections = 3; // matches the MAX plan (149€/mo) mentioned when this was set up
+  private maxConnections = 3; // plano MAX (149€/mês)
   private isLeader = false;
   private leaderRefreshTimer?: NodeJS.Timeout;
 
@@ -331,11 +228,10 @@ class PulsescoreWsManager extends EventEmitter {
     if (!this.isLeader || this.planTooLow) return;
     let targets: Sport[];
     try {
-      const liveSports = await fetchLiveSportsUnionAllBookmakers();
-      // Futebol Ao Vivo é dono exclusivo da Sportmonks quando o interruptor está ligado (ver
-      // sportmonks/live.ts) — sem isto, o WebSocket ligava-se a futebol na mesma (é quase sempre
-      // o desporto com mais eventos) e ficava a competir com o poller da Sportmonks pelo mesmo
-      // snapshot em hybridService.ts.
+      const liveSports = await fetchLiveSportsWithEvents();
+      // Futebol Ao Vivo é dono exclusivo da Sportmonks quando FOOTBALL_PROVIDER=sportmonks — sem
+      // isto, o WS ligava-se a futebol na mesma (quase sempre o desporto com mais eventos) e
+      // competia com o poller da Sportmonks pelo mesmo snapshot em hybridService.ts.
       const candidates = env.FOOTBALL_PROVIDER === "sportmonks" ? liveSports.filter((s) => s !== "football") : liveSports;
       targets = prioritizeWsSports(candidates, this.maxConnections);
     } catch (err) {
@@ -361,9 +257,8 @@ class PulsescoreWsManager extends EventEmitter {
     }
     this.sockets.set(sport, ws);
 
-    // Tudo dentro de um só try/catch, não só o JSON.parse: um frame com uma forma inesperada
-    // (ex: o "score" que crashou a produção — ver nota em WsEvent acima) nunca deve derrubar o
-    // processo Node inteiro. Um erro aqui fica só a saltar este frame, com aviso no log.
+    // Tudo dentro de um só try/catch, não só o JSON.parse: um frame com forma inesperada nunca
+    // deve derrubar o processo Node inteiro — só salta este frame, com aviso no log.
     ws.on("message", (raw) => {
       try {
         const frame = JSON.parse(raw.toString()) as WsFrame;

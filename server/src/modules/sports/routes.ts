@@ -4,7 +4,6 @@ import { hybridSportsService } from "./hybridService";
 import { getPrematchEvents } from "./prematch/service";
 import { getTodayCompetitions } from "./competitions/service";
 import { fetchEventById, fetchLiveEventById } from "./pulsescore/client";
-import { enrichEventFromOtherBookmakers } from "./pulsescore/crossBookmakerFallback";
 import { getHeadToHead, getPredictions, getStandings, getFixtureStatistics, type HeadToHeadMatch } from "./apifootball/client";
 import { resolveFixtureForEvent, resolveLeagueForEvent, resolveTeamsForEvent, getFullFixtureMapping } from "./mapping/service";
 import { getUnifiedMatchData } from "./unified/service";
@@ -193,15 +192,12 @@ router.get(
     }
 
     if (!event) throw Errors.notFound("Evento não encontrado na Pulsescore");
-    // Preenche mercados e estatísticas em falta (ex: Escanteios/Cartões/Marcador) indo buscá-los
-    // a outras bookmakers configuradas em marketRouting.ts — só aqui, quando o utilizador abre o
-    // Match Tracker de um evento em concreto, nunca durante o polling em massa (ver
-    // docs/SPORTS_DATA.md). Uma falha aqui nunca esconde o evento já obtido — o pior caso é
-    // devolvê-lo sem o preenchimento extra, exatamente como antes desta funcionalidade existir.
-    const completed = await enrichEventFromOtherBookmakers(sport as Sport, event).catch((err) => {
-      logger.warn({ err, eventId: rawId }, "Pulsescore: falha ao preencher mercados/estatísticas em falta via outras bookmakers");
-      return event!;
-    });
+    // O preenchimento de mercados/estatísticas em falta via OUTRAS bookmakers (cross-bookmaker
+    // fallback) foi removido na reescrita da integração Pulsescore/Sportmonks (2026-08-27): só
+    // fazia sentido com várias bookmakers configuradas em paralelo (ver histórico em
+    // docs/SPORTS_DATA.md) — agora há só uma (env.PULSESCORE_BOOKMAKER, "onexbet"), por isso não
+    // há para onde "cair" nenhum fallback. `completed` é o próprio evento tal como veio.
+    const completed = event;
 
     // DISPARAR LAZY MAPPING API-Football em background: mesmo que o user nunca abra o /stats
     // nem o /matches/:id/live, o simples acto de abrir o Match Tracker já guarda permanentemente

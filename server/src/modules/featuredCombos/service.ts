@@ -5,7 +5,13 @@ import { hybridSportsService } from "../sports/hybridService";
 import { getPrematchEvents } from "../sports/prematch/service";
 import { ALL_SPORTS, type LiveEvent, type LiveOdds, type Sport } from "../sports/types";
 import { classifyMarket, type MarketCategory } from "../betting/settlementRules";
-import { classifyRoutingMarket } from "../sports/pulsescore/marketRouting";
+// Reconhece o mercado "Marcador a Qualquer Momento" pelo NOME bruto — antes vinha de
+// classifyRoutingMarket() (pulsescore/marketRouting.ts, removido na reescrita da integração
+// Pulsescore/Sportmonks de 2026-08-27); esta é a única classificação desse módulo que este
+// ficheiro realmente usava, por isso fica só o essencial em vez de reimportar o módulo inteiro.
+function isAnytimeGoalscorerMarket(rawName: string): boolean {
+  return /goalscorer|\bscorer\b|player.*(to score|goals)/i.test(rawName);
+}
 
 /**
  * "Melhores Escolhas" — combinações curadas por um admin para UM evento específico, pedido
@@ -149,11 +155,11 @@ export function applyBoost(pricedLegs: PricedLeg[], boostPercent: number): { leg
 // poder criar combinações à mão (ver adminCreateFeaturedCombo acima) — isto só PREENCHE quando não
 // há combinações ativas suficientes para o evento, nunca substitui/apaga o que um admin criou.
 //
-// Identifica os mercados certos com classifyMarket()/classifyRoutingMarket() — as MESMAS funções
-// já usadas e confirmadas em produção para o Bet Builder e o motor de liquidação automática
-// (settlementRules.ts, marketRouting.ts), nunca uma heurística nova inventada aqui. Toda perna
-// escolhida passa pela MESMA validação real (priceLegsAgainstEvent) que as combinações manuais —
-// se não existir com odd válida, não entra, nunca aparece inventada.
+// Identifica os mercados certos com classifyMarket()/isAnytimeGoalscorerMarket() — as MESMAS
+// categorias já usadas e confirmadas em produção para o Bet Builder e o motor de liquidação
+// automática (settlementRules.ts), nunca uma heurística nova inventada aqui. Toda perna escolhida
+// passa pela MESMA validação real (priceLegsAgainstEvent) que as combinações manuais — se não
+// existir com odd válida, não entra, nunca aparece inventada.
 const AUTO_CREATED_BY = "auto:v1";
 // 3 dos 4 modelos reais enviados pelo utilizador usam 10% de boost (o 4º usa 20%, mas sem nenhuma
 // regra explicada para quando é 20% em vez de 10% — em vez de adivinhar uma fórmula, fica-se pelo
@@ -162,8 +168,7 @@ const AUTO_BOOST_PERCENT = 10;
 const AUTO_TARGET_COMBO_COUNT = 2;
 
 // "Marcar em qualquer altura" só entra numa combinação automática se a seleção parecer mesmo um
-// nome de jogador — cautela direta de um bug real já visto nesta app (ver comentário em
-// classifyRoutingMarket/marketRouting.ts: heurística "NEEDS VALIDATION"): uma amostra anterior
+// nome de jogador — cautela direta de um bug real já visto nesta app: uma amostra anterior
 // mostrou rótulos como "Anytime"/"First"/"Last"/"Score" em vez de nomes de jogadores, e a
 // estrutura exata deste mercado nunca foi confirmada com uma amostra bruta real. Isto é só uma
 // segunda barreira (a primeira é sempre priceLegsAgainstEvent) contra mostrar um rótulo confuso.
@@ -181,7 +186,7 @@ function groupsByCategory(event: LiveEvent, category: MarketCategory): LiveOdds[
   return event.odds.filter((g) => g.isActive && classifyMarket(g.market) === category);
 }
 function goalscorerGroups(event: LiveEvent): LiveOdds[] {
-  return event.odds.filter((g) => g.isActive && classifyRoutingMarket(g.market) === "anytime_goalscorer");
+  return event.odds.filter((g) => g.isActive && isAnytimeGoalscorerMarket(g.market));
 }
 
 /** Escolhe o lado favorito (nunca o empate) do Resultado Final pela odd real mais baixa. */
