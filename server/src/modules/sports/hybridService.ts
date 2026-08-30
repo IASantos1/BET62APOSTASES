@@ -221,6 +221,15 @@ class HybridSportsService extends EventEmitter {
     this.applySportSnapshot(sport, events);
   }
 
+  /** Atualização PARCIAL de um único evento externo (ex: o poll "rápido" de placar/estado da
+   * Sportmonks em sportmonks/live.ts, que não traz a lista completa de jogos ao vivo, só os que
+   * mudaram) — ingere sem passar pela lógica de remoção-com-margem de applySportSnapshot() (essa
+   * exige a lista COMPLETA para saber quem já não está lá). Método público equivalente a
+   * ingest(), evita o chamador ter de aceder a um método privado via cast `as any`. */
+  ingestPartialUpdate(evt: LiveEvent) {
+    this.ingest(evt);
+  }
+
   snapshot(sport?: Sport): LiveEvent[] {
     const all = [...this.events.values()];
     return sport ? all.filter((e) => e.sport === sport) : all;

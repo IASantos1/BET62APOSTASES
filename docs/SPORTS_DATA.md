@@ -1,5 +1,20 @@
 # Dados Desportivos — Sistema Híbrido Pulsescore + API-Football
 
+> **Nota (2026-08-27) — reescrita da integração Pulsescore/Sportmonks**: a pedido do utilizador,
+> depois de uma sequência de bugs sucessivos expostos pela migração de bookmaker (paddypower →
+> onexbet), toda a camada de ingestão de dados foi reescrita do zero:
+> `pulsescore/{client,wsClient}.ts` e `hybridService.ts` por inteiro; `sportmonks/{live,prematch}.ts`
+> também; `sportmonks/client.ts` ficou como estava (nunca foi origem de nenhum bug reportado nesta
+> sessão — reescrevê-lo à mão só arriscava perder factos confirmados sem nenhum ganho). Os factos
+> **confirmados contra amostras reais** documentados abaixo continuam válidos (a reescrita manteve-
+> os deliberadamente — esquecê-los só reintroduziria bugs já corrigidos); o que mudou foi a
+> estrutura do código, não o conhecimento sobre as APIs. `pulsescore/marketRouting.ts` e
+> `crossBookmakerFallback.ts` (tabela de fallback entre várias bookmakers) foram removidos por
+> completo — só faziam sentido com várias bookmakers em paralelo, cenário que já não existe.
+>
+> Novas descobertas confirmadas a partir de agora devem ser acrescentadas nesta mesma estrutura
+> (nunca substituir um facto já confirmado por suposição).
+
 ## Desportos cobertos
 
 Futebol, ténis, basquete, hóquei de gelo, beisebol, voleibol, Fórmula 1 e MMA (8 no total).

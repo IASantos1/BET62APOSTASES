@@ -8,6 +8,16 @@ import type { LiveEvent, LiveOdds, LiveSelection } from "../types";
  * para futebol (pedido explícito do utilizador; os outros 7 desportos ficam sempre na
  * Pulsescore, nunca passam por aqui — ver FOOTBALL_PROVIDER em env.ts).
  *
+ * Nota (2026-08-27, reescrita da integração Pulsescore/Sportmonks pedida pelo utilizador): este
+ * ficheiro específico nunca foi apontado como origem de nenhum bug reportado ao longo da sessão
+ * (ao contrário da Pulsescore, com vários) — a única correção real feita aqui foi a prioridade do
+ * mercado "To Qualify" em prolongamento/pênaltis (ver isKnockoutQualifyMarket abaixo), já
+ * preservada. Por isso ficou por reescrever por inteiro: dezenas de factos confirmados contra
+ * amostras reais (nomes de campos, formatos, ids de tipo de evento) que retranscrever à mão só
+ * arriscaria perder por engano, sem nenhum bug a corrigir em troca. sportmonks/live.ts e
+ * sportmonks/prematch.ts (a orquestração de polling em torno deste módulo) foram reescritos.
+ *
+
  * ✅ CONFIRMADO por duas amostras reais coladas pelo utilizador (pedido/resposta idênticos,
  * `GET /rounds/{id}?include=fixtures.odds.market;fixtures.odds.bookmaker;fixtures.participants;
  * league.country&filters=markets:1;bookmakers:2`):
