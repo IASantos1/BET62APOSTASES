@@ -43,6 +43,20 @@ function isSameTennisGameContext(previous: LiveEvent, incoming: LiveEvent): bool
   );
 }
 
+// ⚠️ CORREÇÃO (2026-08-27): "mesmo contexto de jogo" aqui só compara o SET (minuteOrPeriod) e os
+// jogos já fechados em cada set (statistics.sets) — nenhum dos dois muda a meio de um set, quando
+// um GAME termina e o seguinte começa (isso só é confirmado no placar de sets no FIM do set, não
+// por game). Ou seja: "mesmo contexto" na prática significa "mesmo set", não "mesmo game" — e os
+// pontos (0/15/30/40/AD) resetam para 0-0 a CADA game novo dentro do mesmo set, um evento
+// completamente normal do ténis real, não um problema do feed. Sem este caso especial, um "0"-"0"
+// genuíno de início de game (rank 0+0=0, sempre menor que o que ficou no fim do game anterior)
+// caía sempre no "descarta, mantém o anterior" abaixo — o placar ficava PRESO no último ponto do
+// game anterior até o novo game (por coincidência) alcançar de novo uma soma de rank igual ou
+// maior, o que podia demorar quase um game inteiro. Bug real reportado: "ténis com atraso de
+// ~30s a atualizar a pontuação" mesmo a Pulsescore mandando um frame WS a cada ~1s — não era a
+// ligação, era este filtro a rejeitar sistematicamente o início de cada game novo. "0"-"0" é
+// inequívoco (nenhum ponto real já jogado tem rank 0 nos dois lados ao mesmo tempo, exceto no
+// arranque de um game), por isso nunca é motivo para manter o valor anterior.
 function shouldKeepPreviousTennisPoints(previous: LiveEvent, incoming: LiveEvent): boolean {
   if (previous.sport !== "tennis" || incoming.sport !== "tennis") return false;
   if (previous.status !== "live" || incoming.status !== "live") return false;
@@ -55,11 +69,12 @@ function shouldKeepPreviousTennisPoints(previous: LiveEvent, incoming: LiveEvent
   const nextHome = tennisPointRank(incoming.homeScore);
   const nextAway = tennisPointRank(incoming.awayScore);
   if (prevHome == null || prevAway == null || nextHome == null || nextAway == null) return false;
+  if (nextHome === 0 && nextAway === 0) return false; // início de game novo — sempre aceite
 
   return nextHome + nextAway < prevHome + prevAway;
 }
 
-function mergeTransientTennisScore(previous: LiveEvent | undefined, incoming: LiveEvent): LiveEvent {
+export function mergeTransientTennisScore(previous: LiveEvent | undefined, incoming: LiveEvent): LiveEvent {
   if (!previous || !shouldKeepPreviousTennisPoints(previous, incoming)) return incoming;
   logger.info(
     {
