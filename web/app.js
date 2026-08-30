@@ -815,10 +815,34 @@ function quickOddsHtml(e, group, isLive) {
   }
   if (entriesFiltered.some(([, sel]) => isExtremeFavoriteOdd(sel.odd))) return BET_NOW_QUICK_ODDS_HTML;
 
-  const entries = entriesFiltered;
-  return `<div class="lc-odds">${entries
-    .map(([label, sel]) => {
+  // Fix E (2026-08-27): futebol pode sempre empatar (ao contrário dos NO_DRAW_SPORTS acima) —
+  // se a seleção de Empate vinha no mercado bruto mas ficou de fora de entriesFiltered (inativa
+  // ou com odd inválida no momento, ex: a recalcular), este bug real reportado com print
+  // (Monaco 1-0 Marseille aos 17', só 2 odds visíveis) mostrava só Casa/Fora, como um moneyline
+  // de 2 vias — confuso tão cedo no jogo, quando o empate continua obviamente possível. Mostra o
+  // Empate como um 3º bloco suspenso próprio (rótulo real que já veio, nunca um valor inventado)
+  // em vez de o deixar desaparecer silenciosamente; só entra quando a chave existia mesmo nos
+  // dados — se o mercado bruto só tinha 2 seleções desde sempre, não há nada real para mostrar.
+  // Chega aqui com looksOk já confirmado true para as 2 entradas (por counts.h/a OU por
+  // looksLikeTwoWayParticipants — a Sportmonks pode rotular casa/fora pelo NOME DA EQUIPA em vez
+  // de "Home"/"Away" literal, como no print real, por isso não se pode exigir counts.h/a aqui).
+  const displayEntries = entriesFiltered.map(([label, sel]) => ({ label, sel, suspended: false }));
+  if (e.sport === "football" && entriesFiltered.length === 2) {
+    const presentKeys = new Set(entriesFiltered.map(([label]) => label));
+    const missingDraw = Object.entries(group.selections ?? {}).find(
+      ([label, sel]) => !presentKeys.has(label) && classifySelection(label, sel) === "d"
+    );
+    if (missingDraw) {
+      let homeIdx = entriesFiltered.findIndex(([label, sel]) => classifySelection(label, sel) === "h" || selectionMatchesParticipant(label, sel, e.home));
+      if (homeIdx === -1) homeIdx = 0; // ordem crua não identificável — assume a 1ª entrada como casa
+      displayEntries.splice(homeIdx + 1, 0, { label: missingDraw[0], sel: null, suspended: true });
+    }
+  }
+
+  return `<div class="lc-odds">${displayEntries
+    .map(({ label, sel, suspended }) => {
       const labelPt = translateSelectionLabel(label);
+      if (suspended) return `<div class="suspended">${labelPt}<br>—</div>`;
       const key = `${e.id}|${group.market}|${label}`;
       const picked = betslipSelections.has(key);
       const selection = { eventId: e.id, sport: e.sport, market: group.market, selection: label, odd: sel.odd, home: e.home, away: e.away, league: e.league };
