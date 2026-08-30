@@ -1,7 +1,7 @@
 import { EventEmitter } from "events";
 import { env } from "../../config/env";
 import { logger } from "../../lib/logger";
-import { fetchLiveEvents, fetchLiveSportsUnionAllBookmakers } from "./pulsescore/client";
+import { fetchLiveEvents, fetchLiveSportsWithEvents } from "./pulsescore/client";
 import { pulsescoreWs } from "./pulsescore/wsClient";
 import { getFixtureStatistics } from "./apifootball/client";
 import { resolveFixtureForEvent } from "./mapping/service";
@@ -140,7 +140,7 @@ class HybridSportsService extends EventEmitter {
     const sportmonksOwnsFootball = env.FOOTBALL_PROVIDER === "sportmonks";
 
     try {
-      const liveSports = await fetchLiveSportsUnionAllBookmakers();
+      const liveSports = await fetchLiveSportsWithEvents();
       for (const sport of liveSports) live.add(sport);
 
       const uncoveredSports = [...live].filter((sport) => {
