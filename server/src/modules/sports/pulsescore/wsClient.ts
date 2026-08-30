@@ -18,10 +18,21 @@ import { acquireDistributedLock, refreshDistributedLock } from "../../../lib/red
  * mais movimentados AGORA (por nº de eventos ao vivo, ver fetchLiveSportsWithEvents em
  * client.ts) — reavaliado a cada REFRESH_INTERVAL_MS. Ténis tem sempre prioridade garantida
  * (PRIORITY_WS_SPORTS), independentemente da contagem, a pedido explícito do utilizador.
+ *
+ * ⚠️ CORREÇÃO (2026-08-27): reportado "delay de 15s para ténis" — REFRESH_INTERVAL_MS era
+ * exatamente 15s, o pior caso de espera para o ténis (re)conquistar uma vaga de WS se por
+ * qualquer razão a tivesse perdido (a Pulsescore reportar 0 jogos de ténis ao vivo nesse ciclo
+ * exato, mesmo que só por um instante). Reduzido para reagir 3x mais depressa, e o ténis
+ * (PRIORITY_WS_SPORTS) passa a ter um período de tolerância antes de ser mesmo desligado — ver
+ * PRIORITY_SPORT_GRACE_MS abaixo — para um único "blip" momentâneo nunca chegar a desligar e
+ * religar a ligação (o que perderia alguns segundos de cobertura por si só).
  */
-const REFRESH_INTERVAL_MS = 15_000;
+const REFRESH_INTERVAL_MS = 5_000;
 const RECONNECT_DELAY_MS = 5_000;
 const PRIORITY_WS_SPORTS: Sport[] = ["tennis"];
+// Um desporto prioritário só perde mesmo a vaga garantida depois de ficar este tempo seguido sem
+// nenhum jogo ao vivo reportado — não já no primeiro ciclo de refreshTargets() sem jogos.
+const PRIORITY_SPORT_GRACE_MS = 30_000;
 const LOCK_KEY = "bet62:locks:pulsescore-ws";
 const LOCK_TTL_MS = 45_000;
 const LOCK_REFRESH_MS = 30_000;
@@ -190,6 +201,9 @@ class PulsescoreWsManager extends EventEmitter {
   private maxConnections = 3; // plano MAX (149€/mês)
   private isLeader = false;
   private leaderRefreshTimer?: NodeJS.Timeout;
+  // Último momento em que cada desporto prioritário (hoje só ténis) teve pelo menos 1 jogo ao
+  // vivo reportado — ver PRIORITY_SPORT_GRACE_MS.
+  private prioritySportLastSeenLive = new Map<Sport, number>();
 
   async start() {
     if (!env.PULSESCORE_API_KEY) return;
@@ -233,7 +247,21 @@ class PulsescoreWsManager extends EventEmitter {
       // isto, o WS ligava-se a futebol na mesma (quase sempre o desporto com mais eventos) e
       // competia com o poller da Sportmonks pelo mesmo snapshot em hybridService.ts.
       const candidates = env.FOOTBALL_PROVIDER === "sportmonks" ? liveSports.filter((s) => s !== "football") : liveSports;
-      targets = prioritizeWsSports(candidates, this.maxConnections);
+
+      const now = Date.now();
+      for (const sport of PRIORITY_WS_SPORTS) {
+        if (candidates.includes(sport)) this.prioritySportLastSeenLive.set(sport, now);
+      }
+      // Mantém um desporto prioritário como candidato mesmo sem jogos ao vivo NESTE ciclo, desde
+      // que tenha tido jogos há menos de PRIORITY_SPORT_GRACE_MS — evita desligar e religar o WS
+      // (perdendo cobertura por alguns segundos, o próprio efeito que se está a tentar evitar) só
+      // por causa de um "blip" momentâneo dos dados da Pulsescore.
+      const stickyPriority = PRIORITY_WS_SPORTS.filter((sport) => {
+        const lastSeen = this.prioritySportLastSeenLive.get(sport);
+        return lastSeen !== undefined && now - lastSeen < PRIORITY_SPORT_GRACE_MS;
+      });
+      const effectiveCandidates = [...new Set([...candidates, ...stickyPriority])];
+      targets = prioritizeWsSports(effectiveCandidates, this.maxConnections);
     } catch (err) {
       logger.warn({ err }, "Pulsescore WS: falha ao decidir a que desportos ligar, a manter ligações atuais");
       return;
